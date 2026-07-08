@@ -76,13 +76,17 @@ class _IdpHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/.well-known/openid-configuration"):
             base = self.server.base
-            self._json({
+            doc = {
                 "issuer": base,
                 "authorization_endpoint": base + "/auth",
                 "token_endpoint": base + "/token",
                 "jwks_uri": base + "/jwks",
                 "end_session_endpoint": base + "/session/end",
-            })
+            }
+            doc.update(getattr(self.server, "disc_overrides", {}) or {})  # tests can rewrite endpoints
+            for k in getattr(self.server, "disc_drop", ()):               # …or omit a required field
+                doc.pop(k, None)
+            self._json(doc)
             return
         self.send_error(404)
 
@@ -105,6 +109,8 @@ def fake_idp():
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _IdpHandler)
     httpd.base = "http://127.0.0.1:%d" % httpd.server_address[1]
     httpd.id_token = None
+    httpd.disc_overrides = {}   # tests may inject a hostile/malformed discovery endpoint
+    httpd.disc_drop = ()        # …or drop a required field (e.g. issuer)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
     try:
@@ -170,6 +176,22 @@ def find_free_port():
     p = s.getsockname()[1]
     s.close()
     return p
+
+
+# The two cookie families are signed with DISTINCT keys derived from MC_SESSION_SIGNING_KEY, and each
+# carries a mandatory `typ` — so tests must mint each cookie the same way serve.py does.
+def tx_key(base):
+    return serve._derive_key(base, serve._TX_PURPOSE)
+
+
+def sess_key(base):
+    return serve._derive_key(base, serve._SESSION_PURPOSE)
+
+
+def make_session_cookie(base, sub="user-1", exp=None, typ=None):
+    exp = int(time.time()) + 300 if exp is None else exp
+    payload = {"typ": serve._TYP_SESSION if typ is None else typ, "v": 1, "sub": sub, "exp": exp}
+    return serve._sign_cookie(payload, sess_key(base))
 
 
 # ── dev mode: byte-for-byte passthrough (no gate) ─────────────────────────────────────────────
@@ -313,8 +335,9 @@ def test_oidc_unauthenticated_navigation_redirects_with_pkce_s256():
 
     # The challenge must be the real S256 of the verifier stashed in the (signed) tx cookie.
     tx_cookie = cookie_value(set_cookies(hdrs)[0])
-    tx = serve._unsign_cookie(tx_cookie, "unit-test-signing-key")
+    tx = serve._unsign_cookie(tx_cookie, tx_key("unit-test-signing-key"))
     assert tx is not None
+    assert tx["typ"] == serve._TYP_TX
     expected = serve._b64u(serve.hashlib.sha256(tx["verifier"].encode()).digest())
     assert q["code_challenge"][0] == expected
     assert q["state"][0] == tx["state"]
@@ -335,7 +358,7 @@ def _begin_login(port, signing_key):
     status, hdrs, _ = http_req(port, "/deposits", headers={"Accept": "text/html"})
     assert status == 302
     tx_cookie = cookie_value(set_cookies(hdrs)[0])
-    tx = serve._unsign_cookie(tx_cookie, signing_key)
+    tx = serve._unsign_cookie(tx_cookie, tx_key(signing_key))
     return tx_cookie, tx["state"], tx["nonce"]
 
 
@@ -356,7 +379,8 @@ def test_oidc_callback_sets_session_for_valid_code():
     assert header(hdrs, "Location") == "/deposits"  # bounced back to where we were headed
     session_lines = [c for c in set_cookies(hdrs) if c.startswith(serve._SESSION_COOKIE + "=")]
     assert session_lines, "a session cookie must be set"
-    sess = serve._unsign_cookie(cookie_value(session_lines[0]), key)
+    sess = serve._unsign_cookie(cookie_value(session_lines[0]), sess_key(key))
+    assert sess["typ"] == serve._TYP_SESSION
     assert sess["sub"] == "user-1"
     assert sess["email"] == "op@babelstone.dev"
     assert sess["exp"] > int(time.time())
@@ -393,7 +417,7 @@ def test_oidc_callback_rejects_nonce_mismatch():
 
 def test_oidc_expired_session_is_not_accepted():
     key = "unit-test-signing-key"
-    expired = serve._sign_cookie({"v": 1, "sub": "user-1", "exp": int(time.time()) - 10}, key)
+    expired = make_session_cookie(key, exp=int(time.time()) - 10)
     with fake_idp() as idp:
         serve.AUTH = _gate_for(idp, signing_key=key)
         with run_mc() as port:
@@ -405,7 +429,7 @@ def test_oidc_expired_session_is_not_accepted():
 
 def test_oidc_valid_session_is_admitted():
     key = "unit-test-signing-key"
-    good = serve._sign_cookie({"v": 1, "sub": "user-1", "exp": int(time.time()) + 300}, key)
+    good = make_session_cookie(key)
     with fake_idp() as idp:
         serve.AUTH = _gate_for(idp, signing_key=key)
         with run_mc() as port:
@@ -418,7 +442,7 @@ def test_oidc_valid_session_is_admitted():
 
 def test_oidc_tampered_session_cookie_rejected():
     key = "unit-test-signing-key"
-    good = serve._sign_cookie({"v": 1, "sub": "user-1", "exp": int(time.time()) + 300}, key)
+    good = make_session_cookie(key)
     body_seg, _sig = good.split(".", 1)
     forged = body_seg + "." + serve._b64u(b"forged-signature")
     with fake_idp() as idp:
@@ -433,10 +457,15 @@ def test_oidc_tampered_session_cookie_rejected():
 # ── pure helpers ──────────────────────────────────────────────────────────────────────────────
 def test_safe_return_to_blocks_open_redirect():
     assert serve._safe_return_to("/deposits") == "/deposits"
+    assert serve._safe_return_to("/deposits?x=1#f") == "/deposits?x=1#f"
     assert serve._safe_return_to("//evil.example/x") == "/"
     assert serve._safe_return_to("https://evil.example") == "/"
     assert serve._safe_return_to("") == "/"
     assert serve._safe_return_to(None) == "/"
+    # backslash variants — browsers normalise '\' to '/', so these are open-redirect vectors too.
+    assert serve._safe_return_to("/\\evil.example") == "/"
+    assert serve._safe_return_to("\\\\evil.example") == "/"
+    assert serve._safe_return_to("/path\\to") == "/"
 
 
 def test_sign_unsign_roundtrip_and_tamper():
@@ -446,3 +475,153 @@ def test_sign_unsign_roundtrip_and_tamper():
     assert serve._unsign_cookie(tok, "other-key") is None  # wrong key → rejected
     body_seg = tok.split(".", 1)[0]
     assert serve._unsign_cookie(body_seg + ".AAAA", key) is None  # tampered sig → rejected
+
+
+def test_derived_keys_are_distinct():
+    # The two cookie families MUST NOT share a key — that is what makes a tx blob unusable as a
+    # session and vice-versa, independent of the `typ` belt.
+    assert tx_key("base") != sess_key("base")
+    assert tx_key("base") != "base"
+
+
+# ── SECURITY REGRESSION: cross-cookie type confusion (auth-bypass finding #1) ──────────────────
+def test_tx_cookie_cannot_be_used_as_session():
+    # The 302 hands EVERY anonymous visitor a validly-signed tx cookie. Replaying that blob under the
+    # session cookie name must NOT authenticate them (distinct key + mandatory typ).
+    key = "unit-test-signing-key"
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            tx_cookie, _state, _nonce = _begin_login(port, key)
+            nav_status, _h1, _ = http_req(
+                port, "/", headers={"Accept": "text/html",
+                                    "Cookie": serve._SESSION_COOKIE + "=" + tx_cookie})
+            xhr_status, _h2, _ = http_req(
+                port, "/v1/x", headers={"Accept": "application/json",
+                                        "Cookie": serve._SESSION_COOKIE + "=" + tx_cookie})
+    assert nav_status == 302   # re-login, NOT 200 — the tx blob is not a session
+    assert xhr_status == 401   # and an API call with it is unauthenticated, not relayed
+
+
+def test_session_blob_under_tx_name_rejected_cleanly():
+    # The reverse confusion: a real session blob presented under the tx cookie name at /callback must
+    # be rejected as a CLEAN 400 (login failed), never a 500 — read_tx returns None (wrong key/typ),
+    # so the state check fails on tx-is-None before any KeyError can happen.
+    key = "unit-test-signing-key"
+    session_blob = make_session_cookie(key)
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            status, hdrs, _ = http_req(
+                port, "/callback?code=x&state=whatever",
+                headers={"Cookie": serve._TX_COOKIE + "=" + session_blob})
+    assert status == 400
+    assert not [c for c in set_cookies(hdrs) if c.startswith(serve._SESSION_COOKIE + "=")]
+
+
+def test_session_with_empty_sub_rejected():
+    # A session must carry a non-empty subject to be a valid identity.
+    key = "unit-test-signing-key"
+    no_sub = make_session_cookie(key, sub="")
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            status, _hdrs, _ = http_req(
+                port, "/", headers={"Accept": "text/html",
+                                    "Cookie": serve._SESSION_COOKIE + "=" + no_sub})
+    assert status == 302
+
+
+# ── SECURITY REGRESSION: HEAD bypasses the gate (auth-bypass finding #2) ───────────────────────
+def test_head_is_gated_in_oidc_mode():
+    key = "unit-test-signing-key"
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            status, _hdrs, _ = http_req(port, "/", method="HEAD", headers={"Accept": "text/html"})
+    assert status in (302, 401)  # HEAD must not fall through to the static tree ungated
+
+
+def test_head_admitted_with_valid_session():
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key)
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            status, _hdrs, _ = http_req(port, "/", method="HEAD",
+                                        headers={"Cookie": serve._SESSION_COOKIE + "=" + good})
+    assert status == 200
+
+
+def test_head_served_in_dev_mode():
+    with run_mc() as port:  # AUTH is None (dev) — HEAD still works, byte-for-byte unchanged
+        status, _hdrs, _ = http_req(port, "/", method="HEAD")
+    assert status == 200
+
+
+# ── HARDENING REGRESSION: discovered-endpoint TLS (finding #3) & issuer required (finding #6) ──
+def test_oidc_non_loopback_http_token_endpoint_refused():
+    # A discovery doc that advertises an http (non-loopback) token_endpoint voids the TLS-backchannel
+    # premise, so discover() must fail closed.
+    with fake_idp() as idp:
+        idp.disc_overrides = {"token_endpoint": "http://idp.example.test/token"}
+        with pytest.raises(serve.OidcConfigError):
+            _gate_for(idp)
+
+
+def test_oidc_https_endpoints_on_non_loopback_ok():
+    # https endpoints on a non-loopback host are fine (the normal deployment shape).
+    with fake_idp() as idp:
+        idp.disc_overrides = {
+            "authorization_endpoint": "https://idp.example.test/auth",
+            "token_endpoint": "https://idp.example.test/token",
+            "jwks_uri": "https://idp.example.test/jwks",
+        }
+        gate = _gate_for(idp)
+    assert gate.token_endpoint == "https://idp.example.test/token"
+
+
+def test_oidc_discovery_missing_issuer_refused():
+    with fake_idp() as idp:
+        idp.disc_drop = ("issuer",)  # RFC 8414 makes issuer REQUIRED
+        with pytest.raises(serve.OidcConfigError):
+            _gate_for(idp)
+
+
+# ── HARDENING REGRESSION: azp / multi-audience id_token (finding #5) ───────────────────────────
+def _callback_status(key, *, aud, azp=None, sub="user-1"):
+    """Drive a full redirect→/callback flow with a crafted id_token; return (status, set-cookies)."""
+    with fake_idp() as idp:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        with run_mc() as port:
+            tx_cookie, state, nonce = _begin_login(port, key)
+            claims = {"iss": idp.base, "aud": aud, "sub": sub,
+                      "nonce": nonce, "exp": int(time.time()) + 300}
+            if azp is not None:
+                claims["azp"] = azp
+            idp.id_token = make_jwt(**claims)
+            status, hdrs, _ = http_req(
+                port, "/callback?code=c&state=%s" % state,
+                headers={"Cookie": serve._TX_COOKIE + "=" + tx_cookie})
+    return status, set_cookies(hdrs)
+
+
+def _has_session(cookies):
+    return any(c.startswith(serve._SESSION_COOKIE + "=") for c in cookies)
+
+
+def test_oidc_multi_audience_requires_azp():
+    key = "unit-test-signing-key"
+    cid = "mc-client"  # _gate_for's default client_id
+    # single audience: no azp needed → accepted
+    st, cookies = _callback_status(key, aud=cid)
+    assert st == 302 and _has_session(cookies)
+    # multi-audience, azp absent → rejected
+    st, cookies = _callback_status(key, aud=[cid, "other-client"])
+    assert st == 400 and not _has_session(cookies)
+    # multi-audience, azp is some OTHER client → rejected
+    st, cookies = _callback_status(key, aud=[cid, "other-client"], azp="other-client")
+    assert st == 400 and not _has_session(cookies)
+    # multi-audience, azp == our client_id → accepted
+    st, cookies = _callback_status(key, aud=[cid, "other-client"], azp=cid)
+    assert st == 302 and _has_session(cookies)
