@@ -1,0 +1,15 @@
+# ca_pt_basic — a v1 basic demand account (conta à ordem) product config, as LOADED at runtime by the
+# current_account family's own product-config store (ADR-PC-037 §D5).
+#
+# In plain English: the no-frills current account — EUR, no arranged overdraft and no configured caps.
+# Every limit construct is optional, so a variant that configures none is valid; the authorize decider
+# still applies the plain balance gate, but there is no overdraft headroom (a debit past the balance is
+# refused as INSUFFICIENT_AVAILABLE_BALANCE, never OVERDRAFT_LIMIT_EXCEEDED) and no per-transaction
+# ceiling. It resolves to the zero-overdraft degenerate of the authorization rules.
+#
+# Validated against #CurrentAccount by pack-validate depths 1–4 (ADR-PC-006); lives in
+# product-configs/current-account/ alongside ca_pt_standard, out of the term-deposit store's sight.
+variant_id: ca_pt_basic
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: EUR

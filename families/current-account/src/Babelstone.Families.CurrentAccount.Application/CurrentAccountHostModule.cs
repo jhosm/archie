@@ -108,13 +108,22 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             ctx.Pack));
 
+        // The family's OWN product-config store (ADR-PC-037 §D5; see CurrentAccountProductConfigStore for
+        // why it is family-owned, not the deposit spine store): reads product-configs/current-account/ at
+        // startup and resolves product_code → arranged overdraft / per-transaction cap for the authorize
+        // decider's stage-4 rules. Engine:CurrentAccountConfigsDir overrides the default walk-up discovery
+        // (dev/test boots with none set).
+        services.AddSingleton(_ => new CurrentAccountProductConfigStore(
+            ctx.Configuration["Engine:CurrentAccountConfigsDir"]));
+
         // The synchronous AUTHORIZE decider's orchestration (ADR-PC-034 technique / ADR-PC-037 §D6) — a
         // SEPARATE service on the payment hot path (lifecycle relabels state, authorize earmarks funds). It
         // composes the family runtime with the spine-owned, host-level singletons the decision reads: the
         // available-balance + freeze readers, the projection drainer it drains before deciding
-        // (read-your-writes), and the store codec + PII protector it uses to reconstruct a replayed
-        // verdict off the single appended event. All are family→engine dependencies — the host still names
-        // no current-account type (ENGINE_API_HOST_FAMILY_AGNOSTIC).
+        // (read-your-writes), the store codec + PII protector it uses to reconstruct a replayed verdict off
+        // the single appended event, and the family's own product-config store the stage-4 overdraft/limit
+        // rules resolve from. All are family→engine dependencies — the host still names no current-account
+        // type (ENGINE_API_HOST_FAMILY_AGNOSTIC).
         services.AddSingleton(serviceProvider => new CurrentAccountAuthorizeService(
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             serviceProvider.GetRequiredService<AccountBalanceReader>(),
@@ -123,7 +132,8 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             ctx.Pack,
             serviceProvider.GetRequiredService<IEventStore>(),
             serviceProvider.GetRequiredService<IEventSerializer>(),
-            serviceProvider.GetRequiredService<IPiiProtector>()));
+            serviceProvider.GetRequiredService<IPiiProtector>(),
+            serviceProvider.GetRequiredService<CurrentAccountProductConfigStore>()));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app)

@@ -135,6 +135,7 @@ stage() {
 	mkdir -p "$staging/schemas"
 	cp -f "$CONTRACTS_CUE/common.cue" "$staging/schemas/common.cue"
 	cp -f "$CONTRACTS_CUE/families/term-deposit.cue" "$staging/schemas/term-deposit.cue"
+	cp -f "$CONTRACTS_CUE/families/current-account.cue" "$staging/schemas/current-account.cue"
 }
 
 validate_staging() {
@@ -162,7 +163,7 @@ validate_staging() {
 	done
 
 	# The bundled family schemas must compile (depth-1 soundness).
-	if cue vet "$staging/schemas/common.cue" "$staging/schemas/term-deposit.cue" 2>/tmp/pack-cue-err; then
+	if cue vet "$staging/schemas/common.cue" "$staging/schemas/term-deposit.cue" "$staging/schemas/current-account.cue" 2>/tmp/pack-cue-err; then
 		echo "  ok            schemas/ compile"
 	else
 		echo "  FAIL          schemas/ do not compile:"

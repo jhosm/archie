@@ -61,7 +61,16 @@ func depth3PackCompliance(vd variantData, fam Family, p *pack.Pack) []diag.Diagn
 		})
 	}
 
-	if !p.HasRateSheetFor(fam.Name) {
+	// The rate-sheet requirement applies only to a variant that carries a rate
+	// reference to resolve at constitution/disbursement — ANY `rate:` block
+	// (term-deposit `rate.flat`/`rate.stepped`, personal-loan `rate.fixed`, or a
+	// future rate shape). A demand account (current_account) declares no `rate:` at
+	// all: it prices no rate — its overdraft-interest rate is resolved separately,
+	// not from a variant rate_ref — so the pack need not carry a rate-sheet ref for
+	// it. Keying on the PRESENCE of the rate block (vd.HasRate), not an allow-list of
+	// inner shapes, keeps the check family-agnostic and covers a new priced family at
+	// birth: it fires for any variant that references a rate, silent for one that does not.
+	if vd.HasRate && !p.HasRateSheetFor(fam.Name) {
 		out = append(out, diag.Diagnostic{
 			Depth: diag.DepthPackCompliance, Path: "rate", Kind: diag.KindUnresolvedRateRef,
 			Message: fmt.Sprintf("pack %s carries no rate-sheet ref for family %s — the variant's rate_ref cannot resolve at constitution", p.Key, fam.Name),

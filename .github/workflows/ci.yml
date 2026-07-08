@@ -695,7 +695,10 @@ jobs:
           go -C pack-validate build -trimpath -o "$RUNNER_TEMP/pack-validate" .
           shopt -s nullglob
           found=0
-          for v in product-configs/*.yaml; do
+          # Top-level term-deposit variants + the current_account family's own variants
+          # (product-configs/current-account/, kept out of the deposit store's sight). nullglob makes an
+          # empty subdir a no-op; each variant is validated against the schema its `pack:` field pins.
+          for v in product-configs/*.yaml product-configs/current-account/*.yaml; do
             found=1
             echo "== $v =="
             "$RUNNER_TEMP/pack-validate" validate "$v" --pack packs/pt.2026.1
@@ -738,7 +741,9 @@ jobs:
           go -C pack-validate build -trimpath -o "$RUNNER_TEMP/pack-validate" .
           shopt -s nullglob
           found=0
-          for v in product-configs/*.yaml; do
+          # Top-level term-deposit variants + the current_account family's own variants
+          # (product-configs/current-account/). nullglob makes an empty subdir a no-op.
+          for v in product-configs/*.yaml product-configs/current-account/*.yaml; do
             found=1
             echo "== depths 1–4: $v =="
             "$RUNNER_TEMP/pack-validate" validate "$v" --pack packs/pt.2026.1
