@@ -119,6 +119,11 @@ async def test_MCP_WRONG_RESOURCE_TOKEN_REJECTED_wrong_aud_is_rejected_401_audie
     # `aud` is not this server's canonical URI gets 401 + code AUDIENCE_MISMATCH before any app code
     # runs. The Test ID is embedded in the method name so the ADR-PC-020 §P6 coverage checker
     # (.github/scripts/spec-coverage-check.sh) resolves the Live row to this test by literal grep.
+    #
+    # This same wrong-resource rejection is the enforcement realisation of ADR-IC-021 C1
+    # (IAM_TOKEN_AUD_RESOURCE_BOUND): the AS binds `aud` to the requested resource (RFC 8707) and this
+    # boundary rejects a cross-resource token. The Test ID is named here so the coverage checker resolves
+    # that Live catalogue row to this test too (the AS-binds-aud leg was proven live, bd zla1.10.5).
     async with _client() as client:
         resp = await client.post(
             "/mcp",

@@ -174,17 +174,18 @@ Decisive reason: Logto is the **only** surviving self-hostable, Postgres-backed,
 
 ## Verifiable commitments
 
-These commitments are **not yet catalogued centrally** — the IAM is being *selected* here, not yet built. They are stated inline as falsifiable claims with reserved Test IDs, mirroring [ADR-IC-016](./ADR-IC-016-service-identity-and-mtls.md#verifiable-commitments); they will be seeded as [commitment-catalogue](../../product_concepts/adrs/commitment-catalogue.md) rows when their implementation children land, after which the catalogue becomes their single source of truth and these rows become references by Test ID (the one-way ADR→catalogue reference per [ADR-PC-000 Amendment 2026-05-24](../../product_concepts/adrs/ADR-PC-000-namespace-and-contract-shape-framework.md)).
+These commitments are catalogued in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)). They were seeded as catalogue rows **IAM-1…IAM-5** when the IAM security verification landed (bd `babelstone-zla1.10.5`); this section is now the one-way ADR→catalogue reference by Test ID per [ADR-PC-000 Amendment 2026-05-24](../../product_concepts/adrs/ADR-PC-000-namespace-and-contract-shape-framework.md) — it names the claim, not the mutable status:
 
-| # | Commitment | Gate (pyramid level) | Test ID | Status |
-|---|---|---|---|---|
-| C1 | The AS binds an access token's `aud` to the requested MCP resource (RFC 8707); a token minted for the MCP-server URI is rejected at any other resource. | integration | `IAM_TOKEN_AUD_RESOURCE_BOUND` *(reserved)* | Planned — blocked on Logto deployment + an MCP-resource registration |
-| C2 | Authorization-code + PKCE (S256) is enforced; no token is ever accepted from a URI query string. | integration | `IAM_OAUTH21_PKCE_ENFORCED` *(reserved)* | Planned |
-| C3 | Refresh-token rotation with reuse-detection revokes the whole token family (the §Residual-risks item to verify empirically). | integration | `IAM_REFRESH_REUSE_FAMILY_REVOKE` *(reserved)* | Gap — undocumented in Logto; must be proven before relied upon |
-| C4 | Issued tokens carry `acr` + `auth_time`; SCA-strength step-up is enforceable as a precondition for irreversible operations (PSD2). | integration | `IAM_SCA_ACR_AUTH_TIME` *(reserved)* | Planned (Logto `acr` maturity is the watch-item) |
-| C5 | The MCP edge exposes only narrow, per-tool scopes (`deposits:read` / `deposits:write` / `transfers:write`); no god-scope. | unit + integration | `IAM_NARROW_TOOL_SCOPES` *(reserved)* | Planned |
-| C6 | DCR for arbitrary agents is **not** available; agents are hand-registered at staging (deliberate, visible hole — the open-Boundary-9 production gate). | — | `IAM_DCR_GAP` *(tracker)* | Gap — accepted at curated staging; tracked for production |
-| C7 | The ops console requires a Logto-issued session with **step-up MFA** before reaching saga state; operator access is role-scoped and Grafana trace access is logged (Boundary 6 → 7). | integration | `IAM_OPS_CONSOLE_STEP_UP` *(reserved)* | Planned |
+- `IAM_TOKEN_AUD_RESOURCE_BOUND` (C1) — **the AS binds an access token's `aud` to the requested MCP resource (RFC 8707); a token minted for the MCP-server URI is rejected at any other resource**. The wrong-resource rejection is the enforcement leg (shared with catalogue row MCP-1); the AS-binds-aud leg was proven live against Logto (slice 1).
+- `IAM_OAUTH21_PKCE_ENFORCED` (C2) — **authorization-code + PKCE (S256) is enforced; no token is ever accepted from a URI query string**. Realised as a static discovery-contract (S256-only, no `plain`); the interactive "a `code_challenge`-less request is refused" leg stays Planned.
+- `IAM_REFRESH_REUSE_FAMILY_REVOKE` (C3) — **refresh-token rotation with reuse-detection revokes the whole token family** (the §Residual-risks item to verify empirically). Proven empirically on live Logto v1.41.0 (slice 3) — the residual resolved positively; stays Planned for CI (no live Logto in CI).
+- `IAM_SCA_ACR_AUTH_TIME` (C4) — **issued tokens carry a fresh `auth_time` and SCA-strength step-up is enforceable as a precondition for irreversible operations (PSD2), un-bypassable client-side**. The freshness gate is the enforcement leg (shared with catalogue rows MCP-2 / MOVEMENT-3). The AS-emits-native-`acr` half is a documented watch-item: the deployed Logto emits **no native `acr`** — step-up strength is a synthesised non-`acr` claim, freshness rides native `auth_time` ([ADR-IC-010 §A16](./ADR-IC-010-mcp-server-runtime-and-sdk.md), slice 2).
+- `IAM_OPS_CONSOLE_STEP_UP` (C7) — **the ops console requires a Logto-issued session with step-up MFA before reaching saga state; operator access is role-scoped and Grafana trace access is logged (Boundary 6 → 7)**. The OIDC-gate + role wiring is present; the step-up-MFA-demanded leg stays Planned (interactive).
+
+Two commitments carry no catalogue Test ID of their own:
+
+- **Narrow, per-tool scopes only — no god-scope** (C5: `deposits:read` / `deposits:write` / `transfers:write`) — realised and governed at the [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) gateway + the MCP edge (`RESOURCE_SCOPES`), not as this ADR's own catalogue row; the three narrow scopes were registered live in slice 1.
+- **No DCR for arbitrary agents** (C6) — a deliberate, visible gap: agents are hand-registered at staging (the open-Boundary-9 production gate). A tracker, not a testable commitment.
 
 ## Cross-references
 

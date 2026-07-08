@@ -161,6 +161,12 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     // transitions on the bank's own signal (the AS signature Kong validated), exactly as ADR-IC-010 §P8
     // requires. These tests are the engine half; the MCP step-up-then-retry half lives in
     // mcp-server/tests/test_server.py.
+    //
+    // This engine SCA-freshness gate is ALSO the enforcement realisation of ADR-IC-021 C4
+    // (IAM_SCA_ACR_AUTH_TIME): a fresh, gateway-attested `auth_time` is the load-bearing SCA signal a
+    // courier cannot forge. NB the deployed Logto emits NO native `acr` — step-up strength is a
+    // synthesised non-`acr` claim, freshness rides native `auth_time` (ADR-IC-010 §A16, bd zla1.10.5).
+    // The IAM_SCA_ACR_AUTH_TIME Test ID is named here so the coverage checker resolves that Live row.
 
     [Fact]
     public async Task Mature_without_any_SCA_proof_is_422_SCA_REQUIRED_and_does_not_settle()
