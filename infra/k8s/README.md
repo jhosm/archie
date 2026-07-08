@@ -41,9 +41,12 @@ reached via `kubectl port-forward`. **The `staging` overlay is the one exception
 ([see below](#staging-overlay--the-always-on-public-demo-box-bd-babelstone-zla1)):
 it adds a public Traefik `Ingress` + cert-manager/Let's Encrypt TLS fronting the
 Kong edge, the Backstage portal, the Mission Control demo UI, the Logto OAuth/OIDC
-auth subdomain, and — since bd zla1.10 — the Logto **admin console** on its own
-`auth-admin` host ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md))
-— the always-on demo box. That is a deliberate,
+auth subdomain, the Logto **admin console** on its own `auth-admin` host, and — since
+bd zla1.10.1/zla1.10.6 — the **Grafana** observability UI at `grafana.babelstone.dev`
+([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md))
+— the always-on demo box. The IAM admin console and the Grafana observability plane are
+each auth-gated (Logto login/2FA; Grafana login + Logto SSO + §P6 RBAC, anonymous OFF) and
+are meant to sit behind a Cloudflare Access identity gate (bd zla1.10.6). That is a deliberate,
 recorded extension of the previous "no ingress/gateway exposure beyond Kong"
 posture: an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -271,7 +274,7 @@ only at apply, once Phase-1 [`hetzner-k3s`](../hetzner-k3s/) installs the Hetzne
 installed at [`bootstrap/`](./overlays/staging/bootstrap/helm/traefik-values.yaml) —
 hetzner-k3s disables the *bundled* Traefik + servicelb, so on this single node
 Traefik is installed back and binds the node's `:80`/`:443` directly via hostPort,
-there being no LoadBalancer; bd babelstone-zla1.14) for **four** hosts:
+there being no LoadBalancer; bd babelstone-zla1.14) for **six** hosts:
 `api.babelstone.dev` → the **Kong** proxy (8000), `backstage.babelstone.dev` →
 **Backstage** (7007), `app.babelstone.dev` → **Mission Control** (9000, the demo
 UI, bd babelstone-zla1.5.5 — the browser hits only this host and Mission Control
@@ -291,7 +294,11 @@ separately at `auth-admin` — Logto OSS v1.41 rejects the console's Management-
 tokens unless it is reached at a stable HTTPS host matching `ADMIN_ENDPOINT`, so the
 port-forward path no longer works. The admin console is auth-gated by the Logto admin
 login; network-hardening it — Cloudflare Access / IP allowlist / `ADMIN_DISABLE_LOCALHOST`
-— is the residual mitigation tracked as bd zla1.10.6). Adding any public ingress extends
+— is the residual mitigation tracked as bd zla1.10.6). The 6th host is
+`grafana.babelstone.dev` → **Grafana** (3000, the observability UI, bd zla1.10.1/zla1.10.6) —
+the regulated observability plane (ADR-IC-007 §P4), gated by Grafana login + Logto SSO + §P6
+RBAC (anonymous OFF) and meant to sit behind the same Cloudflare Access gate; only the UI is
+fronted (OTLP 4317/4318 stay Collector-only). Adding any public ingress extends
 the previous
 "no ingress/gateway exposure beyond Kong" posture, so this is an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -305,8 +312,10 @@ invariants are preserved:
   routes around Kong for the product API. Backstage (the catalogue portal — not
   part of the ADR-IC-006 product surface) is fronted directly.
 - **No OTLP exposure** ([ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)
-  §P1): Grafana is intentionally *not* ingressed, and the collector's 4317/4318
-  never reach a public route.
+  §P1): the Grafana **UI** (3000) is now ingressed at `grafana.babelstone.dev`
+  behind Grafana login + Logto SSO + §P6 RBAC (bd zla1.10.1/zla1.10.6), but the
+  collector's OTLP `4317/4318` are never fronted — they stay admitted from the
+  Collector podSelector only and never reach a public route.
 - **No POC cert/key literals committed** — TLS is issued at runtime by
   cert-manager, exactly as the edge mTLS material is sourced at `deck sync` time.
 - **In-cluster network walls** (bd babelstone-zla1.12.8;
