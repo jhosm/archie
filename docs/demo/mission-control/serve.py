@@ -58,6 +58,28 @@ DEMO mode needs none of this — index.html is fully self-contained. You only ne
 server for LIVE·engine (start the engine, scripts/demo-mcp.sh) or LIVE·saga (start the
 orchestrator + ACL stub, scripts/demo-saga.sh).
 
+Authentication (bd babelstone-zla1.10.8.1 / .2). Two modes, selected by MC_AUTH_MODE:
+
+  • dev  (default) — NO login gate. Byte-for-byte the behaviour above: every route is
+                     served open. This is the laptop-dev posture. A FAIL-SAFE refuses this
+                     mode on a PUBLIC (non-loopback) bind unless MC_ALLOW_UNAUTHENTICATED=1
+                     is set — the insecure "public + ungated" state must be opted into, not
+                     reached by accident (the inverse of the /pg/* auto-off default).
+
+  • oidc          — an interactive OpenID-Connect login gate stands in FRONT of every route
+                     (the UI, and every proxied backend prefix — ADR-IC-021 Boundary-1
+                     owned-channel login at the BFF). It is PROVIDER-AGNOSTIC: on startup it
+                     reads {OIDC_ISSUER}/.well-known/openid-configuration (RFC 8414) and uses
+                     the discovered authorization/token/jwks/end-session endpoints — no IdP
+                     path is hardcoded. An unauthenticated navigation is 302-redirected into
+                     the Authorization-Code + PKCE (S256) flow; /callback exchanges the code
+                     on a direct TLS backchannel to the discovered token_endpoint, fully
+                     validates the returned id_token (iss / aud / exp / nonce), and sets an
+                     HMAC-signed HttpOnly session cookie. It is FAIL-CLOSED: if discovery is
+                     unreachable or required config is missing/invalid, serve.py REFUSES to
+                     start — it never silently degrades to ungated (the deliberate inversion
+                     of the AGENT_URL degrade-open behaviour).
+
 Usage:
     python3 docs/demo/mission-control/serve.py
     # open http://localhost:9000 and flip the Mode toggle to LIVE·engine or LIVE·saga
@@ -67,6 +89,21 @@ Options (env vars):
     MC_BIND           interface to bind                        (default 127.0.0.1;
                       the container image sets 0.0.0.0 so the kube Service/probes
                       can reach it via the pod IP)
+    MC_AUTH_MODE      'dev' (ungated) or 'oidc' (login gate)   (default dev)
+    MC_ALLOW_UNAUTHENTICATED  accept a PUBLIC + dev (ungated)  (default off — a public,
+                      bind explicitly (fail-safe override)     ungated bind is REFUSED)
+    OIDC_ISSUER       OIDC issuer base URL (discovery is at     (oidc mode; required)
+                      {issuer}/.well-known/openid-configuration)
+    OIDC_CLIENT_ID    OAuth client id registered at the IdP    (oidc mode; required)
+    OIDC_CLIENT_SECRET  the confidential-client secret          (oidc mode; injected at
+                      (client_secret_post) — never committed    deploy, never committed)
+    OIDC_SCOPES       space-separated scopes requested          (default 'openid profile email')
+    OIDC_REDIRECT_URL the exact /callback redirect_uri          (else derived from
+                                                                 MC_PUBLIC_BASE_URL + /callback)
+    MC_PUBLIC_BASE_URL  public origin used to derive the        (oidc mode; required unless
+                      redirect_uri when OIDC_REDIRECT_URL unset  OIDC_REDIRECT_URL is set)
+    MC_SESSION_SIGNING_KEY  HMAC key signing the session cookie (oidc mode; required)
+    MC_SESSION_TTL    session lifetime in seconds               (default 3600)
     ENGINE_URL        base URL of the engine (LIVE·engine)     (default http://localhost:8080)
     ORCHESTRATOR_URL  base URL of the orchestrator (LIVE·saga) (default http://localhost:8090)
     TEMPO_URL         base URL of Grafana Tempo's query API     (default http://localhost:3200)
@@ -95,6 +132,12 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import json
+import base64
+import hashlib
+import hmac
+import secrets
+import time
+from http.cookies import SimpleCookie
 
 PORT = int(os.environ.get("MC_PORT", "9000"))
 # Bind interface. Default 127.0.0.1 keeps `python3 serve.py` on a laptop localhost-only
@@ -140,6 +183,55 @@ def _is_loopback(host):
 # forced with MC_PG_ENABLE. In a pod (MC_BIND=0.0.0.0) it stays OFF unless forced, so the
 # read-only window is never reachable off-box by accident.
 PG_ENABLE = (os.environ.get("MC_PG_ENABLE", "").lower() in ("1", "true", "yes")) or _is_loopback(MC_BIND)
+
+# ── Mission Control authentication (bd babelstone-zla1.10.8.1 / .2) ───────────────────────────
+# MC_AUTH_MODE selects the front-door posture: 'dev' (no gate — the historical behaviour) or
+# 'oidc' (an interactive OpenID-Connect login in front of EVERY route). The whole auth surface is
+# env-driven with defaults, matching the config idiom above. NB the OIDC_* values are only
+# CONSULTED in oidc mode — in dev mode they are read but ignored, so a dev laptop needs none of them.
+MC_AUTH_MODE = os.environ.get("MC_AUTH_MODE", "dev").strip().lower()
+
+# The fail-safe override (bd babelstone-zla1.10.8.2). This INVERTS the /pg/* idiom above: there the
+# safe default (window off) is automatic and the operator opts IN to the dev convenience; here the
+# INSECURE state (a public bind with no auth) is the thing that must be opted into. A non-loopback
+# bind in dev mode is REFUSED at startup unless this is set (see _preflight below).
+MC_ALLOW_UNAUTHENTICATED = os.environ.get("MC_ALLOW_UNAUTHENTICATED", "").lower() in ("1", "true", "yes")
+
+# OIDC gate configuration (oidc mode only). No IdP-specific endpoint path is hardcoded — the
+# authorization/token/jwks/end-session endpoints are DISCOVERED from OIDC_ISSUER at startup
+# (RFC 8414 / OIDC Discovery). The client_secret is injected at deploy (never committed); a public
+# client that relies on PKCE alone may leave it empty.
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").rstrip("/")
+OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
+OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
+OIDC_SCOPES = os.environ.get("OIDC_SCOPES", "openid profile email")
+OIDC_REDIRECT_URL = os.environ.get("OIDC_REDIRECT_URL", "").strip()
+MC_PUBLIC_BASE_URL = os.environ.get("MC_PUBLIC_BASE_URL", "").rstrip("/")
+MC_SESSION_SIGNING_KEY = os.environ.get("MC_SESSION_SIGNING_KEY", "")
+try:
+    MC_SESSION_TTL = int(os.environ.get("MC_SESSION_TTL", "3600"))
+except ValueError:
+    MC_SESSION_TTL = 3600
+
+# The live OIDC gate, built by _preflight() in oidc mode (fetches discovery, validates config).
+# It STAYS None in dev mode, and the request handler treats "AUTH is None" as "no gate" — so dev
+# mode is byte-for-byte the pre-auth behaviour (no code path changes when AUTH is None).
+AUTH = None
+
+
+def _is_public_bind(host):
+    """True when MC_BIND exposes the server OFF-box (any non-loopback interface). 0.0.0.0 and ::
+    mean 'all interfaces' → PUBLIC; only a genuine loopback address (127.0.0.0/8, ::1, localhost,
+    or the empty default) is private. Deliberately NOT reusing _is_loopback(): that set treats
+    0.0.0.0 as loopback for the /pg/* DSN-guarded feature, but for the auth fail-safe 0.0.0.0 is
+    exactly the public bind we must catch."""
+    h = (host or "").strip().lower()
+    if h in ("", "localhost", "::1", "::ffff:127.0.0.1"):
+        return False
+    if h.startswith("127."):
+        return False
+    return True
+
 
 # headers we must not blindly copy when relaying
 _HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -661,6 +753,343 @@ def topology_manifest():
     }
 
 
+# ── OIDC login gate (bd babelstone-zla1.10.8.1) ──────────────────────────────────────────────
+# A provider-agnostic OpenID-Connect Authorization-Code + PKCE gate that stands in front of every
+# route in oidc mode (ADR-IC-021 Boundary-1: the owned-channel operator login lives at the BFF).
+# Design choices worth calling out:
+#
+#   • PROVIDER-AGNOSTIC. Every IdP endpoint (authorization/token/jwks/end-session) is DISCOVERED
+#     from {OIDC_ISSUER}/.well-known/openid-configuration (RFC 8414 / OIDC Discovery) at startup —
+#     no Logto-specific (or any-IdP-specific) path is baked in. Point OIDC_ISSUER at any conformant
+#     issuer and the flow follows the discovered endpoints.
+#
+#   • STATELESS. There is no server-side session store (serve.py is a threaded single process that a
+#     deployment may scale out). Both the in-flight login transaction (verifier/state/nonce/return-to)
+#     and the established session are carried in HMAC-signed cookies keyed by MC_SESSION_SIGNING_KEY,
+#     so any instance can validate any request. The HMAC (stdlib hmac/hashlib, constant-time compare)
+#     is an integrity seal, not encryption — the payloads carry no secret, only an opaque subject id
+#     and a short profile, and are HttpOnly+Secure+SameSite=Lax.
+#
+#   • id_token VERIFICATION — the deliberate stdlib-only choice. We do NOT verify the id_token's JWKS
+#     RS256 signature; instead we trust the DIRECT TLS BACKCHANNEL to the discovered token_endpoint
+#     plus FULL claim validation (iss == issuer, aud contains client_id, exp not past, nonce matches
+#     the login transaction). This is explicitly blessed by OIDC Core 1.0 §3.1.3.7 item 6: when the
+#     id_token is obtained by direct Client↔Token-Endpoint communication (exactly this code flow),
+#     TLS server-cert validation MAY stand in for verifying the token signature. urllib validates the
+#     server certificate by default for https URLs, and _preflight refuses a non-loopback issuer that
+#     is not https — so the backchannel is authenticated. We keep serve.py dependency-light (no PyJWT
+#     / cryptography — mirroring the "stdlib-only except the lazily-imported psycopg" ethos of this
+#     file), and the token is never accepted from an untrusted front channel, only from that TLS
+#     backchannel. Trade-off documented here and in the PR; upgrading to JWKS RS256 verification is a
+#     drop-in in _OidcGate._validate_id_token if a future deployment wants belt-and-braces.
+
+_TX_COOKIE = "mc_oidc_tx"        # short-lived signed cookie carrying the in-flight login transaction
+_SESSION_COOKIE = "mc_session"   # signed cookie carrying the established session
+_TX_TTL = 600                    # a login round-trip must complete within 10 minutes
+_CLAIM_LEEWAY = 60               # clock-skew tolerance (seconds) on the id_token exp check
+
+
+class OidcConfigError(Exception):
+    """Raised when oidc-mode config is missing/invalid or discovery is unreachable. _preflight turns
+    this into a hard startup refusal — the fail-CLOSED contract: serve.py never runs ungated in oidc
+    mode."""
+
+
+class OidcAuthError(Exception):
+    """A per-request login failure (bad state, token exchange failed, invalid id_token) surfaced as
+    a 400 at /callback."""
+
+
+def _b64u(raw):
+    """URL-safe base64 WITHOUT padding (the JOSE/JWT convention)."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64u_decode(s):
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def _sign_cookie(payload, key):
+    """Serialise a dict to a signed, tamper-evident cookie value `<b64(json)>.<b64(hmac_sha256)>`.
+    The HMAC seals integrity; there is nothing secret in the payload to hide."""
+    body = _b64u(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = _b64u(hmac.new(key.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+    return body + "." + sig
+
+
+def _unsign_cookie(value, key):
+    """Verify + decode a value produced by _sign_cookie. Returns the dict, or None if the signature
+    is absent/forged/garbled. Uses a constant-time compare so a bad signature leaks no timing."""
+    try:
+        body, sig = value.split(".", 1)
+        expected = _b64u(hmac.new(key.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(_b64u_decode(body))
+    except Exception:
+        return None
+
+
+def _pkce_pair():
+    """A fresh PKCE (RFC 7636) verifier + its S256 challenge. The verifier is 43 URL-safe chars of
+    CSPRNG entropy; the challenge is base64url(sha256(verifier))."""
+    verifier = secrets.token_urlsafe(32)
+    challenge = _b64u(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+
+def _cookie_attrs(name, value, max_age):
+    """Build a Set-Cookie header value with the hardened flags. Secure is unconditional (oidc mode
+    assumes TLS termination in front — the deployment provides it); HttpOnly keeps it off JS; Lax
+    lets the IdP's top-level redirect back to /callback carry the cookie while blocking cross-site
+    POSTs. max_age=0 clears the cookie."""
+    return ("%s=%s; Max-Age=%d; Path=/; HttpOnly; Secure; SameSite=Lax"
+            % (name, value, max_age))
+
+
+class _OidcGate:
+    """Holds the discovered endpoints + client config and drives the login flow. One instance is
+    built by _preflight() in oidc mode and stored in the module global AUTH."""
+
+    def __init__(self, issuer, client_id, client_secret, scopes, redirect_url, signing_key, session_ttl):
+        self.issuer = issuer
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.scopes = scopes
+        self.redirect_url = redirect_url
+        self.signing_key = signing_key
+        self.session_ttl = session_ttl
+        # filled by discover()
+        self.authorization_endpoint = None
+        self.token_endpoint = None
+        self.jwks_uri = None
+        self.end_session_endpoint = None
+
+    # ── startup: discovery ──────────────────────────────────────────────────────────────────
+    def discover(self):
+        """Fetch the issuer's discovery document and pull the endpoints we need. Raises
+        OidcConfigError on any failure (unreachable, malformed, issuer mismatch, missing endpoint)
+        — the fail-closed contract: a gate that cannot discover its IdP must not start."""
+        url = self.issuer + "/.well-known/openid-configuration"
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                doc = json.loads(resp.read())
+        except Exception as e:
+            raise OidcConfigError("OIDC discovery failed at %s: %s" % (url, e))
+        disc_issuer = (doc.get("issuer") or "").rstrip("/")
+        if disc_issuer and disc_issuer != self.issuer:
+            raise OidcConfigError("discovery issuer %r does not match OIDC_ISSUER %r"
+                                  % (disc_issuer, self.issuer))
+        self.authorization_endpoint = doc.get("authorization_endpoint")
+        self.token_endpoint = doc.get("token_endpoint")
+        self.jwks_uri = doc.get("jwks_uri")
+        self.end_session_endpoint = doc.get("end_session_endpoint")
+        missing = [k for k in ("authorization_endpoint", "token_endpoint", "jwks_uri")
+                   if not getattr(self, k)]
+        if missing:
+            raise OidcConfigError("discovery document at %s is missing: %s" % (url, ", ".join(missing)))
+        return self
+
+    # ── per-request: session check ──────────────────────────────────────────────────────────
+    def session_for(self, cookies):
+        """Return the session dict for a valid, unexpired session cookie, else None."""
+        return self._read_signed(cookies.get(_SESSION_COOKIE))
+
+    def read_tx(self, cookies):
+        """Return the in-flight login-transaction dict for a valid, unexpired tx cookie, else None."""
+        return self._read_signed(cookies.get(_TX_COOKIE))
+
+    def _read_signed(self, value):
+        if not value:
+            return None
+        data = _unsign_cookie(value, self.signing_key)
+        if not data:
+            return None
+        if int(data.get("exp", 0)) <= int(time.time()):
+            return None
+        return data
+
+    # ── begin login: 302 → authorization_endpoint with PKCE ─────────────────────────────────
+    def begin_login(self, return_to):
+        """Mint a PKCE verifier + state + nonce, stash them in a signed tx cookie, and build the
+        authorization redirect. Returns (location, set_cookie_header)."""
+        verifier, challenge = _pkce_pair()
+        state = secrets.token_urlsafe(24)
+        nonce = secrets.token_urlsafe(24)
+        tx = {"v": 1, "state": state, "nonce": nonce, "verifier": verifier,
+              "return_to": _safe_return_to(return_to), "exp": int(time.time()) + _TX_TTL}
+        cookie = _cookie_attrs(_TX_COOKIE, _sign_cookie(tx, self.signing_key), _TX_TTL)
+        params = {
+            "response_type": "code",
+            "client_id": self.client_id,
+            "redirect_uri": self.redirect_url,
+            "scope": self.scopes,
+            "state": state,
+            "nonce": nonce,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+        sep = "&" if "?" in self.authorization_endpoint else "?"
+        location = self.authorization_endpoint + sep + urllib.parse.urlencode(params)
+        return location, cookie
+
+    # ── complete login: /callback ───────────────────────────────────────────────────────────
+    def complete_login(self, code, tx):
+        """Exchange the code at the token_endpoint (direct TLS backchannel), validate the returned
+        id_token, and return (session_set_cookie, return_to). Raises OidcAuthError on any failure."""
+        tok = self._exchange_code(code, tx["verifier"])
+        id_token = tok.get("id_token")
+        if not id_token:
+            raise OidcAuthError("token response carried no id_token")
+        claims = self._validate_id_token(id_token, tx["nonce"])
+        now = int(time.time())
+        session = {
+            "v": 1,
+            "sub": claims.get("sub"),
+            "email": claims.get("email"),
+            "name": claims.get("name") or claims.get("preferred_username"),
+            "iat": now,
+            "exp": now + self.session_ttl,
+        }
+        cookie = _cookie_attrs(_SESSION_COOKIE, _sign_cookie(session, self.signing_key), self.session_ttl)
+        return cookie, _safe_return_to(tx.get("return_to"))
+
+    def _exchange_code(self, code, verifier):
+        fields = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.redirect_url,
+            "client_id": self.client_id,
+            "code_verifier": verifier,
+        }
+        if self.client_secret:
+            fields["client_secret"] = self.client_secret   # client_secret_post
+        data = urllib.parse.urlencode(fields).encode("ascii")
+        req = urllib.request.Request(
+            self.token_endpoint, data=data, method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            raise OidcAuthError("token exchange rejected (%s): %s" % (e.code, e.read()[:256]))
+        except Exception as e:
+            raise OidcAuthError("token exchange failed: %s" % e)
+
+    def _validate_id_token(self, id_token, expected_nonce):
+        """FULL claim validation of the id_token received over the TLS backchannel. Signature is NOT
+        checked — see the module note above (OIDC Core §3.1.3.7 item 6: direct-communication TLS
+        validation stands in for signature verification in the code flow)."""
+        parts = id_token.split(".")
+        if len(parts) != 3:
+            raise OidcAuthError("malformed id_token (not a JWT)")
+        try:
+            claims = json.loads(_b64u_decode(parts[1]))
+        except Exception as e:
+            raise OidcAuthError("id_token payload is not decodable JSON: %s" % e)
+        if (claims.get("iss") or "").rstrip("/") != self.issuer:
+            raise OidcAuthError("id_token iss mismatch")
+        aud = claims.get("aud")
+        auds = aud if isinstance(aud, list) else [aud]
+        if self.client_id not in auds:
+            raise OidcAuthError("id_token aud does not contain client_id")
+        now = int(time.time())
+        if int(claims.get("exp", 0)) <= now - _CLAIM_LEEWAY:
+            raise OidcAuthError("id_token is expired")
+        if claims.get("nonce") != expected_nonce:
+            raise OidcAuthError("id_token nonce mismatch (possible replay)")
+        return claims
+
+    # ── cookie clears ───────────────────────────────────────────────────────────────────────
+    def clear_tx_cookie(self):
+        return _cookie_attrs(_TX_COOKIE, "", 0)
+
+    def clear_session_cookie(self):
+        return _cookie_attrs(_SESSION_COOKIE, "", 0)
+
+
+def _safe_return_to(path):
+    """Only ever bounce back to a SAME-ORIGIN relative path — never an attacker-supplied absolute
+    URL or protocol-relative //host (open-redirect guard). Anything suspicious collapses to '/'."""
+    if not path or not isinstance(path, str):
+        return "/"
+    if not path.startswith("/") or path.startswith("//"):
+        return "/"
+    return path
+
+
+def _build_oidc_gate():
+    """Validate the oidc-mode config from the module globals, then construct + discover the gate.
+    Raises OidcConfigError (→ hard startup refusal) on any missing/invalid config — fail-closed."""
+    missing = [name for name, val in (("OIDC_ISSUER", OIDC_ISSUER),
+                                      ("OIDC_CLIENT_ID", OIDC_CLIENT_ID),
+                                      ("MC_SESSION_SIGNING_KEY", MC_SESSION_SIGNING_KEY))
+               if not val]
+    if missing:
+        raise OidcConfigError("oidc mode requires: %s" % ", ".join(missing))
+    scheme = urllib.parse.urlsplit(OIDC_ISSUER).scheme
+    host = urllib.parse.urlsplit(OIDC_ISSUER).hostname or ""
+    if scheme != "https" and not _is_loopback(host):
+        # The whole id_token-trust model rests on a TLS-authenticated backchannel to the issuer;
+        # a non-loopback http issuer would void it, so we refuse rather than run insecurely.
+        raise OidcConfigError("OIDC_ISSUER must be https for a non-loopback host (got %r)" % OIDC_ISSUER)
+    redirect_url = OIDC_REDIRECT_URL
+    if not redirect_url:
+        if not MC_PUBLIC_BASE_URL:
+            raise OidcConfigError("set OIDC_REDIRECT_URL or MC_PUBLIC_BASE_URL to derive the /callback redirect_uri")
+        redirect_url = MC_PUBLIC_BASE_URL + "/callback"
+    gate = _OidcGate(OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_SCOPES,
+                     redirect_url, MC_SESSION_SIGNING_KEY, MC_SESSION_TTL)
+    return gate.discover()
+
+
+def _preflight():
+    """Startup gate — run BEFORE binding the socket (from main()). Enforces:
+      • the fail-safe (bd zla1.10.8.2): dev mode on a PUBLIC bind is REFUSED unless
+        MC_ALLOW_UNAUTHENTICATED=1 (and then it warns loudly);
+      • the oidc gate build (bd zla1.10.8.1): config validated + discovery fetched, or a hard
+        refusal — fail-closed, never a silent ungated fallback.
+    Raises SystemExit on refusal; in oidc mode sets the module global AUTH on success."""
+    global AUTH
+    if MC_AUTH_MODE == "dev":
+        if _is_public_bind(MC_BIND):
+            if not MC_ALLOW_UNAUTHENTICATED:
+                sys.stderr.write(
+                    "\nREFUSING TO START: MC_BIND=%s is a PUBLIC interface but MC_AUTH_MODE=dev\n"
+                    "(no authentication). A public, ungated bind exposes the UI and EVERY proxied\n"
+                    "backend to the network. Fix ONE of:\n"
+                    "  - set MC_AUTH_MODE=oidc to require an interactive login (recommended), or\n"
+                    "  - bind to loopback (MC_BIND=127.0.0.1) for local-only dev, or\n"
+                    "  - set MC_ALLOW_UNAUTHENTICATED=1 to accept the exposure explicitly.\n\n"
+                    % MC_BIND)
+                raise SystemExit(2)
+            sys.stderr.write(
+                "\n" + "=" * 74 + "\n"
+                "WARNING: Mission Control is bound to a PUBLIC interface (%s) with\n"
+                "         MC_AUTH_MODE=dev — the UI and ALL proxied backends are served\n"
+                "         UNAUTHENTICATED to every host that can reach this port.\n"
+                "         MC_ALLOW_UNAUTHENTICATED=1 is set, so startup continues.\n"
+                "         Set MC_AUTH_MODE=oidc to require login, or bind to loopback.\n"
+                % MC_BIND + "=" * 74 + "\n\n")
+        AUTH = None
+        return
+    if MC_AUTH_MODE == "oidc":
+        try:
+            AUTH = _build_oidc_gate()
+        except OidcConfigError as e:
+            sys.stderr.write(
+                "\nREFUSING TO START: MC_AUTH_MODE=oidc but the login gate could not be brought up.\n"
+                "  %s\n"
+                "serve.py fails CLOSED — it will not serve any route ungated. Fix the OIDC_* config\n"
+                "and/or make the issuer's discovery endpoint reachable, then restart.\n\n" % e)
+            raise SystemExit(2)
+        return
+    sys.stderr.write("REFUSING TO START: unknown MC_AUTH_MODE=%r (expected 'dev' or 'oidc')\n" % MC_AUTH_MODE)
+    raise SystemExit(2)
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=ROOT, **kwargs)
@@ -668,6 +1097,114 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # quieter logs
     def log_message(self, fmt, *args):
         sys.stderr.write("  %s\n" % (fmt % args))
+
+    # ── OIDC login gate (bd babelstone-zla1.10.8.1) ─────────────────────────────────────────
+    def _cookies(self):
+        jar = SimpleCookie()
+        raw = self.headers.get("Cookie")
+        if raw:
+            try:
+                jar.load(raw)
+            except Exception:
+                return {}
+        return {k: m.value for k, m in jar.items()}
+
+    def _wants_html(self):
+        """A top-level browser NAVIGATION (which we can usefully 302 to the IdP), vs an XHR/fetch/
+        asset request (which we answer with a 401 — an opaque cross-origin redirect would just fail
+        for it). Detected from Sec-Fetch-Mode / the Accept header."""
+        if (self.headers.get("Sec-Fetch-Mode") or "").lower() == "navigate":
+            return True
+        return "text/html" in (self.headers.get("Accept") or "")
+
+    def _send_json(self, status, obj):
+        payload = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+
+    def _authgate(self):
+        """The login gate, called FIRST from every verb handler. Returns True when it has handled
+        (blocked/redirected/answered) the request — the caller must then return without routing.
+        Returns False to let the request proceed (dev mode, or an authenticated oidc session).
+
+        In dev mode AUTH is None, so this is a no-op returning False → the pre-auth behaviour is
+        byte-for-byte unchanged. In oidc mode it enforces a valid session before ANY route."""
+        if AUTH is None:
+            return False
+        method = self.command
+        path = self.path.split("?", 1)[0]
+        # Auth-plumbing endpoints are reachable without a session (they establish/clear one, or are
+        # the liveness probe). Everything else — the UI and every proxied prefix — is gated.
+        if method == "GET" and path == "/callback":
+            self._oidc_callback()
+            return True
+        if method == "GET" and path == "/logout":
+            self._oidc_logout()
+            return True
+        if path == "/healthz":
+            self._send_json(200, {"status": "ok", "auth": "oidc"})
+            return True
+        if AUTH.session_for(self._cookies()):
+            return False   # authenticated → let the request through to the normal routing
+        # Unauthenticated. A navigation starts the login redirect; anything else gets a clean 401.
+        if method == "GET" and self._wants_html():
+            location, cookie = AUTH.begin_login(self.path)
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.send_header("Set-Cookie", cookie)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("WWW-Authenticate", "OIDC")
+            body = b'{"title":"authentication required","detail":"log in at / to obtain a session"}'
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        return True
+
+    def _oidc_callback(self):
+        """The OAuth redirect target: verify state against the tx cookie, exchange the code, validate
+        the id_token, set the session cookie, and bounce back to where the user was headed."""
+        split = urllib.parse.urlsplit(self.path)
+        qs = urllib.parse.parse_qs(split.query)
+        code = (qs.get("code") or [None])[0]
+        state = (qs.get("state") or [None])[0]
+        idp_error = (qs.get("error") or [None])[0]
+        tx = AUTH.read_tx(self._cookies())
+        try:
+            if idp_error:
+                raise OidcAuthError("identity provider returned error: %s" % idp_error)
+            if not code or not state:
+                raise OidcAuthError("callback missing code/state")
+            if tx is None:
+                raise OidcAuthError("no valid login transaction (expired or missing tx cookie)")
+            if not hmac.compare_digest(state, tx.get("state", "")):
+                raise OidcAuthError("state mismatch (possible CSRF)")
+            session_cookie, return_to = AUTH.complete_login(code, tx)
+        except OidcAuthError as e:
+            self._send_json(400, {"title": "login failed", "detail": str(e)})
+            return
+        self.send_response(302)
+        self.send_header("Location", return_to)
+        self.send_header("Set-Cookie", session_cookie)
+        self.send_header("Set-Cookie", AUTH.clear_tx_cookie())
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _oidc_logout(self):
+        """Clear the session and, if the IdP advertised one, bounce to its end_session_endpoint."""
+        self.send_response(302)
+        self.send_header("Location", AUTH.end_session_endpoint or "/")
+        self.send_header("Set-Cookie", AUTH.clear_session_cookie())
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _route(self):
         """Map the request path to a backend. Returns (base_url, injected_headers, upstream_path)
@@ -864,6 +1401,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if self._authgate():
+            return
         if self.path.split("?", 1)[0] == "/topology/manifest":
             # The estate-derived Topology manifest (bd babelstone-f0ic.15.3): C4 L2 sources parsed
             # into nodes/edges + the live Redpanda topic list. Read-only, structural names only.
@@ -891,6 +1430,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return False
 
     def do_POST(self):
+        if self._authgate():
+            return
         if self._refuse_mutation():
             return
         route = self._route()
@@ -899,6 +1440,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(405)
 
     def do_PUT(self):
+        if self._authgate():
+            return
         if self._refuse_mutation():
             return
         route = self._route()
@@ -909,6 +1452,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         # The Topic·Avro lens deletes its pandaproxy consumer instance when it's done reading, so
         # the consumer-group dance cleans up after itself (no leaked consumers).
+        if self._authgate():
+            return
         if self._refuse_mutation():
             return
         route = self._route()
@@ -918,10 +1463,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
+    # Fail-safe + oidc gate init BEFORE we bind (bd babelstone-zla1.10.8.1 / .2). A refusal here
+    # raises SystemExit, so the socket is never opened in an unsafe/misconfigured posture.
+    _preflight()
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer((MC_BIND, PORT), Handler) as httpd:
         print("Babelstone Mission Control")
         print("  UI            http://localhost:%d" % PORT)
+        if AUTH is not None:
+            print("  auth          oidc (login gate ON — issuer %s, discovery OK)" % OIDC_ISSUER)
         print("  engine        %s  (proxied at /v1/*      — LIVE·engine)" % ENGINE_URL)
         print("  orchestrator  %s  (proxied at /api/v1/*  — LIVE·saga)" % ORCHESTRATOR_URL)
         print("  tempo         %s  (proxied at /tempo/*   — LIVE·engine real traces)" % TEMPO_URL)
