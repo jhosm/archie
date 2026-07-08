@@ -35,12 +35,25 @@ The Console is fronted at its own HTTPS host, **`https://auth-admin.babelstone.d
 
 ## 1. Register the MCP server as an API resource (RFC 8707)
 
+The **canonical staging MCP URI is `https://api.babelstone.dev/mcp`** — Kong fronts the MCP
+server at `api.babelstone.dev` and routes `/mcp` with `strip_path: false` (`infra/kong/kong.yml`),
+so the path is preserved verbatim. This value MUST equal the server's `BABELSTONE_MCP_SERVER_URI`
+(what `mcp_resource_indicator()` in `mcp-server/src/babelstone_mcp/auth.py` returns and the RFC 9728
+metadata advertises as `resource`).
+
+> **Automated path (preferred).** Sections 1-2 (the resource + its three scopes — the durable
+> C1/C5 substrate) are codified in [`scripts/iam/register-mcp-resource.py`](../../scripts/iam/register-mcp-resource.py),
+> an idempotent Management-API script. Logto's app config is not captured in the manifests or the
+> `logto db seed` job, so a re-onboard wipes it — re-run this to recreate the substrate. Export a
+> Management-API token from the `babelstone-mgmt` M2M app first (see the script's docstring), then
+> `python3 scripts/iam/register-mcp-resource.py`. The manual console steps below remain the
+> equivalent by-hand procedure.
+
+Manual console steps:
+
 1. Console → **API resources** → **Create API resource**.
-2. **API identifier** = the MCP server's canonical URI, **exactly** as the server advertises it. The
-   trailing slash is significant (the MCP-Auth SDK is slash-sensitive), so paste the value verbatim.
-   It must equal the server's `BABELSTONE_MCP_SERVER_URI` (the value `mcp_resource_indicator()` in
-   `mcp-server/src/babelstone_mcp/auth.py` returns and the RFC 9728 metadata advertises as
-   `resource`). On staging that is the Kong-fronted public MCP URI.
+2. **API identifier** = the canonical URI above, pasted **verbatim** (the trailing-slash rule is
+   slash-sensitive in the MCP-Auth SDK).
 3. Verify the server and Logto agree on the identifier:
 
    ```bash
@@ -111,6 +124,24 @@ resource is refused here. Prove it before letting an agent loose:
    A `401` confirms the binding. This is the Kong-edge + app-layer leg of catalogue Test ID
    `MCP_WRONG_RESOURCE_TOKEN_REJECTED` / the reserved `IAM_TOKEN_AUD_RESOURCE_BOUND` (C1); the app
    unit leg is `mcp-server/tests/test_auth.py`.
+
+> **AS-side C1/C5 verified on the live staging Logto (2026-07-08, bd zla1.10.5).** With the
+> resource + scopes registered and a curated M2M agent, tokens minted via `client_credentials`
+> against `https://auth.babelstone.dev/oidc/token` were decoded and asserted:
+> - **C1 aud-binding** — a token requested with `resource=https://api.babelstone.dev/mcp` carried
+>   `aud=https://api.babelstone.dev/mcp` exactly.
+> - **C1 cross-resource isolation** — the same agent requesting `resource=https://default.logto.app/api`
+>   got `aud=https://default.logto.app/api` and was **not** granted the `deposits:*` scopes (scopes are
+>   resource-bound; they do not leak across resources).
+> - **Default-resource footgun (stronger than feared)** — omitting `resource` on the M2M grant returns
+>   `invalid_target` (Logto **fails closed**, no silent default-resource fallback). The §4 footgun
+>   therefore applies only to the interactive authorization-code flow, which the MCP-Auth SDK covers.
+> - **C5** — only the three per-tool scopes exist; a token carries only the requested scope.
+>
+> This is the **AS-side (token-minting)** proof. The **end-to-end** leg (a real token through Kong to
+> the MCP server) still needs the `mcp-server` deploy repointed off its placeholder
+> `BABELSTONE_MCP_SERVER_URI` / `BABELSTONE_IAM_URL` env, and the CI test that flips
+> `IAM_TOKEN_AUD_RESOURCE_BOUND` to **Live** — both tracked under bd zla1.10.5.
 
 ## 6. Verify per-tool scope enforcement (C5)
 
