@@ -44,3 +44,4 @@ kubeconform = "0.7.0"
 # that one git-tracked, DB-less declarative file). Pinned here so the gate runs the
 # same version on every dev machine and CI runner (run via `make kong-config-check`).
 deck = "1.62.1"
+node = "22"
