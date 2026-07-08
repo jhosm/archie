@@ -1,0 +1,52 @@
+# backstage-oidc.patch.yaml — turn on the Logto OIDC gate for the staging Backstage portal
+# (ADR-IC-021, Boundary 6 — the developer/ops surface; bd babelstone-zla1.10.11).
+#
+# In plain English: the base Deployment leaves BACKSTAGE_BASE_URL at localhost and defines no auth
+# env, so the portal falls back to the guest provider — which Backstage BLOCKS in production, i.e.
+# nobody can actually sign in. This strategic-merge patch flips it into the real gate: it sets the
+# public base URL (the OIDC redirect_uri must be reachable and match what Logto has registered),
+# selects the production auth environment, and points Backstage at Logto's discovery document.
+#
+# Mirrors grafana-oidc.patch.yaml / mission-control.yaml: the issuer + client id are plain values
+# (not secret); ONLY the client secret comes from the OpenBao-seeded `babelstone-dev-secrets`, never
+# from git (ADR-PC-004 §A1). Egress to auth.babelstone.dev is already open (network-policies.yaml is
+# policyTypes: [Ingress] only), and `allow-backstage-from-traefik` already admits the ingress.
+#
+# FAIL-CLOSED: BACKSTAGE_AUTH_ENVIRONMENT=production makes app-config's oidc.production block live,
+# so a missing/placeholder BACKSTAGE_OIDC_CLIENT_SECRET stops the pod coming up until the secret is
+# seeded. Do the manual steps in infra/runbooks/backstage-oidc-registration.md BEFORE this lands.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+spec:
+  template:
+    spec:
+      containers:
+        - name: backstage
+          env:
+            # Public host — overrides the base's localhost so the OIDC redirect_uri
+            # (https://backstage.babelstone.dev/api/auth/oidc/handler/frame) is reachable + accepted.
+            - name: BACKSTAGE_BASE_URL
+              value: https://backstage.babelstone.dev
+            # Activate the app-config `oidc.production` sub-block (and the backend gate provider).
+            - name: BACKSTAGE_AUTH_ENVIRONMENT
+              value: production
+            - name: BACKSTAGE_OIDC_METADATA_URL
+              value: https://auth.babelstone.dev/oidc/.well-known/openid-configuration
+            - name: BACKSTAGE_OIDC_CLIENT_ID
+              value: babelstone-backstage
+            # OpenBao-seeded (runbook §3). Never in git; the committed secrets.example.yaml carries
+            # only dev placeholders that the cd-secret-preflight refuses to deploy.
+            - name: BACKSTAGE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: LOGTO_BACKSTAGE_CLIENT_SECRET
+            # Backstage's OWN express-session signing key (the OIDC auth-code state/nonce store) —
+            # NOT a Logto value; generated with `openssl rand -base64 32`. Rotating it drops sessions.
+            - name: BACKSTAGE_AUTH_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: BACKSTAGE_AUTH_SESSION_SECRET

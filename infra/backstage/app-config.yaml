@@ -91,6 +91,40 @@ backend:
     client: better-sqlite3
     connection: ':memory:'
 
+# Sign-in (ADR-IC-021 — Logto is the estate's single OAuth/OIDC issuer; Backstage is a Boundary-6
+# developer/ops surface, gated exactly like Grafana and Mission Control). This block is baked into
+# the IMAGE only (never `yarn dev`, which loads just backstage/app-config.yaml and stays guest-only).
+#
+#   * environment — `production` on the deployed box (set via BACKSTAGE_AUTH_ENVIRONMENT in
+#     infra/k8s/overlays/staging/backstage-oidc.patch.yaml); defaults to `development` so a bare
+#     `docker run` of the image (no OIDC env) falls back to the guest provider defined in the base
+#     app-config. Only the sub-block matching the active environment is initialised, so the
+#     `oidc.production` config below is dormant (never validated) under `development`.
+#   * oidc — the generic OIDC provider pointed at Logto's discovery document. clientSecret has NO
+#     default: on a `production` deploy a missing secret fails the pod CLOSED (correct posture) —
+#     it must be seeded first (runbook infra/runbooks/backstage-oidc-registration.md). Sign-in
+#     itself is resolved GATE-ONLY by packages/backend/src/oidcGateProvider.ts (no `signIn.resolvers`
+#     here): a successful Logto login mints a Backstage token from the OIDC `sub` with NO catalog
+#     User entity — so no personal identity data enters Backstage and the deferred GDPR item
+#     (bd babelstone-zla1.6.8 / ADR-IC-015 Residual Risk) stays deferred.
+auth:
+  environment: ${BACKSTAGE_AUTH_ENVIRONMENT:-development}
+  # The generic OIDC (openid-client) provider stores the auth-code flow's state/nonce in an
+  # express-session, so it needs a signing secret — Backstage's OWN cookie key, not a Logto value
+  # (generate `openssl rand -base64 32`; seed as BACKSTAGE_AUTH_SESSION_SECRET). Unset in local dev
+  # (guest needs no session); required on the deployed box, where the OIDC gate is registered.
+  session:
+    secret: ${BACKSTAGE_AUTH_SESSION_SECRET}
+  providers:
+    # guest stays defined in the base backstage/app-config.yaml — local-dev only (Backstage
+    # blocks it in production), so it never competes with the OIDC gate on the deployed box.
+    oidc:
+      production:
+        metadataUrl: ${BACKSTAGE_OIDC_METADATA_URL:-https://auth.babelstone.dev/oidc/.well-known/openid-configuration}
+        clientId: ${BACKSTAGE_OIDC_CLIENT_ID:-babelstone-backstage}
+        clientSecret: ${BACKSTAGE_OIDC_CLIENT_SECRET}
+        prompt: auto
+
 # The ONLY catalogue source: the in-repo Backstage descriptor. It is BAKED into the image at
 # /catalog/catalog-info.yaml (backstage/Dockerfile). All event + reconciliation + OpenAPI API
 # entities, and the definitions they $text-reference, flow from it. No second registration, no
