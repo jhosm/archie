@@ -93,6 +93,28 @@ public sealed class SpineAccountProjectionIntegrationTests(PostgresEventStoreFix
     }
 
     [Fact]
+    public async Task An_over_capture_transitions_the_hold_and_the_real_store_reports_over_captured()
+    {
+        var runtime = Runtime();
+        var account = NewAccount();
+        var stream = Guid.NewGuid();
+
+        await AppendAsync(runtime, stream, 0, new TestMoneyMover([Credit(account, 10_000)]));
+        await AppendAsync(runtime, stream, 1,
+            new HoldPlaced(stream, $"{account}-h1", account, new Money(4_000), ValueDate));
+        await runtime.Drainer.DrainOnceAsync();
+
+        // A capture for MORE than the held amount (ADR-PC-037 §D4): the real PostgresAccountHoldStore's
+        // RETURNING amount_cents comparison reports TransitionedOverCaptured — the row still transitions
+        // (the money moved and it leaves the active set), and the mismatch is surfaced, never absorbed.
+        var result = await runtime.Holds.CaptureAsync(
+            $"{account}-h1", capturedAmountCents: 5_000, stream, releasedSequence: 2);
+
+        Assert.Equal(HoldReleaseResult.TransitionedOverCaptured, result);
+        Assert.Empty(await runtime.Holds.GetActiveHoldsAsync(account));
+    }
+
+    [Fact]
     public async Task An_expired_hold_restores_the_available_balance_with_no_posting()
     {
         var runtime = Runtime();

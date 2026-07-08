@@ -161,8 +161,11 @@ public sealed class AccountHoldProjector(
         }
     }
 
-    // A release that transitioned nothing folds as a no-op but never SILENTLY (ADR-PC-033): count
-    // it (tagged by kind) and hand the identifiers to the host's warning log via the callback.
+    // A non-normal release is surfaced, never silently absorbed (ADR-PC-033 / ADR-PC-037 §D4): the
+    // no-op releases (AlreadyReleased/NeverPlaced) transitioned nothing, and an over-capture DID
+    // transition (the money moved) yet exceeded the held amount — all three are reconciliation signals,
+    // counted (tagged by kind) with the identifiers handed to the host's warning log via the callback.
+    // Only a plain Transitioned is the normal, silent outcome.
     private void Surface(
         HoldReleaseResult result, string holdId, string releaseEventType, Guid streamId, long sequence)
     {
@@ -189,12 +192,17 @@ internal static class AccountHoldMetrics
     private static readonly Counter<long> ReleaseAnomalies =
         BabelstoneTelemetry.Meter.CreateCounter<long>(
             BabelstoneAttributes.HoldReleaseAnomaliesMetric,
-            description: "Hold releases (capture/expiry) that transitioned nothing — never_placed is a fold-order error, already_released a duplicate/late release (ADR-PC-033).");
+            description: "Hold releases needing reconciliation — never_placed is a fold-order error, already_released a duplicate/late release, over_captured a capture exceeding the held amount (ADR-PC-033 / ADR-PC-037 §D4).");
 
-    /// <summary>One no-op release, tagged by its closed-set kind. The hold id rides the host's
+    /// <summary>One reconciliation signal, tagged by its closed-set kind. The hold id rides the host's
     /// structured warning log (unbounded cardinality never becomes a metric dimension).</summary>
     public static void RecordReleaseAnomaly(HoldReleaseResult kind) =>
         ReleaseAnomalies.Add(1, new KeyValuePair<string, object?>(
             BabelstoneAttributes.HoldReleaseAnomalyKindTag,
-            kind == HoldReleaseResult.NeverPlaced ? "never_placed" : "already_released"));
+            kind switch
+            {
+                HoldReleaseResult.NeverPlaced => "never_placed",
+                HoldReleaseResult.TransitionedOverCaptured => "over_captured",
+                _ => "already_released",
+            }));
 }

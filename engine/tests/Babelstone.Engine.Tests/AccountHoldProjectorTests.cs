@@ -80,6 +80,51 @@ public sealed class AccountHoldProjectorTests
     }
 
     [Fact]
+    public async Task An_over_capture_transitions_but_is_surfaced_as_over_captured()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var stream = Guid.NewGuid();
+
+        // ADR-PC-037 §D4: a HoldCaptured for MORE than the held amount still posts (the money moved, the
+        // row transitions to CAPTURED and leaves the active set), but the mismatch is surfaced as a
+        // reconciliation signal — never silently absorbed. The spine reports the arithmetic; the family
+        // interprets it.
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 6_000));
+
+        var row = store.Row("hold-1");
+        Assert.Equal("CAPTURED", row.State); // it DID transition — the money moved
+        Assert.Equal(6_000, row.CapturedAmountCents);
+        Assert.Equal(5_000, row.AmountCents); // the placement fact is immutable
+        Assert.Equal(0, await store.GetActiveHoldCentsAsync("acct-1")); // left the active set
+
+        var anomaly = Assert.Single(anomalies);
+        Assert.Equal(HoldReleaseResult.TransitionedOverCaptured, anomaly.Kind);
+        Assert.Equal("hold-1", anomaly.HoldId);
+        Assert.Equal(nameof(HoldCaptured), anomaly.ReleaseEventType);
+        Assert.Equal(stream, anomaly.ReleasingStreamId);
+        Assert.Equal(1, anomaly.ReleasingSequence);
+    }
+
+    [Fact]
+    public async Task A_capture_at_exactly_the_held_amount_transitions_silently_the_boundary_is_inclusive()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var stream = Guid.NewGuid();
+
+        // captured == held is the normal outcome, not an over-capture — no reconciliation signal.
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 5_000));
+
+        Assert.Equal("CAPTURED", store.Row("hold-1").State);
+        Assert.Empty(anomalies);
+    }
+
+    [Fact]
     public async Task An_expired_hold_leaves_the_active_set_with_no_capture_amount()
     {
         var store = new InMemoryAccountHoldStore();
@@ -434,7 +479,11 @@ public sealed class AccountHoldProjectorTests
                 ReleasedStreamId = releasedStreamId,
                 ReleasedSequence = releasedSequence,
             };
-            return Task.FromResult(HoldReleaseResult.Transitioned);
+            // Mirror the real store's RETURNING amount_cents comparison: an over-capture still transitions
+            // (the money moved) but is surfaced (ADR-PC-037 §D4).
+            return Task.FromResult(capturedAmountCents > row.AmountCents
+                ? HoldReleaseResult.TransitionedOverCaptured
+                : HoldReleaseResult.Transitioned);
         }
 
         public Task<HoldReleaseResult> ExpireAsync(
