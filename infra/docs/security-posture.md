@@ -42,7 +42,7 @@ the whole posture on one screen; the sections below add detail.
 
 | # | Boundary | The control | Where it lives | Status |
 |---|---|---|---|---|
-| **B1** | External clients → gateway | OAuth token validation, PSD2 SCA for money ops, rate-limiting, payload validation | [`kong/kong.yml`](../kong/kong.yml); `scripts/edge-contract-test.sh` | **Live** — edge policies enforced; full SCA depends on the issuer (staging) |
+| **B1** | External clients → gateway (incl. the owned-channel Mission Control UI) | OAuth token validation, PSD2 SCA for money ops, rate-limiting, payload validation; the Mission Control demo UI is gated by a Logto OIDC login | [`kong/kong.yml`](../kong/kong.yml); `scripts/edge-contract-test.sh`; `infra/k8s/overlays/staging/mission-control.yaml` | **Live** — edge policies enforced; Mission Control OIDC gate deploy-wired to Logto (staging); full SCA depends on the issuer |
 | **B2** | Gateway → internal services | Mutual TLS on every hop; plain HTTP is a config error | `kong/kong.yml` + `mcp-certgen`; [ADR-IC-016 plane (i)](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Partial** — Kong↔MCP mTLS is live; the broader internal mesh waits on the services existing |
 | **B3** | Producer → Redpanda | Distinct SASL/SCRAM identity per producer; topic ACLs as config | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml); `KafkaSaslOptions` | **Partial** — producer-side wiring live; broker-side ACL enforcement planned |
 | **B4** | Redpanda → each consumer | Each consumer subscribes only to the topics it needs; data minimization | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml) | **Planned** — lands per consumer as each consumer service is built |
@@ -104,6 +104,18 @@ The token issuer is **Logto** ([ADR-IC-021](../../docs/product-management/integr
 chosen largely because it natively does RFC 8707 audience binding — a hard
 requirement for the MCP channel. It's wired in the **staging** overlay; the dev
 stacks use test-fixture tokens.
+
+**The Mission Control demo UI is an owned channel, and it is now gated (B1).** On the public staging
+box, `app.babelstone.dev` used to be an *unauthenticated* surface. It now runs with
+`MC_AUTH_MODE=oidc` — a Logto OIDC login gate (auth-code + PKCE S256) in front of every route
+([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
+rollout step 2, the owned-channel Boundary 1). The gate is a confidential client: its client secret
+and its own session-signing key are OpenBao-seeded into `babelstone-dev-secrets` and injected at
+deploy, never committed. Because Logto advertises its **public** endpoints in discovery, Mission
+Control's login backchannel dials `https://auth.babelstone.dev` (a hairpin out through Traefik) — the
+same path Grafana's operator SSO uses — so no new internal network rule is introduced. The Logto
+application itself is hand-registered (DCR is the accepted §C6 gap) per
+[`infra/runbooks/mission-control-oidc-registration.md`](../runbooks/mission-control-oidc-registration.md).
 
 ---
 

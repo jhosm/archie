@@ -390,8 +390,16 @@ spec:
           port: 9000
 ---
 # 15 · Logto (3001 the OIDC issuer + 3002 the admin console) — the public edge (Traefik) only.
-# This also covers Grafana's operator SSO: its generic_oauth dials the PUBLIC
-# https://auth.babelstone.dev, which re-enters through Traefik. The admin console (3002) now ALSO
+# This also covers the TWO in-cluster callers that dial Logto's OIDC backchannel over its PUBLIC
+# host — Grafana's operator SSO (generic_oauth) and, since bd zla1.10.8.3, Mission Control's
+# Boundary-1 login gate (serve.py's OIDC discovery + code→token exchange against
+# OIDC_ISSUER=https://auth.babelstone.dev/oidc). Both dial the PUBLIC https://auth.babelstone.dev,
+# so the request HAIRPINS out of the pod and re-enters through Traefik — the source is a
+# traefik-namespace pod, already admitted below. Egress is unrestricted (this file is
+# policyTypes: [Ingress] only, see the header), so NO mission-control→logto:3001 egress rule is
+# needed or wanted: that internal Service is never dialled (Logto advertises its PUBLIC endpoints
+# in the discovery document, so the backchannel goes to the public host, not the ClusterIP). The
+# admin console (3002) now ALSO
 # takes an allow (bd zla1.10): Logto OSS v1.41 needs the console reached at a stable HTTPS host
 # (auth-admin.babelstone.dev) matching ADMIN_ENDPOINT so the Management API accepts its tokens — a
 # localhost port-forward mints an iss the default tenant rejects. The `logto-admin` Ingress fronts
