@@ -60,7 +60,7 @@ metadata:
     app.kubernetes.io/part-of: babelstone
 rules:
   # Core kinds the render carries: Services, ConfigMaps (generated kong/otel/rules
-  # configs), the backstage-db PVC, and the volume-snapshotter ServiceAccount.
+  # configs), PersistentVolumeClaims, and the volume-snapshotter ServiceAccount.
   - apiGroups: [""]
     resources: ["services", "configmaps", "persistentvolumeclaims", "serviceaccounts"]
     verbs: ["get", "list", "create", "patch", "update"]
@@ -74,8 +74,7 @@ rules:
     resources: ["secrets"]
     resourceNames: ["babelstone-dev-secrets", "babelstone-backup-secret"]
     verbs: ["get"]
-  # Workloads: the base/apps Deployments + the postgres/redpanda/registry/backstage-db
-  # StatefulSets.
+  # Workloads: the base/apps Deployments + the postgres/redpanda/registry StatefulSets.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "create", "patch", "update"]

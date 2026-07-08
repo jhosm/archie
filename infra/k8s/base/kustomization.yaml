@@ -75,20 +75,11 @@ configMapGenerator:
       - debits-success.json=../../wiremock/mappings/debits-success.json
       - reservations-release-success.json=../../wiremock/mappings/reservations-release-success.json
       - debits-reverse-success.json=../../wiremock/mappings/debits-reverse-success.json
-  # Backstage app-config (ADR-IC-015) — the SAME file the Compose stack mounts, so the
-  # portal config is one source across both stacks. The no-drift invariant: this restates
-  # no schema; its only catalogue content is the registered catalog-info.yaml Location.
-  - name: backstage-app-config
-    files:
-      - app-config.yaml=../../backstage/app-config.yaml
-  # Backstage catalogue descriptor. NOTE (human-handoff, ADR-IC-015 §9): a ConfigMap is flat
-  # — it cannot carry the events/ + reconciliation/ SUBDIRS that catalog-info.yaml $text-refs
-  # resolve against. This generates the top-level descriptor for path stability; a real deploy
-  # mounts the whole contracts/catalog/ tree (an init-container `git`-clone, or a build-time
-  # COPY into the app image) so the relative AsyncAPI refs resolve. Wiring that is platform work.
-  - name: backstage-catalog-descriptor
-    files:
-      - catalog-info.yaml=../../../contracts/catalog/catalog-info.yaml
+# NOTE: the backstage-app-config + backstage-catalog-descriptor ConfigMaps were removed
+# (bd babelstone-zla1.6.6). The real Backstage image (backstage/Dockerfile) now BAKES both the
+# governed app-config and the whole contracts/catalog/ tree, so neither is file-mounted — a
+# flat ConfigMap could never carry the events/ + reconciliation/ SUBDIRS anyway. The portal is
+# self-contained and uses in-memory SQLite (no Postgres); see infra/k8s/base/backstage.yaml.
 
 generatorOptions:
   # Stable names so the volume/env references in the manifests stay valid (no
