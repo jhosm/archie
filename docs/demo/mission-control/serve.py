@@ -14,11 +14,16 @@ proxies these backends:
 
   • /api/v1/*   → the ORCHESTRATOR edge (LIVE·saga mode): the constitution-saga front door
                   (POST /api/v1/deposits/constitute → 202 + process_id + SSE stream,
-                  ADR-IC-006 §P4 / Document 05). This server also PLAYS THE GATEWAY: it
-                  injects the X-Client-Id the orchestrator's edge authz expects (the claim
-                  Kong would propagate, EdgeAuth). The browser's EventSource cannot set
-                  headers, so injecting here is what lets the SSE stream's per-process
-                  ownership check (which binds to the SAME client id as the start) pass.
+                  ADR-IC-006 §P4 / Document 05). This server ATTESTS the X-Client-Id the
+                  orchestrator's edge authz expects, mirroring Kong's algorithm: in oidc mode
+                  it sets X-Client-Id from the OIDC-validated session `sub` (the same claim
+                  Kong would propagate from a validated token — real attestation, not a forged
+                  id); in dev mode it uses the static DEMO_CLIENT_ID. The browser's EventSource
+                  cannot set headers, so injecting here is what lets the SSE stream's per-process
+                  ownership check (which binds to the SAME client id as the start) pass. This is
+                  an acknowledged ADR-IC-006 §P2/§P4 exception for the demo BFF (it does NOT
+                  front the path with Kong's rate-limit/validation/SCA — 2026-07-08 amendment);
+                  full Kong-fronted conformance is epic bd babelstone-zla1.10.9.
 
   • /agent/*    → the real-Claude AGENT host (LIVE·agent mode, bd babelstone-f0ic.6): POST
                   /agent/stream {"instruction": "…"} → a text/event-stream of the model's
@@ -108,8 +113,9 @@ Options (env vars):
     ORCHESTRATOR_URL  base URL of the orchestrator (LIVE·saga) (default http://localhost:8090)
     TEMPO_URL         base URL of Grafana Tempo's query API     (default http://localhost:3200)
                       (LIVE·engine Telemetry tab → /tempo/api/traces/{id})
-    DEMO_CLIENT_ID    the gateway-attested caller injected on  (default CLI-DEMO-0001)
-                      /api/v1/* (an OPAQUE reference, never PII)
+    DEMO_CLIENT_ID    dev-mode X-Client-Id on /api/v1/* (an       (default CLI-DEMO-0001)
+                      OPAQUE reference, never PII); in oidc mode
+                      X-Client-Id is attested from the session sub
     AGENT_URL         base URL of the real-Claude agent host    (default http://localhost:8091)
                       (LIVE·agent mode, /agent/* → POST /agent/stream)
     PANDAPROXY_URL    base URL of Redpanda's HTTP Proxy         (default http://localhost:18082)
@@ -163,6 +169,11 @@ REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/
 PROM_URL = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# Sentinel returned by _route() when the /api/v1/* arm is asked to attest a caller id in oidc
+# mode but no authenticated session/sub is resolvable. It is DISTINCT from None (static file) and
+# from a route tuple, so the verb handlers can turn it into a 403 rather than forge the demo id.
+_REFUSE = object()
 
 # ── Read-only Postgres window for the Inspector lenses (bd babelstone-f0ic.15.1) ─────────────
 # These DSNs point at the engine + orchestrator databases. They are READ-ONLY by construction
@@ -1273,13 +1284,46 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _api_client_id(self):
+        """Resolve the X-Client-Id to attest on the /api/v1/* (orchestrator edge) arm.
+
+        Returns the caller id string, or None when oidc mode cannot resolve an authenticated
+        session `sub` (the caller MUST then refuse the request — never fall back to the static
+        demo id). In oidc mode this MIRRORS Kong's algorithm: attest X-Client-Id from the
+        OIDC-validated session `sub` — the same claim Kong would propagate from a validated
+        token — so this is REAL attestation, not a forged stand-in (ADR-IC-006 §P2/§P4 demo-BFF
+        exception, 2026-07-08 amendment). In dev mode (AUTH is None) it keeps the static
+        DEMO_CLIENT_ID, byte-for-byte the pre-auth behaviour.
+
+        Demo-data note: a freshly-logged-in operator now carries their OWN `sub`, so data owned
+        by the old static CLI-DEMO-0001 id would not be visible to them — a non-issue in practice,
+        since nothing is pre-seeded under that id. There is deliberately no id-mapping shim."""
+        if AUTH is None:
+            return DEMO_CLIENT_ID
+        session = AUTH.session_for(self._cookies())
+        # _authgate already validated the session before routing, so this is defence-in-depth:
+        # if for any reason no session/sub is resolvable in oidc mode, refuse — do NOT forge.
+        if not session or not session.get("sub"):
+            return None
+        return session["sub"]
+
     def _route(self):
-        """Map the request path to a backend. Returns (base_url, injected_headers, upstream_path)
-        or None for a static file served locally."""
+        """Map the request path to a backend. Returns (base_url, injected_headers, upstream_path),
+        None for a static file served locally, or the _REFUSE sentinel when the /api/v1/* arm
+        cannot attest a caller id in oidc mode (the verb handler turns that into a 403)."""
         if self.path.startswith("/api/v1/"):
-            # The orchestrator edge. This server stands in for Kong: it injects the
-            # gateway-attested caller id the edge authz binds ownership to (EdgeAuth).
-            return ORCHESTRATOR_URL, {"X-Client-Id": DEMO_CLIENT_ID}, self.path
+            # The orchestrator edge. This BFF same-origin-proxies to the internal orchestrator
+            # rather than routing through Kong (an acknowledged ADR-IC-006 §P2/§P4 exception for
+            # this Traefik-fronted demo host — see the 2026-07-08 amendment). It attests
+            # X-Client-Id the SAME WAY Kong does: from the OIDC-validated session `sub` in oidc
+            # mode, or the static DEMO_CLIENT_ID in dev mode. This is real attestation, not a
+            # forged id. (Full Kong-fronted conformance for this path is epic bd babelstone-
+            # zla1.10.9.) Note: a real operator carries their own `sub`; nothing is pre-seeded
+            # under the old CLI-DEMO-0001 id, so there is no demo-data visibility gap to bridge.
+            client_id = self._api_client_id()
+            if client_id is None:
+                return _REFUSE  # oidc mode with no resolvable session/sub — refuse, never forge
+            return ORCHESTRATOR_URL, {"X-Client-Id": client_id}, self.path
         if self.path.startswith("/v1/"):
             return ENGINE_URL, None, self.path
         if self.path.startswith("/agent/"):
@@ -1326,6 +1370,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # allowlist (_loki_filter, applied in _relay) before it reaches the browser — no PII crosses.
             return LOKI_URL, None, self.path
         return None
+
+    def _dispatch(self, method):
+        """Resolve the route and act on it. Returns True when the request was handled here (relayed
+        upstream, or refused with a 403 because oidc mode could not attest a caller id), False when
+        there is no proxy route (the caller then serves a static file or answers 405)."""
+        route = self._route()
+        if route is _REFUSE:
+            # oidc mode, /api/v1/* arm, no resolvable session/sub — refuse rather than forge the
+            # static demo id (ADR-IC-006 §P2/§P4: the caller id must be attested, never invented).
+            self.send_error(403, "no authenticated session to attest X-Client-Id from")
+            return True
+        if route is not None:
+            self._relay(method, route[0], route[1], route[2])
+            return True
+        return False
 
     def _relay(self, method, base_url, inject, upstream_path):
         url = base_url + upstream_path
@@ -1482,9 +1541,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self._pg_handle():
             return
-        route = self._route()
-        if route is not None:
-            return self._relay("GET", route[0], route[1], route[2])
+        if self._dispatch("GET"):
+            return
         return super().do_GET()
 
     def do_HEAD(self):
@@ -1509,9 +1567,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self._refuse_mutation():
             return
-        route = self._route()
-        if route is not None:
-            return self._relay("POST", route[0], route[1], route[2])
+        if self._dispatch("POST"):
+            return
         self.send_error(405)
 
     def do_PUT(self):
@@ -1519,9 +1576,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self._refuse_mutation():
             return
-        route = self._route()
-        if route is not None:
-            return self._relay("PUT", route[0], route[1], route[2])
+        if self._dispatch("PUT"):
+            return
         self.send_error(405)
 
     def do_DELETE(self):
@@ -1531,9 +1587,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if self._refuse_mutation():
             return
-        route = self._route()
-        if route is not None:
-            return self._relay("DELETE", route[0], route[1], route[2])
+        if self._dispatch("DELETE"):
+            return
         self.send_error(405)
 
 
