@@ -111,10 +111,11 @@ spec:
 # staging box's token ISSUER (login + SCA + the MCP-agent authority). The 4th public host. It is
 # NOT a product route — it sits beside Backstage/Mission Control straight through Traefik, so
 # Kong stays the ADR-IC-006 edge for the product API (auth subdomain, reverse-proxied per the
-# ADR-IC-021 staging rollout). The main app port (3001 — sign-in + OIDC discovery + JWKS) is
-# fronted at auth.babelstone.dev; the admin console (3002) is fronted separately at
-# auth-admin.babelstone.dev (the `logto-admin` Ingress below, bd zla1.10) — see that block for
-# why the OSS console needs its own real HTTPS host rather than a localhost port-forward.
+# ADR-IC-021 staging rollout). The core service port (3001 — sign-in + OIDC discovery + JWKS) is
+# fronted at auth.babelstone.dev; the admin console is fronted separately at
+# auth-admin.babelstone.dev (the `logto-admin` Ingress below, bd zla1.10). Under
+# ADMIN_DISABLE_LOCALHOST=true the console is served by the SAME core listener (3001), routed by
+# the auth-admin Host — see that block for why the OSS console needs its own real HTTPS host.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -141,16 +142,23 @@ spec:
                 port:
                   number: 3001
 ---
-# Logto Admin Console + Management API (bd zla1.10). The OSS admin console (port 3002) mints the
-# admin-tenant tokens the operator uses to call the DEFAULT tenant's Management API (create apps,
-# roles, users). Logto stamps those tokens with iss = {ADMIN_ENDPOINT}/oidc; the default tenant
-# accepts them ONLY if that issuer is a stable HTTPS URL that matches how the console is actually
-# reached (Logto OSS v1.41, PR #8869). A `kubectl port-forward` at http://localhost:3002 makes
-# the console mint iss=http://localhost:3002/oidc, which the Management API rejects with
-# JWTClaimValidationFailed('iss') → every write 401s. So the console gets its OWN real host here,
-# and logto.yaml sets ADMIN_ENDPOINT=https://auth-admin.babelstone.dev to match. Same DNS-01 TLS.
-# It is auth-gated by the Logto admin login; network-hardening (Cloudflare Access / IP allowlist /
-# ADMIN_DISABLE_LOCALHOST) is the follow-up so the IAM console isn't world-reachable by default.
+# Logto Admin Console + Management API (bd zla1.10). The OSS admin console mints the admin-tenant
+# tokens the operator uses to call the DEFAULT tenant's Management API (create apps, roles, users).
+# Logto stamps those tokens with iss = {ADMIN_ENDPOINT}/oidc; the default tenant accepts them ONLY
+# if that issuer is a stable HTTPS URL matching how the console is actually reached (Logto OSS
+# v1.41, PR #8869). A `kubectl port-forward` at http://localhost:3002 would mint
+# iss=http://localhost:3002/oidc, which the Management API rejects (JWTClaimValidationFailed) →
+# every write 401s. So the console gets its OWN real host here, and logto.yaml sets
+# ADMIN_ENDPOINT=https://auth-admin.babelstone.dev to match. Same DNS-01 TLS.
+#
+# Backend is the CORE service port (3001), NOT the admin port (3002): logto.yaml sets
+# ADMIN_DISABLE_LOCALHOST=true (bd zla1.10.6), which stops Logto opening the separate 3002 listener
+# at all — packages/core/src/app/init.ts guards `adminServer.listen(adminUrlSet.port)` on
+# `!adminUrlSet.isLocalhostDisabled`. The console is then served by the core listener on 3001,
+# which routes to the admin tenant by matching the request Host against ADMIN_ENDPOINT
+# (TRUST_PROXY_HEADER=true trusts Traefik's forwarded Host). Fronting 3002 hits a closed port →
+# Traefik/Cloudflare 502 (the regression this corrects). Auth-gated by the Logto admin login +
+# Cloudflare Access (staging-ops.md §8).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -175,7 +183,7 @@ spec:
               service:
                 name: logto
                 port:
-                  number: 3002
+                  number: 3001
 ---
 # Grafana observability UI (bd zla1.10.1 / zla1.10.6). Fronts the grafana-lgtm appliance's
 # Grafana UI (port 3000) at grafana.babelstone.dev so operators reach it without a port-forward

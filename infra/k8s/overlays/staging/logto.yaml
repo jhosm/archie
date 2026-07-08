@@ -32,18 +32,16 @@ spec:
   selector:
     app.kubernetes.io/name: logto
   ports:
-    # Main app: the sign-in experience, the OAuth/OIDC endpoints + RFC 8414 discovery, and the
-    # APIs. The ONLY port the public Ingress fronts (auth.babelstone.dev → 3001).
+    # Core service (3001): the sign-in experience, the OAuth/OIDC endpoints + RFC 8414 discovery,
+    # the APIs — AND, under ADMIN_DISABLE_LOCALHOST=true, the admin console + Management API too,
+    # which Logto serves on this SAME listener routed to the admin tenant by the ADMIN_ENDPOINT Host
+    # (auth-admin.babelstone.dev). Both public Ingresses (auth + auth-admin, ingress.yaml) front
+    # this one port. There is deliberately NO separate 3002 port: with localhost disabled Logto
+    # never opens the admin listener (see ADMIN_DISABLE_LOCALHOST below), so a 3002 Service port
+    # would be a dead backend — the bd zla1.10.10 502 was exactly an Ingress still aimed at it.
     - name: http
       port: 3001
       targetPort: 3001
-    # Admin console + Management API: operators reach it at https://auth-admin.babelstone.dev
-    # (the `logto-admin` Ingress, bd zla1.10) to hand-register each MCP agent client (DCR is the
-    # accepted gap — ADR-IC-021 §C6). It needs a real HTTPS host (matching ADMIN_ENDPOINT below),
-    # NOT a port-forward, or the Management API rejects the console's tokens on issuer mismatch.
-    - name: admin
-      port: 3002
-      targetPort: 3002
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -105,10 +103,10 @@ spec:
         - name: logto
           image: svhd/logto:latest
           ports:
+            # Only the core listener (3001) is bound: ADMIN_DISABLE_LOCALHOST=true (below) tells
+            # Logto NOT to open the separate admin listener, so there is no 3002 containerPort.
             - name: http
               containerPort: 3001
-            - name: admin
-              containerPort: 3002
           env:
             # Password first, so the $(LOGTO_DB_PASSWORD) interpolation in DB_URL resolves.
             - name: LOGTO_DB_PASSWORD
@@ -134,16 +132,25 @@ spec:
             # host does not need to be self-reachable from the pod — only the issuer must match.
             - name: ADMIN_ENDPOINT
               value: https://auth-admin.babelstone.dev
-            # Defense-in-depth for the now-public admin console (bd zla1.10.6): refuse the
-            # localhost:3002 admin-CORS fallback, so the console is reachable ONLY via the real
-            # ADMIN_ENDPOINT host (behind Traefik + the Cloudflare Access gate), never a bare
-            # port-forward origin. The network gate (Cloudflare Access) is the load-bearing control.
+            # Defense-in-depth for the now-public admin console (bd zla1.10.6): this does NOT merely
+            # tighten CORS — it CLOSES the separate admin listener entirely. Logto guards
+            # `adminServer.listen(adminUrlSet.port)` on `!adminUrlSet.isLocalhostDisabled`
+            # (packages/core/src/app/init.ts), so port 3002 is never bound. The admin console is
+            # served instead by the CORE listener (3001), which routes to the admin tenant by
+            # matching the request Host against ADMIN_ENDPOINT (TRUST_PROXY_HEADER=true trusts
+            # Traefik's forwarded Host). Consequence: the console is reachable ONLY via the real
+            # ADMIN_ENDPOINT host (behind Traefik + Cloudflare Access), never a bare localhost:3002
+            # port-forward — AND the `logto-admin` Ingress MUST front 3001, not 3002, or every
+            # post-Access request 502s on the closed port (the bd zla1.10.10 regression). The network
+            # gate (Cloudflare Access) is the load-bearing control.
             - name: ADMIN_DISABLE_LOCALHOST
               value: "true"
             - name: TRUST_PROXY_HEADER
               value: "true"
             - name: PORT
               value: "3001"
+            # Inert while ADMIN_DISABLE_LOCALHOST=true (the admin listener is never opened); kept as
+            # the documented default so flipping localhost back on needs no re-derivation.
             - name: ADMIN_PORT
               value: "3002"
             # Secret-vault KEK — encrypts connector secrets at rest. Sourced from the
