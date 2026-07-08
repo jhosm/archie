@@ -50,17 +50,18 @@ write 401s on a port-forward. See
 [`iam-mcp-resource-registration.md` §0](./iam-mcp-resource-registration.md#0-reach-the-logto-admin-console)
 for the full rationale.
 
-## 1. Create the `babelstone-backstage` application
+## 1. Create the Backstage Logto application
 
 1. Console → **Applications** → **Create application** → type **Traditional Web** (a *confidential*
    server-side client). Backstage's auth backend runs the code→token exchange **server-side** with a
    client secret plus PKCE — it is not a browser SPA, so pick the confidential Web app type, not
    Single-Page App.
 2. Name it so it is unmistakable in the cohort register, e.g. **Backstage (staging)**.
-3. Set the **App ID** (client_id) to **`babelstone-backstage`** — this MUST equal
-   `BACKSTAGE_OIDC_CLIENT_ID` in `overlays/staging/backstage-oidc.patch.yaml`. (If Logto generates a
-   random App ID instead of letting you set it, put that generated value into
-   `BACKSTAGE_OIDC_CLIENT_ID` and redeploy — the two must match, whichever way round.)
+3. **Read the App ID** (client_id) Logto assigns. Logto generates this value — it is NOT settable to
+   a friendly name. For the current staging app it is **`xs0shrdb5iem7pqgyt86m`**, already wired into
+   `BACKSTAGE_OIDC_CLIENT_ID` in `overlays/staging/backstage-oidc.patch.yaml`. If you ever re-create
+   the app, Logto assigns a NEW App ID — update `BACKSTAGE_OIDC_CLIENT_ID` to match and redeploy; the
+   two MUST be equal.
 
 ## 2. Configure the redirect + flow (auth-code + PKCE S256)
 
@@ -119,7 +120,7 @@ filter covers `backstage/**` + `infra/backstage/**`, so a merge rebuilds `:lates
    ```bash
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
      'https://backstage.babelstone.dev/api/auth/oidc/start?env=production'
-   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=babelstone-backstage...
+   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=xs0shrdb5iem7pqgyt86m...
    ```
 
 3. In a browser, `https://backstage.babelstone.dev` transparently redirects to Logto (the frontend
