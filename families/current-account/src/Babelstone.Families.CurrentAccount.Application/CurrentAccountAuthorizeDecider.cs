@@ -98,10 +98,11 @@ public static class CurrentAccountAuthorizeDecider
         AuthorizationDeclineReason.PerTransactionLimitExceeded => AccountDeclinedReason.LimitExceeded,
 
         // The spine's single insufficient-funds reason is two product outcomes: if an arranged overdraft
-        // was configured, the debit went BEYOND it (unarranged overdraft / ultrapassagem, ADR-PC-037 §D5);
-        // with no overdraft configured, it is a plain shortfall. Until the arranged-overdraft pack-value
-        // read lands (ARRANGED_OVERDRAFT_PACK_BOUNDED, Planned) the resolved overdraft is zero, so the
-        // OVERDRAFT_LIMIT_EXCEEDED arm is exercised only by unit tests that pass an explicit overdraft.
+        // is configured, the debit went BEYOND it (unarranged overdraft / ultrapassagem, ADR-PC-037 §D5);
+        // with no overdraft configured, it is a plain shortfall. The authorize shell resolves the overdraft
+        // headroom from the account's product config (ARRANGED_OVERDRAFT_PACK_BOUNDED), so this
+        // OVERDRAFT_LIMIT_EXCEEDED arm is production-reachable for a product that configures an overdraft
+        // (e.g. ca_pt_standard).
         AuthorizationDeclineReason.InsufficientAvailableBalance => rules.OverdraftLimitCents > 0
             ? AccountDeclinedReason.OverdraftLimitExceeded
             : AccountDeclinedReason.InsufficientAvailableBalance,

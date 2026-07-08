@@ -32,4 +32,11 @@
     <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The current_account family's OWN product-config store (CurrentAccountProductConfigStore, ADR-PC-037
+         §D5) reads its product-configs/current-account/*.yaml at startup. Version pinned centrally in
+         Directory.Packages.props — the same YamlDotNet the deposit store + pack loader use. -->
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
 </Project>

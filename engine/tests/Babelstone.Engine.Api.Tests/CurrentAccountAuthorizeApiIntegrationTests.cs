@@ -117,7 +117,9 @@ public sealed class CurrentAccountAuthorizeApiIntegrationTests : IAsyncLifetime
         // lowers the available balance the second one reads — so the second, which alone would fit the
         // balance, is declined once the first hold is in view. This is what the service's explicit
         // DrainOnceAsync buys: without it the second would read the stale pre-hold balance and double-spend.
-        var accountId = await OpenAccountAsync();
+        // A ca_pt_basic account (no arranged overdraft), so the second debit's shortfall is a plain
+        // INSUFFICIENT_AVAILABLE_BALANCE — the read-your-writes proof is about the hold, not the overdraft.
+        var accountId = await OpenAccountAsync("ca_pt_basic");
         await SeedClearedCreditAsync(accountId, 100_000);
 
         // #1: 600.00 of the 1000.00 balance — authorized, earmarking 600.00 (available now 400.00).
@@ -143,8 +145,9 @@ public sealed class CurrentAccountAuthorizeApiIntegrationTests : IAsyncLifetime
     {
         // A decline is an APPENDED auditable fact (ADR-PC-033 slot 5 / ADR-PC-037 §D6), not a silent
         // non-append — and it is idempotent exactly like an approval: a replay returns the original code with
-        // no second refusal fact. A fresh account has no funds, so a debit is INSUFFICIENT_AVAILABLE_BALANCE.
-        var accountId = await OpenAccountAsync();
+        // no second refusal fact. A fresh ca_pt_basic account (no overdraft) has no funds, so a debit is
+        // INSUFFICIENT_AVAILABLE_BALANCE (not the arranged-overdraft path).
+        var accountId = await OpenAccountAsync("ca_pt_basic");
         var commandId = Guid.NewGuid();
 
         var first = await AuthorizeAsync(accountId, amountCents: 5_000, commandId);
@@ -165,6 +168,34 @@ public sealed class CurrentAccountAuthorizeApiIntegrationTests : IAsyncLifetime
         // event (no operations.HoldPlaced: nothing was earmarked).
         Assert.Equal(
             ["current_account.AccountOpened", "current_account.AuthorizationDeclined"],
+            await EventTypesAsync(accountId));
+    }
+
+    [Fact]
+    public async Task An_arranged_overdraft_authorizes_a_debit_within_the_limit_and_declines_one_beyond_it_OVERDRAFT_LIMIT_EXCEEDED()
+    {
+        // ARRANGED_OVERDRAFT_PACK_BOUNDED end-to-end (ADR-PC-037 §D5, CA-1): a ca_pt_standard account carries
+        // the shipped EUR 500 arranged overdraft, resolved from its product config over HTTP. On a zero
+        // balance a debit BEYOND the limit is refused (OVERDRAFT_LIMIT_EXCEEDED, earmarking nothing), and a
+        // debit WITHIN the limit overdraws the account into the arranged window and is authorized — the
+        // pack-value read proven through the running engine, not just the pure decider.
+        var accountId = await OpenAccountAsync("ca_pt_standard");
+
+        // EUR 600 on a zero balance overdraws BEYOND the EUR 500 arranged limit → declined, nothing earmarked.
+        var beyond = await AuthorizeAsync(accountId, amountCents: 60_000, Guid.NewGuid());
+        var beyondBody = await beyond.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("DECLINED", beyondBody.GetProperty("outcome").GetString());
+        Assert.Equal("OVERDRAFT_LIMIT_EXCEEDED", beyondBody.GetProperty("declined_reason").GetString());
+
+        // EUR 400 on the still-zero balance overdraws WITHIN the EUR 500 arranged window → authorized.
+        var within = await AuthorizeAsync(accountId, amountCents: 40_000, Guid.NewGuid());
+        var withinBody = await within.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("AUTHORIZED", withinBody.GetProperty("outcome").GetString());
+        Assert.NotNull(withinBody.GetProperty("hold_id").GetString());
+
+        // The refusal fact then the earmark — the beyond-limit debit moved nothing, the within-limit one held.
+        Assert.Equal(
+            ["current_account.AccountOpened", "current_account.AuthorizationDeclined", "operations.HoldPlaced"],
             await EventTypesAsync(accountId));
     }
 
@@ -211,13 +242,17 @@ public sealed class CurrentAccountAuthorizeApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    private async Task<Guid> OpenAccountAsync()
+    // Opens a current account of the given product. Defaults to ca_pt_standard (the canonical account,
+    // arranged overdraft EUR 500); the balance-mechanics tests below open ca_pt_basic (no overdraft) so the
+    // arranged overdraft does not change their INSUFFICIENT_AVAILABLE_BALANCE outcomes — the overdraft path
+    // is proven by the dedicated arranged-overdraft test.
+    private async Task<Guid> OpenAccountAsync(string productCode = "ca_pt_standard")
     {
         var accountId = Guid.NewGuid();
         var open = await _client.PostAsJsonAsync("/v1/accounts", new
         {
             account_id = accountId,
-            product_code = "ca_pt_standard",
+            product_code = productCode,
             currency = "EUR",
         }, SnakeCase);
         Assert.Equal(HttpStatusCode.Created, open.StatusCode);

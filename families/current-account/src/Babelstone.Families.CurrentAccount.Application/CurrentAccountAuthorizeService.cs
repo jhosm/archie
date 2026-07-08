@@ -44,7 +44,8 @@ public sealed class CurrentAccountAuthorizeService(
     VerifiedPack pack,
     IEventStore store,
     IEventSerializer serializer,
-    IPiiProtector protector)
+    IPiiProtector protector,
+    CurrentAccountProductConfigStore productConfigs)
 {
     private static readonly CurrentAccountFamilyModule Family = new();
 
@@ -138,13 +139,17 @@ public sealed class CurrentAccountAuthorizeService(
             $"No event found at authorize commit sequence {commitSequence} on account {accountId}.");
     }
 
-    // Resolve the stage-4 rule inputs the pure decider applies. The current_account pack-value surface
-    // (arranged_overdraft_limit / transaction_limits) is not yet resolved here — until it lands
-    // (ARRANGED_OVERDRAFT_PACK_BOUNDED, Planned) every account authorizes with no overdraft headroom and
-    // no per-transaction ceiling (the AuthorizationRules default), so a debit beyond the balance is a plain
-    // INSUFFICIENT_AVAILABLE_BALANCE. The OVERDRAFT_LIMIT_EXCEEDED / LIMIT_EXCEEDED code paths exist and are
-    // unit-tested with explicit rules.
-    private static AuthorizationRules ResolveRules(AccountPosition position) => new();
+    // Resolve the stage-4 rule inputs the pure decider applies from the account's product config
+    // (ADR-PC-037 §D5, ARRANGED_OVERDRAFT_PACK_BOUNDED): the family's own product-config store maps the
+    // account's product_code to its arranged-overdraft headroom + per-transaction cap, which the decider
+    // reads to authorize a within-limit overdraft and refuse an ultrapassagem (OVERDRAFT_LIMIT_EXCEEDED) or
+    // an over-cap debit (LIMIT_EXCEEDED). A product code the store holds no config for resolves to the
+    // zero-overdraft degenerate (no headroom, no ceiling — a debit past the balance is a plain
+    // INSUFFICIENT_AVAILABLE_BALANCE), the conservative gate rather than refusing a live account over a
+    // config gap. Velocity (daily/monthly) is declared in the config but not enforced here yet — it needs a
+    // windowed-spend projection (a documented follow-up).
+    private AuthorizationRules ResolveRules(AccountPosition position) =>
+        productConfigs.Resolve(position.ProductCode)?.ToAuthorizationRules() ?? CurrentAccountProductConfig.None;
 
     private static Type EventClrType(string eventType) => eventType switch
     {

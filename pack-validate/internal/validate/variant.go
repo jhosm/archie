@@ -115,6 +115,13 @@ type variantData struct {
 		MinRemainingBalanceCents int64 `json:"min_remaining_balance_cents"`
 		LockupPeriodDays         int64 `json:"lockup_period_days"`
 	} `json:"partial_withdrawal"`
+
+	// HasRate is true when the variant carries a `rate:` block of ANY inner shape — term-deposit
+	// flat/stepped, personal-loan `fixed`, or a future rate shape. Set from the raw value's field
+	// presence in decodeVariant, NOT from the typed Rate struct above (which models only flat/stepped),
+	// so the depth-3 rate-sheet gate keys on "does this variant reference a rate at all" and covers a
+	// new priced family at birth. A rate-less variant (a demand account) leaves it false.
+	HasRate bool `json:"-"`
 }
 
 // decodeVariant decodes the parsed variant value into the typed view. Only
@@ -124,5 +131,8 @@ func decodeVariant(v cue.Value) (variantData, error) {
 	if err := v.Decode(&vd); err != nil {
 		return vd, fmt.Errorf("decoding variant for depth-3/4 checks: %w", err)
 	}
+	// Presence of a `rate:` block of any inner shape — the depth-3 rate-sheet gate keys on this rather
+	// than the typed Rate struct (which models only flat/stepped, missing personal-loan's `fixed`).
+	vd.HasRate = v.LookupPath(cue.ParsePath("rate")).Exists()
 	return vd, nil
 }
