@@ -1,0 +1,44 @@
+<!-- The current_account family's LIFECYCLE-COMMAND contribution (ADR-PC-037 §D4e; ADR-PC-036 §Decision 2/5;
+     ADR-PC-021 §A3/§P4): the family-owned HoldExpiryRule + the IFamilyLifecycleModule that binds the read
+     side the rule range-scans and registers the rule. It plugs into the family-agnostic lifecycle-command
+     driver exactly as the term-deposit .Lifecycle contribution does — the family → core arrow (ADR-IC-019
+     §P2), never the reverse. The lifecycle driver core names no family; THIS assembly (a Babelstone.Families.*
+     assembly the host discovers by assembly-scan) holds the current_account hold-expiry knowledge.
+
+     ONE deliberate divergence from the term-deposit .Lifecycle csproj: term-deposit's rule range-scans a
+     FAMILY-owned read model (read_model.deposits, via its .Application PostgresDepositReadModelStore), but a
+     current account's active-hold set is a SPINE-owned fold (account_holds, ADR-PC-033 — the family tracks no
+     holds on its own state). So this project references the ENGINE spine reader (AccountBalanceReader in
+     Babelstone.Engine) + the concrete spine stores (Babelstone.EventStore) it binds, NOT a family
+     .Application store — there is no family read model here to name. Build settings inherit from
+     families/Directory.Build.props → engine/Directory.Build.props (net10.0, nullable, warnings-as-errors,
+     deterministic). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.CurrentAccount.Lifecycle</RootNamespace>
+    <AssemblyName>Babelstone.Families.CurrentAccount.Lifecycle</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection + AddSingleton for CurrentAccountLifecycleModule.ConfigureServices. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-driver CORE: the family → core arrow (ADR-IC-019 §P2). Brings the contribution port
+         (IFamilyLifecycleModule / LifecycleModuleContext) + the rule contract (ILifecycleCommandRule /
+         LifecycleCommandDecision). The core never references back. -->
+    <ProjectReference Include="../../../../lifecycle-driver/src/Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+    <!-- The engine KERNEL's spine read side the HoldExpiryRule range-scans: AccountBalanceReader
+         .GetExpiryCandidatesAsync (the ADR-PC-023 projection-derived expiry-horizon read) + the Hold read
+         shape it returns. A current account's holds are spine-owned (ADR-PC-033), so the read is the engine
+         reader, not a family read-model store. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The engine STORE layer: the concrete Npgsql PostgresAccountHoldStore + PostgresMovementLedgerStore the
+         module binds behind AccountBalanceReader over the host's read-model connection (the composition root
+         names Postgres here, not in the driver core). Reachable transitively via Babelstone.Engine, named
+         explicitly so the concrete-store dependency is greppable (mirrors term-deposit naming its .Application
+         store explicitly). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
+  </ItemGroup>
+</Project>

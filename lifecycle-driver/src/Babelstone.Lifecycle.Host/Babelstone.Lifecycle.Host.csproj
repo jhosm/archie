@@ -99,5 +99,6 @@
          family is a new .Lifecycle ProjectReference here + its module — no Program.cs edit (ADR-PC-036 §S4). -->
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
     <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
+    <ProjectReference Include="../../../families/current-account/src/Babelstone.Families.CurrentAccount.Lifecycle/Babelstone.Families.CurrentAccount.Lifecycle.csproj" />
   </ItemGroup>
 </Project>

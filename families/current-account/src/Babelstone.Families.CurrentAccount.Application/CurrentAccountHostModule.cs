@@ -134,6 +134,15 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IEventSerializer>(),
             serviceProvider.GetRequiredService<IPiiProtector>(),
             serviceProvider.GetRequiredService<CurrentAccountProductConfigStore>()));
+
+        // The projection-derived HOLD-EXPIRY command shell (ADR-PC-037 §D4e): the /holds/{holdId}/expire
+        // target the ADR-PC-036 lifecycle-command driver POSTs to. A THIRD service, distinct from both the
+        // lifecycle state machine (relabels state) and the authorize money-mover (places holds): it only
+        // releases a hold, moving no money. It composes just the family runtime and the pinned pack — the
+        // append is a plain spine fact with no balance read or decider (holds are spine-owned, ADR-PC-033).
+        services.AddSingleton(serviceProvider => new CurrentAccountHoldExpiryService(
+            serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            ctx.Pack));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app)

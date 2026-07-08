@@ -107,6 +107,12 @@ public enum HoldKind
 /// authorization hold. STRUCTURAL, never PII (ADR-PC-004).</param>
 /// <param name="ExpiresAt">A LEGAL hold's advisory expiry horizon (ADR-PC-041 slot 2); null =
 /// open-ended or an authorization hold.</param>
+/// <param name="PlacedSequence">The per-stream sequence number of the <c>HoldPlaced</c>/<c>FundsHeld</c>
+/// event that placed this hold — the placement provenance the projection-derived expiry driver keys the
+/// expiry command's OCCURRENCE on (ADR-PC-036): a hold's <see cref="HoldId"/> is a string, but
+/// a lifecycle occurrence key must be a stable <c>long</c>, and the placing event's sequence is exactly
+/// one such per-hold-per-account. Structural, never PII (ADR-PC-004); defaults to <c>0</c> for a hold
+/// constructed outside the store read path (the read shape always fills it from the row).</param>
 public sealed record Hold(
     string HoldId,
     string AccountRef,
@@ -115,7 +121,8 @@ public sealed record Hold(
     HoldState State,
     HoldKind Kind = HoldKind.Authorization,
     string? LegalReference = null,
-    DateOnly? ExpiresAt = null);
+    DateOnly? ExpiresAt = null,
+    long PlacedSequence = 0);
 
 /// <summary>
 /// The spine-owned generic balance fold reads (ADR-PC-033): the ACCOUNTING balance is the
@@ -191,6 +198,11 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
     // a state/kind outside the migration CHECK set rather than a silent default). Kind maps the
     // storage-primitive string to the spine enum: AUTHORIZATION -> Authorization, LEGAL -> Legal
     // (ADR-PC-041); LegalReference/ExpiresAt surface the observable "why" for a legal hold.
+    // PlacedSequence surfaces the placing event's per-stream sequence — the stable long the expiry
+    // driver keys the HoldExpired occurrence on (ADR-PC-036; a string hold_id cannot be an
+    // occurrence key). Amount/ValueDate/State stay the read shape; PlacedSequence is the one provenance
+    // column the read side needs, so it is the only one lifted onto Hold (not PlacedStreamId, which the
+    // account_ref already carries as text).
     private static Hold ToHold(AccountHoldRow row) => new(
         HoldId: row.HoldId,
         AccountRef: row.AccountRef,
@@ -199,5 +211,6 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
         State: Enum.Parse<HoldState>(row.State, ignoreCase: true),
         Kind: Enum.Parse<HoldKind>(row.Kind, ignoreCase: true),
         LegalReference: row.LegalReference,
-        ExpiresAt: row.ExpiresAt);
+        ExpiresAt: row.ExpiresAt,
+        PlacedSequence: row.PlacedSequence);
 }

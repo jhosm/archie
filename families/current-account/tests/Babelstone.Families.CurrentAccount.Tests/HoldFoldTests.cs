@@ -12,8 +12,11 @@ namespace Babelstone.Families.CurrentAccount.Tests;
 /// <c>.. CrossCuttingEventRegistrations.For&lt;AccountPosition&gt;()</c> splice in
 /// <see cref="CurrentAccountFamilyModule"/> buys: a transactional family that omitted it would throw on
 /// the first hold that lands. These tests pin (a) the whole cross-cutting set resolves on this family's
-/// registry, and (b) each hold event folds as a NO-OP on the family position — because the active-hold
-/// set and both balances are the SPINE-owned <c>AccountHoldProjector</c> fold, never family state.
+/// registry, (b) each hold event folds as a NO-OP on the family position — because the active-hold
+/// set and both balances are the SPINE-owned <c>AccountHoldProjector</c> fold, never family state — and
+/// (c) the whole ADR-PC-037 hold-reconciliation vocabulary (partial / over / late / reversal / expiry)
+/// folds inert and identically on replay on a family stream: <c>HOLD_LIFECYCLE_PURE</c>'s first *family*
+/// instance (the reconciliation-arithmetic determinism is the spine's <c>AccountHoldProjectorTests</c>).
 /// </summary>
 public sealed class HoldFoldTests
 {
@@ -71,6 +74,53 @@ public sealed class HoldFoldTests
         // its family events left it — Active throughout the hold lifecycle.
         Assert.Equal(AccountLifecycle.Active, position.Lifecycle);
         Assert.Equal(accountId, position.AccountId);
+    }
+
+    [Fact]
+    public void The_whole_D4_hold_vocabulary_folds_inert_and_identically_on_a_family_stream()
+    {
+        // HOLD_LIFECYCLE_PURE — the FIRST *family* instance (ADR-PC-037). The reconciliation-arithmetic
+        // determinism (partial vs over-capture, terminal-state precedence, the release-anomaly signal) is the
+        // SPINE projector's, owned by the engine-side AccountHoldProjectorTests. This pins the complement on a
+        // current_account STREAM: every event the D4 policy admits — (a) partial capture, (c) over-capture,
+        // (d) reversal (expire before capture), (b) late capture as a re-presentment after expiry, and (e) a
+        // plain projection-derived expiry — DECODES on the family registry and folds INERT (holds are
+        // spine-owned, ADR-PC-033), so the family fold is a deterministic no-op over the whole hold
+        // vocabulary. Replaying the sequence yields identical state.
+        var accountId = Guid.NewGuid();
+        var opened = Fold(AccountPosition.Empty, Opened(accountId));
+        var acct = accountId.ToString();
+
+        // One stream carrying every ADR-PC-037 reconciliation scenario as its holds resolve.
+        DomainEvent[] holdLifecycle =
+        [
+            // (a) partial capture — captured < held.
+            new HoldPlaced(accountId, "hold-partial", acct, new Money(5_000), new DateOnly(2026, 2, 1)),
+            new HoldCaptured(accountId, "hold-partial", acct, new Money(3_000), new DateOnly(2026, 2, 3)),
+            // (c) over-capture — captured > held.
+            new HoldPlaced(accountId, "hold-over", acct, new Money(5_000), new DateOnly(2026, 2, 1)),
+            new HoldCaptured(accountId, "hold-over", acct, new Money(6_000), new DateOnly(2026, 2, 4)),
+            // (d) reversal — an authorization voided before capture (a HoldExpired-style release, no posting).
+            new HoldPlaced(accountId, "hold-reversed", acct, new Money(2_000), new DateOnly(2026, 2, 1)),
+            new HoldExpired(accountId, "hold-reversed", acct, new DateOnly(2026, 2, 5)),
+            // (b) late capture vs expiry — a capture arriving AFTER the matching HoldExpired (a re-presentment).
+            new HoldPlaced(accountId, "hold-late", acct, new Money(4_000), new DateOnly(2026, 2, 1)),
+            new HoldExpired(accountId, "hold-late", acct, new DateOnly(2026, 2, 2)),
+            new HoldCaptured(accountId, "hold-late", acct, new Money(4_000), new DateOnly(2026, 2, 6)),
+            // (e) expiry horizon — a plain projection-derived expiry of an un-captured hold (the driver path).
+            new HoldPlaced(accountId, "hold-expired", acct, new Money(1_000), new DateOnly(2026, 2, 1)),
+            new HoldExpired(accountId, "hold-expired", acct, new DateOnly(2026, 2, 7)),
+        ];
+
+        var first = holdLifecycle.Aggregate(opened, Fold);
+        var second = holdLifecycle.Aggregate(opened, Fold);
+
+        // Deterministic: the same event sequence folds to the same state on every replay (HOLD_LIFECYCLE_PURE).
+        Assert.Equal(first, second);
+        // Inert: not one of the five reconciliation scenarios moves the family position — it is exactly the
+        // opened account, still Active (the whole hold lifecycle is a spine-owned fold).
+        Assert.Equal(opened, first);
+        Assert.Equal(AccountLifecycle.Active, first.Lifecycle);
     }
 
     // --- helpers ---
