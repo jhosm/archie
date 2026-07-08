@@ -298,13 +298,16 @@ bd babelstone-zla1.10.2 — the staging box's token **issuer**: login, SCA, and 
 MCP-agent authority). Logto is the **4th public host**; it is the token issuer, not
 a product route, so it sits beside Backstage/Mission Control straight through Traefik
 and Kong stays the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
-edge for the product API (Logto's main app port 3001 is fronted at `auth` — sign-in +
-OIDC discovery + JWKS; and, since bd zla1.10, its admin console on 3002 is fronted
+edge for the product API (Logto's core service port 3001 is fronted at `auth` — sign-in +
+OIDC discovery + JWKS; and, since bd zla1.10, its admin console is fronted
 separately at `auth-admin` — Logto OSS v1.41 rejects the console's Management-API
 tokens unless it is reached at a stable HTTPS host matching `ADMIN_ENDPOINT`, so the
-port-forward path no longer works. The admin console is auth-gated by the Logto admin
-login; network-hardening it — Cloudflare Access / IP allowlist / `ADMIN_DISABLE_LOCALHOST`
-— is the residual mitigation tracked as bd zla1.10.6). The 6th host is
+port-forward path no longer works. Since bd zla1.10.6 the console runs with
+`ADMIN_DISABLE_LOCALHOST=true`, which stops Logto binding the separate 3002 admin listener
+altogether — the console is served on the **core 3001 listener**, routed by the `auth-admin`
+Host, so the `logto-admin` Ingress fronts 3001, not 3002. The admin console is auth-gated by
+the Logto admin login + Cloudflare Access, the residual mitigation tracked as bd zla1.10.6).
+The 6th host is
 `grafana.babelstone.dev` → **Grafana** (3000, the observability UI, bd zla1.10.1/zla1.10.6) —
 the regulated observability plane (ADR-IC-007 §P4), gated by Grafana login + Logto SSO + §P6
 RBAC (anonymous OFF) and meant to sit behind the same Cloudflare Access gate; only the UI is

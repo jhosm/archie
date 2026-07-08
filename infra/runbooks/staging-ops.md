@@ -197,6 +197,19 @@ independent gates, so no single failure exposes them. The other public hosts
    + §P6 RBAC (anonymous OFF) on Grafana.
 4. **`ADMIN_DISABLE_LOCALHOST=true`** on Logto (`logto.yaml`) — the admin console is
    reachable only via its real `ADMIN_ENDPOINT` host, never a bare `localhost` origin.
+   **Operational consequence — do not "fix" it back:** this flag stops Logto binding
+   the separate admin port (3002) at all; the console is served on the *core* listener
+   (3001), routed to the admin tenant by the `auth-admin` Host. So the `logto-admin`
+   Ingress **must** front `logto:3001`, not `3002` — pointing it at 3002 hits a closed
+   port and every post-Access request returns **502** (bd babelstone-zla1.10.10, the
+   regression that shipped with this hardening). Verify end-to-end *through* Access:
+   ```bash
+   # with a valid Cloudflare Access session cookie, expect 200 (was 502 when Ingress → 3002)
+   kubectl -n babelstone-staging get ingress logto-admin \
+     -o jsonpath='{.spec.rules[0].http.paths[0].backend.service.port.number}'   # -> 3001
+   kubectl -n babelstone-staging exec deploy/logto -- \
+     sh -c 'wget -qO- --header="Host: auth-admin.babelstone.dev" http://127.0.0.1:3001/ >/dev/null && echo core-serves-admin-OK'
+   ```
 
 **Known residual — the Cloudflare origin bypass (tracked: bd babelstone-zla1.12.14).**
 Because the firewall must allow *all* Cloudflare IPs, an attacker who discovers the origin

@@ -18,8 +18,10 @@
 # from NetworkPolicy on the standard implementations (k3s/kube-router, Calico,
 # Cilium) — the httpGet probes (backstage, core-acl-stub, mission-control) keep
 # working. `kubectl port-forward` traffic enters through the kubelet, not the
-# pod network, so operator port-forwards (Grafana 3000, Logto admin 3002,
-# redpanda-console 8080, Kong admin 8001) are likewise unaffected.
+# pod network, so operator port-forwards (Grafana 3000, Logto core 3001,
+# redpanda-console 8080, Kong admin 8001) are likewise unaffected. (Logto's 3002
+# admin listener is intentionally NOT bound under ADMIN_DISABLE_LOCALHOST=true —
+# reach the console via the auth-admin host, not a 3002 port-forward; see policy 15.)
 #
 # Maintainer note — the edge namespace: the Traefik ingress controller runs in its OWN
 # `traefik` namespace (Helm chart, bd zla1.14), NOT k3s's bundled kube-system Traefik
@@ -398,7 +400,12 @@ spec:
         - protocol: TCP
           port: 9000
 ---
-# 15 · Logto (3001 the OIDC issuer + 3002 the admin console) — the public edge (Traefik) only.
+# 15 · Logto (3001, the core listener) — the public edge (Traefik) only. One port covers BOTH
+# public hosts: auth.babelstone.dev (the OIDC issuer) and auth-admin.babelstone.dev (the admin
+# console). Under ADMIN_DISABLE_LOCALHOST=true Logto never opens the separate 3002 admin listener
+# (logto.yaml) — it serves the console on this same 3001 listener, routed to the admin tenant by
+# the ADMIN_ENDPOINT Host. So there is NO 3002 allow: nothing binds 3002, and the `logto-admin`
+# Ingress fronts 3001 (a 3002 allow + Ingress was the bd zla1.10.10 502).
 # This also covers the TWO in-cluster callers that dial Logto's OIDC backchannel over its PUBLIC
 # host — Grafana's operator SSO (generic_oauth) and, since bd zla1.10.8.3, Mission Control's
 # Boundary-1 login gate (serve.py's OIDC discovery + code→token exchange against
@@ -407,12 +414,7 @@ spec:
 # traefik-namespace pod, already admitted below. Egress is unrestricted (this file is
 # policyTypes: [Ingress] only, see the header), so NO mission-control→logto:3001 egress rule is
 # needed or wanted: that internal Service is never dialled (Logto advertises its PUBLIC endpoints
-# in the discovery document, so the backchannel goes to the public host, not the ClusterIP). The
-# admin console (3002) now ALSO
-# takes an allow (bd zla1.10): Logto OSS v1.41 needs the console reached at a stable HTTPS host
-# (auth-admin.babelstone.dev) matching ADMIN_ENDPOINT so the Management API accepts its tokens — a
-# localhost port-forward mints an iss the default tenant rejects. The `logto-admin` Ingress fronts
-# it, so Traefik must reach 3002 too. Both ports admit ONLY the traefik namespace.
+# in the discovery document, so the backchannel goes to the public host, not the ClusterIP).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -431,8 +433,6 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
-        - protocol: TCP
-          port: 3002
 ---
 # 16 · cert-manager HTTP-01 solver pods (8089) — a RETAINED NO-OP under the current
 # DNS-01 (Cloudflare) issuer, which validates via a TXT record and creates NO solver
