@@ -30,94 +30,22 @@
 #       - type: url
 #         target: https://github.com/jhosm/babelstone/blob/main/contracts/catalog/catalog-info.yaml
 ---
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-term-deposit-events
-  description: The governed AsyncAPI catalogue of the term-deposit integration events.
-spec:
-  type: url
-  targets:
-    - ./events/DepositConstituted.asyncapi.yaml
-    - ./events/InterestPaid.asyncapi.yaml
-    - ./events/DepositMatured.asyncapi.yaml
-    - ./events/DepositTerminatedEarly.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-personal-loan-events
-  description: The governed AsyncAPI catalogue of the personal_loan (personal-loan) integration events.
-spec:
-  type: url
-  targets:
-    - ./events/LoanDisbursed.asyncapi.yaml
-    - ./events/LoanInstallmentPaid.asyncapi.yaml
-    - ./events/LoanRepaidEarly.asyncapi.yaml
-    - ./events/LoanSettled.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-current-account-events
-  description: The governed AsyncAPI catalogue of the current_account (current-account) integration events.
-spec:
-  type: url
-  targets:
-    - ./events/AccountOpened.asyncapi.yaml
-    - ./events/AccountMarkedDormant.asyncapi.yaml
-    - ./events/AccountReactivated.asyncapi.yaml
-    - ./events/AccountClosed.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-operations-events
-  description: The governed AsyncAPI catalogue of the engine-declared cross-cutting (operations) integration events.
-spec:
-  type: url
-  targets:
-    - ./events/operations.PersonalDataErasureRequested.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-reconciliation-contracts
-  description: The per-consumer reconciliation contracts (event-store §7.3).
-spec:
-  type: url
-  targets:
-    - ./reconciliation/engine-projection-runtime.reconciliation.yaml
-    - ./reconciliation/acl.reconciliation.yaml
-    - ./reconciliation/notification.reconciliation.yaml
----
-# The governed OpenAPI catalogue of the synchronous REST surfaces (ADR-IC-020; bd
-# babelstone-ax0b.3) — the second catalogue spec format alongside AsyncAPI. Same $text-pointer
-# no-drift discipline: the *.openapi.yaml files under ../openapi/specs/ are the source of
-# truth (gated by scripts/openapi-catalog-validate.sh — Spectral governance fields, oasdiff
+# Structure (ADR-IC-015 §9): the catalogue is a flat set of `kind: API` entities — one per event,
+# reconciliation contract, and OpenAPI surface — each pointing at its spec file with a relative
+# `spec.definition.$text`. There are deliberately NO `kind: Location` entities pointing at the spec
+# files: a Location target is read and parsed AS a Backstage entity, but an AsyncAPI / OpenAPI /
+# reconciliation document is not one, so such Locations only produce ingest errors at runtime
+# (`must have required property 'apiVersion'`, or a disallowed kind) — the API `$text` refs below
+# already embed every spec. Backstage reads THIS file (the single registered location,
+# infra/backstage/app-config.yaml) and registers the API entities directly. Do not re-add per-family
+# Location entities — they broke the live portal once (bd babelstone-zla1.6.10).
+#
+# The governed OpenAPI catalogue of the synchronous REST surfaces (ADR-IC-020; bd babelstone-ax0b.3)
+# — the second catalogue spec format alongside AsyncAPI. Same $text-pointer no-drift discipline: the
+# *.openapi.yaml files under ../openapi/specs/ (and the never-public-by-design ../openapi/internal/
+# set — mTLS-only engine ingress + operator/admin-ops planes, bd babelstone-ax0b.5) are the source
+# of truth (gated by scripts/openapi-catalog-validate.sh — Spectral governance fields, oasdiff
 # breaking diff, Kong-route reconciliation); the schema is NEVER inlined here.
-apiVersion: backstage.io/v1alpha1
-kind: Location
-metadata:
-  name: babelstone-rest-apis
-  description: The governed OpenAPI catalogue of the public (and marked-internal) REST surfaces (ADR-IC-020).
-spec:
-  type: url
-  targets:
-    - ../openapi/specs/orchestrator-edge.openapi.yaml
-    - ../openapi/specs/engine-reads.openapi.yaml
-    - ../openapi/specs/engine-sor-ops.openapi.yaml
-    - ../openapi/specs/orchestrator-process-status.openapi.yaml
-    # The INTERNAL catalogue (../openapi/internal/, bd babelstone-ax0b.5): never-public-by-design
-    # surfaces — the mTLS-only engine command ingress and the operator/admin-ops planes. Each
-    # carries info.x-internal (a required reason string) and the gate's NEVER-PUBLIC reconcile
-    # proves none of their operations is an exposed Kong route.
-    - ../openapi/internal/engine-deposit-commands.openapi.yaml
-    - ../openapi/internal/engine-rate-sheets.openapi.yaml
-    - ../openapi/internal/engine-pack-migrations.openapi.yaml
-    - ../openapi/internal/engine-withholding-reads.openapi.yaml
-    - ../openapi/internal/engine-bulk-operations.openapi.yaml
----
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:

@@ -7,8 +7,14 @@
  */
 
 import { createBackend } from '@backstage/backend-defaults';
+import { fileUrlReaderServiceFactory } from './fileUrlReader';
 
 const backend = createBackend();
+
+// A read-only file:// URL reader so the catalogue's relative $text refs resolve against the baked
+// tree (ADR-IC-015 §9). The stock backend ships no file: reader; this supplies it. See
+// ./fileUrlReader.ts for why a runtime reader (not build-time inlining) is the conformant fix.
+backend.add(fileUrlReaderServiceFactory);
 
 backend.add(import('@backstage/plugin-app-backend'));
 backend.add(import('@backstage/plugin-proxy-backend'));
