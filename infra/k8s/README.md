@@ -51,7 +51,10 @@ explicit-drift event, acknowledged here and in the introducing PR body. Kong sta
 the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
 authz edge — now *behind* Traefik — and no OTLP port (4317/4318) is ever exposed
 ([ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)
-§P1).
+§P1). **That drift now NARROWS** (bd babelstone-zla1.10.8.3): the Mission Control demo UI is no
+longer an *unauthenticated* public surface — staging runs it with `MC_AUTH_MODE=oidc`, a Logto
+OIDC login gate ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
+Boundary-1 owned channel), so `app.babelstone.dev` is gated-by-default.
 
 ## Layout
 
@@ -272,7 +275,10 @@ there being no LoadBalancer; bd babelstone-zla1.14) for **four** hosts:
 `api.babelstone.dev` → the **Kong** proxy (8000), `backstage.babelstone.dev` →
 **Backstage** (7007), `app.babelstone.dev` → **Mission Control** (9000, the demo
 UI, bd babelstone-zla1.5.5 — the browser hits only this host and Mission Control
-same-origin-proxies the engine/orchestrator Services internally), and
+same-origin-proxies the engine/orchestrator Services internally; **gated-by-default via a Logto
+OIDC login** since bd babelstone-zla1.10.8.3 — `MC_AUTH_MODE=oidc`, so this public host is not an
+unauthenticated surface, [ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
+Boundary-1), and
 `auth.babelstone.dev` → **Logto** (3001, the OAuth 2.1 / OIDC Authorization Server,
 [ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md),
 bd babelstone-zla1.10.2 — the staging box's token **issuer**: login, SCA, and the

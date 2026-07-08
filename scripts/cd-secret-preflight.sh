@@ -34,11 +34,18 @@ PLACEHOLDER_POSTGRES_PASSWORD="babelstone"
 PLACEHOLDER_OPENBAO_DEV_TOKEN="root"
 PLACEHOLDER_SECRET_VAULT_KEK="ZGV2LXBsYWNlaG9sZGVyLXZhdWx0LWtlay1kby1ub3QtdXNl"
 PLACEHOLDER_OIDC_PREFIX="dev-placeholder"   # OIDC_PRIVATE_KEYS placeholder starts with this
+# Mission Control Boundary-1 OIDC gate placeholders (bd zla1.10.8.3) — the staging mission-control
+# Deployment secretKeyRefs both non-optionally, so like the Logto keys they must be present (and
+# NOT a placeholder) before the pod boots on its public bind.
+PLACEHOLDER_MC_CLIENT_SECRET_PREFIX="dev-placeholder-mission-control-client-secret"
+PLACEHOLDER_MC_SESSION_KEY_PREFIX="dev-placeholder-mc-session-signing-key"
 SECRET_NAME="babelstone-dev-secrets"
 # LOGTO_GRAFANA_CLIENT_SECRET has no committed placeholder (it was never in
 # secrets.example.yaml) but grafana-oidc.patch.yaml secretKeyRefs it non-optionally,
-# so presence is still required for the pod to start.
-REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET"
+# so presence is still required for the pod to start. LOGTO_MISSION_CONTROL_CLIENT_SECRET +
+# MC_SESSION_SIGNING_KEY are the same contract for the mission-control OIDC gate (both DO carry
+# committed placeholders above, so they get body/placeholder detection like SECRET_VAULT_KEK).
+REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET LOGTO_MISSION_CONTROL_CLIENT_SECRET MC_SESSION_SIGNING_KEY"
 
 MODE=""
 NAMESPACE="babelstone-staging"
@@ -83,6 +90,10 @@ if [ "$MODE" = "render" ]; then
     && fail "placeholder SECRET_VAULT_KEK body found in the render"
   printf '%s\n' "$RENDER" | grep -q "${PLACEHOLDER_OIDC_PREFIX}-oidc" \
     && fail "placeholder OIDC_PRIVATE_KEYS body found in the render"
+  printf '%s\n' "$RENDER" | grep -q "$PLACEHOLDER_MC_CLIENT_SECRET_PREFIX" \
+    && fail "placeholder LOGTO_MISSION_CONTROL_CLIENT_SECRET body found in the render"
+  printf '%s\n' "$RENDER" | grep -q "$PLACEHOLDER_MC_SESSION_KEY_PREFIX" \
+    && fail "placeholder MC_SESSION_SIGNING_KEY body found in the render"
 
   echo "render preflight OK: no placeholder Secret and no placeholder credential bodies in the applied set"
   exit 0
@@ -112,6 +123,14 @@ for key in $REQUIRED_KEYS; do
     OIDC_PRIVATE_KEYS)
       case "$val" in
         "$PLACEHOLDER_OIDC_PREFIX"*) fail "live OIDC_PRIVATE_KEYS is still the dev placeholder — the public IAM must never sign with it" ;;
+      esac ;;
+    LOGTO_MISSION_CONTROL_CLIENT_SECRET)
+      case "$val" in
+        "$PLACEHOLDER_MC_CLIENT_SECRET_PREFIX"*) fail "live LOGTO_MISSION_CONTROL_CLIENT_SECRET is still the dev placeholder" ;;
+      esac ;;
+    MC_SESSION_SIGNING_KEY)
+      case "$val" in
+        "$PLACEHOLDER_MC_SESSION_KEY_PREFIX"*) fail "live MC_SESSION_SIGNING_KEY is still the dev placeholder — the gated demo UI must not sign sessions with it" ;;
       esac ;;
   esac
 done

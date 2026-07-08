@@ -8,6 +8,12 @@
 # engine/orchestrator Services stay cluster-internal. Image is the amd64-only
 # ghcr.io/jhosm/babelstone-mission-control built in zla1.5.4 (binds 0.0.0.0 in-container;
 # amd64 matches the CPX42 x86 staging node, bd babelstone-zla1.13).
+#
+# GATED-BY-DEFAULT (bd babelstone-zla1.10.8.3): staging is the PUBLIC box, so the demo UI is no
+# longer an open surface — MC_AUTH_MODE=oidc turns on serve.py's Boundary-1 owned-channel login
+# gate (ADR-IC-021 rollout step 2), an auth-code + PKCE(S256) flow against Logto. This DEPLOY-wires
+# the gate PR #490 added to serve.py; it MUST run on an image that carries that gate code, because
+# serve.py's fail-safe REFUSES to boot on a public bind (MC_BIND=0.0.0.0) without a gate configured.
 apiVersion: v1
 kind: Service
 metadata:
@@ -68,11 +74,48 @@ spec:
             # client id); never PII.
             - name: DEMO_CLIENT_ID
               value: CLI-DEMO-0001
-          # Mission Control serves index.html (200) on / — a real httpGet probe works here
-          # (unlike the engine/orchestrator, which have no 2xx route).
+            # ── Boundary-1 owned-channel login gate (ADR-IC-021 rollout step 2, bd zla1.10.8.3) ──
+            # oidc mode makes serve.py DISCOVER Logto's endpoints from
+            # {OIDC_ISSUER}/.well-known/openid-configuration and run the auth-code + PKCE(S256)
+            # flow; on a public bind this is what satisfies serve.py's no-open-surface fail-safe.
+            - name: MC_AUTH_MODE
+              value: oidc
+            # Logto's PUBLIC issuer — the SAME host Grafana's generic_oauth dials
+            # (auth.babelstone.dev). serve.py runs BOTH discovery and the code→token exchange
+            # against these PUBLIC endpoints (Logto advertises its public ENDPOINT in the discovery
+            # doc), so the backchannel HAIRPINS out through Traefik, NOT to the internal logto:3001
+            # Service — hence NO mission-control→logto egress rule is needed (network-policies.yaml
+            # policy 15, egress is unrestricted).
+            - name: OIDC_ISSUER
+              value: https://auth.babelstone.dev/oidc
+            # The Logto application HAND-registered in the Console (DCR is the accepted ADR-IC-021
+            # §C6 gap) — see infra/runbooks/mission-control-oidc-registration.md.
+            - name: OIDC_CLIENT_ID
+              value: babelstone-mission-control
+            # Public origin serve.py derives the redirect_uri from ({base}/callback →
+            # https://app.babelstone.dev/callback) — must equal the redirect URI on the Logto app.
+            - name: MC_PUBLIC_BASE_URL
+              value: https://app.babelstone.dev
+            # The confidential-client secret + the session-cookie HMAC key — injected from the
+            # OpenBao-seeded Secret, NEVER in git (mirrors grafana-oidc.patch.yaml's secretKeyRef).
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: LOGTO_MISSION_CONTROL_CLIENT_SECRET
+            - name: MC_SESSION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: MC_SESSION_SIGNING_KEY
+          # Probe /healthz, NOT / — with the OIDC gate on, serve.py answers an unauthenticated
+          # NON-navigation request (exactly a kubelet probe: no session cookie, Accept ≠ text/html)
+          # with 401, which would fail the probe and the pod would never go Ready. serve.py exposes
+          # /healthz as the gate-EXEMPT liveness endpoint (returns 200 {"status":"ok"}) for precisely
+          # this. (In dev mode / is a 200 too, but staging always runs MC_AUTH_MODE=oidc.)
           readinessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -80,7 +123,7 @@ spec:
             failureThreshold: 6
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: 9000
             initialDelaySeconds: 10
             periodSeconds: 15
