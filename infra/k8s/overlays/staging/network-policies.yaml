@@ -176,10 +176,17 @@ spec:
 ---
 # 7 · Shared Postgres (5432) — every workload that legitimately opens a
 # connection to the main instance (engine `babelstone`, orchestrator
-# `babelstone_orchestrator`, logto `logto`): the three long-running services,
-# the event-store migration Job, the three Logto DB Jobs, and the nightly
-# logical-backup CronJob. initContainers run with the same pod labels, so the
-# wait-for-migration / create-db inits are covered by their parents' entries.
+# `babelstone_orchestrator`, logto `logto`, backstage `backstage`): the four
+# long-running services, the event-store migration Job, the backstage + three
+# Logto DB-init Jobs, and the nightly logical-backup CronJob (which now dumps
+# the backstage DB from this shared instance too). initContainers run with the
+# same pod labels, so the wait-for-migration / create-db inits are covered by
+# their parents' entries.
+#
+# Backstage now uses a dedicated `backstage` database in THIS shared Postgres
+# (bd babelstone-zla1.6.6) — there is no separate backstage-db pod, so the old
+# allow-backstage-db-ingress policy was removed and backstage + its DB-init Job
+# join this allow instead.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -200,7 +207,9 @@ spec:
                   - engine
                   - orchestrator
                   - logto
+                  - backstage
                   - event-store-migrate
+                  - backstage-db-init
                   - logto-db-init
                   - logto-db-alteration
                   - logto-key-rotation
@@ -209,31 +218,7 @@ spec:
         - protocol: TCP
           port: 5432
 ---
-# 8 · Backstage's dedicated Postgres (5432) — Backstage + the backup CronJob.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-backstage-db-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: backstage-db
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                  - backstage
-                  - db-logical-backup
-      ports:
-        - protocol: TCP
-          port: 5432
----
-# 9 · Redpanda — Kafka (9092) + Schema Registry (8081) from the bus clients
+# 8 · Redpanda — Kafka (9092) + Schema Registry (8081) from the bus clients
 # only. The orchestrator is included on 8081 defensively (its Avro consume
 # loops resolve schemas even though no env names the SR today). The host
 # listeners (19092/18081), the admin API (9644), and internal RPC (33145) get
@@ -265,7 +250,7 @@ spec:
         - protocol: TCP
           port: 8081
 ---
-# 10 · OpenBao (8200) — NOTHING in-cluster dials it today (engine ships
+# 9 · OpenBao (8200) — NOTHING in-cluster dials it today (engine ships
 # OpenBao__Enabled=false; deck-sync reads it operator-side). The allow is
 # scoped to the three .NET services that own the M.2 secret-boundary seam, so
 # flipping OpenBao__Enabled=true later needs no policy change — while a random
@@ -294,7 +279,7 @@ spec:
         - protocol: TCP
           port: 8200
 ---
-# 11 · OTel Collector (4317 gRPC / 4318 HTTP) — every pod in the namespace may
+# 10 · OTel Collector (4317 gRPC / 4318 HTTP) — every pod in the namespace may
 # emit telemetry (ADR-IC-007 §P1: the Collector is the ONE ingest point). A
 # namespace-wide allow on exactly these two ports is the least-privilege shape
 # that doesn't need editing for every new emitter.
@@ -317,7 +302,7 @@ spec:
         - protocol: TCP
           port: 4318
 ---
-# 12 · Grafana LGTM — OTLP (4317/4318) from the Collector ONLY (the §P1
+# 11 · Grafana LGTM — OTLP (4317/4318) from the Collector ONLY (the §P1
 # boundary: services must not ship telemetry direct-to-backend, and now the
 # network agrees), and the Tempo query API (3200) from Mission Control's
 # Telemetry tab proxy. The Grafana UI (3000) gets NO allow: it is deliberately
@@ -350,7 +335,7 @@ spec:
         - protocol: TCP
           port: 3200
 ---
-# 13 · Registry (5000) — image pulls come from the NODE's containerd (host
+# 12 · Registry (5000) — image pulls come from the NODE's containerd (host
 # network), not from a pod, so a podSelector allow cannot admit them; host-
 # originated traffic handling also differs per CNI. The pragmatic shape is an
 # unrestricted allow on exactly port 5000. Residual risk (accepted, staging):
@@ -371,7 +356,7 @@ spec:
         - protocol: TCP
           port: 5000
 ---
-# 14 · Backstage portal (7007) — the public edge (Traefik) only.
+# 13 · Backstage portal (7007) — the public edge (Traefik) only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -391,7 +376,7 @@ spec:
         - protocol: TCP
           port: 7007
 ---
-# 15 · Mission Control (9000) — the public edge (Traefik) only.
+# 14 · Mission Control (9000) — the public edge (Traefik) only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -411,7 +396,7 @@ spec:
         - protocol: TCP
           port: 9000
 ---
-# 16 · Logto (3001, the OIDC issuer) — the public edge (Traefik) only. This
+# 15 · Logto (3001, the OIDC issuer) — the public edge (Traefik) only. This
 # also covers Grafana's operator SSO: its generic_oauth dials the PUBLIC
 # https://auth.babelstone.dev, which re-enters through Traefik. The admin
 # console (3002) gets NO allow (operator port-forward only, as documented in
@@ -435,7 +420,7 @@ spec:
         - protocol: TCP
           port: 3001
 ---
-# 17 · cert-manager HTTP-01 solver pods (8089) — a RETAINED NO-OP under the current
+# 16 · cert-manager HTTP-01 solver pods (8089) — a RETAINED NO-OP under the current
 # DNS-01 (Cloudflare) issuer, which validates via a TXT record and creates NO solver
 # pods, so nothing matches this selector today. Kept as defense-in-depth so a future
 # fallback to the HTTP-01 solver would not silently break at the next renewal against

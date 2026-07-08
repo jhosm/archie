@@ -91,13 +91,14 @@ ordering automatically (the engine waits on the migration sentinel).
 Two independent recovery paths (use whichever fits the incident):
 
 **A. Logical (portable, off-box) — the `db-logical-backup` CronJob.** Daily dumps live in
-Hetzner Object Storage at `s3://$S3_BUCKET/postgres/all-*.sql.gz` and `.../backstage/backstage-*.sql.gz`.
-To restore the main cluster:
+Hetzner Object Storage at `s3://$S3_BUCKET/postgres/all-*.sql.gz`. Since Backstage moved into the
+shared cluster (its own `backstage` database — bd babelstone-zla1.6.6), the single `pg_dumpall`
+now captures the engine, orchestrator, AND Backstage databases in one object. To restore:
 ```bash
 aws --endpoint-url "$S3_ENDPOINT" s3 cp s3://$S3_BUCKET/postgres/all-<TS>.sql.gz - \
   | gunzip | psql -h postgres -U babelstone -d postgres   # pg_dumpall output recreates each DB
 ```
-Restore Backstage from its `backstage-<TS>.sql.gz` against `backstage-db` the same way.
+The `backstage` database (and its per-plugin databases) are recreated by that same restore.
 
 **B. Block-level — CSI VolumeSnapshots** (the `volume-snapshot` CronJob). List them
 (`kubectl get volumesnapshot`), then provision a new PVC `dataSource:` that VolumeSnapshot and
@@ -116,8 +117,8 @@ the node is back `Ready`.
 
 | Job | Schedule (UTC) | What | Where |
 |---|---|---|---|
-| `db-logical-backup` | 01:30 daily | `pg_dumpall` (engine + orchestrator DBs) + `pg_dump` backstage | Hetzner Object Storage (S3) |
-| `volume-snapshot` | 02:30 daily | CSI `VolumeSnapshot` of postgres / redpanda / backstage-db PVCs | in-cluster (CSI) |
+| `db-logical-backup` | 01:30 daily | `pg_dumpall` (engine + orchestrator + backstage DBs) | Hetzner Object Storage (S3) |
+| `volume-snapshot` | 02:30 daily | CSI `VolumeSnapshot` of postgres / redpanda PVCs | in-cluster (CSI) |
 
 Check: `kubectl get cronjob,job` and the job logs. **Retention/pruning is manual for v1** — prune
 old S3 objects (lifecycle policy on the bucket) and old `VolumeSnapshot`s (`kubectl delete

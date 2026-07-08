@@ -34,11 +34,12 @@ PLACEHOLDER_POSTGRES_PASSWORD="babelstone"
 PLACEHOLDER_OPENBAO_DEV_TOKEN="root"
 PLACEHOLDER_SECRET_VAULT_KEK="ZGV2LXBsYWNlaG9sZGVyLXZhdWx0LWtlay1kby1ub3QtdXNl"
 PLACEHOLDER_OIDC_PREFIX="dev-placeholder"   # OIDC_PRIVATE_KEYS placeholder starts with this
+PLACEHOLDER_BACKSTAGE_DB_PASSWORD="backstage"   # the dedicated backstage DB-role dev placeholder
 SECRET_NAME="babelstone-dev-secrets"
 # LOGTO_GRAFANA_CLIENT_SECRET has no committed placeholder (it was never in
 # secrets.example.yaml) but grafana-oidc.patch.yaml secretKeyRefs it non-optionally,
 # so presence is still required for the pod to start.
-REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET"
+REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET BACKSTAGE_DB_PASSWORD"
 
 MODE=""
 NAMESPACE="babelstone-staging"
@@ -83,6 +84,8 @@ if [ "$MODE" = "render" ]; then
     && fail "placeholder SECRET_VAULT_KEK body found in the render"
   printf '%s\n' "$RENDER" | grep -q "${PLACEHOLDER_OIDC_PREFIX}-oidc" \
     && fail "placeholder OIDC_PRIVATE_KEYS body found in the render"
+  printf '%s\n' "$RENDER" | grep -Eq "BACKSTAGE_DB_PASSWORD:[[:space:]]*[\"']?${PLACEHOLDER_BACKSTAGE_DB_PASSWORD}[\"']?[[:space:]]*$" \
+    && fail "placeholder BACKSTAGE_DB_PASSWORD body found in the render"
 
   echo "render preflight OK: no placeholder Secret and no placeholder credential bodies in the applied set"
   exit 0
@@ -113,6 +116,8 @@ for key in $REQUIRED_KEYS; do
       case "$val" in
         "$PLACEHOLDER_OIDC_PREFIX"*) fail "live OIDC_PRIVATE_KEYS is still the dev placeholder — the public IAM must never sign with it" ;;
       esac ;;
+    BACKSTAGE_DB_PASSWORD)
+      [ "$val" != "$PLACEHOLDER_BACKSTAGE_DB_PASSWORD" ] || fail "live BACKSTAGE_DB_PASSWORD is still the dev placeholder" ;;
   esac
 done
 

@@ -3,9 +3,10 @@
 # pgBackRest physical PITR (which is the multi-node HA leg, too heavy for one node). Dumps every
 # database to Hetzner Object Storage (S3-compatible) so the data survives the box entirely.
 #
-# Two instances are dumped: the main `postgres` (pg_dumpall → the engine `babelstone` DB + the
-# orchestrator `babelstone_orchestrator` DB) AND the SEPARATE `backstage-db` instance (the
-# catalogue DB), which pg_dumpall against postgres would NOT reach.
+# One instance is dumped: the shared `postgres` (pg_dumpall → the engine `babelstone` DB, the
+# orchestrator `babelstone_orchestrator` DB, AND Backstage's `backstage` catalogue DB). Backstage
+# moved into this shared cluster (bd babelstone-zla1.6.6), so pg_dumpall now reaches every database
+# in one pass — the old SEPARATE backstage-db instance and its dedicated dump are gone.
 #
 # CI validates SHAPE only (kustomize build + kubeconform); the restore drill is the runbook
 # (infra/runbooks/staging-ops.md). Real S3 + a real bucket are account-gated (the Secret below is
@@ -73,13 +74,10 @@ spec:
                     fi
                     echo "asserted s3://${S3_BUCKET}/${KEY} (${SIZE} bytes)"
                   }
-                  echo "dumping main cluster (babelstone + babelstone_orchestrator) ..."
+                  echo "dumping shared cluster (babelstone + babelstone_orchestrator + backstage) ..."
                   PGPASSWORD="${PG_PASSWORD}" pg_dumpall -h postgres -U "${PG_USER}" \
                     | gzip | upload_and_assert "postgres/all-${TS}.sql.gz"
-                  echo "dumping backstage (separate instance) ..."
-                  PGPASSWORD="${BACKSTAGE_PG_PASSWORD}" pg_dump -h backstage-db -U backstage backstage \
-                    | gzip | upload_and_assert "backstage/backstage-${TS}.sql.gz"
-                  # Freshness heartbeat — only after BOTH objects are asserted written.
+                  # Freshness heartbeat — only after the dump object is asserted written.
                   if [ -n "${PUSHGATEWAY_URL:-}" ]; then
                     printf '# TYPE backup_last_success_timestamp_seconds gauge\nbackup_last_success_timestamp_seconds %s\n' "$(date +%s)" \
                       | curl -fsS --data-binary @- "${PUSHGATEWAY_URL%/}/metrics/job/db-logical-backup"
@@ -99,10 +97,6 @@ spec:
                     secretKeyRef:
                       name: babelstone-dev-secrets
                       key: POSTGRES_PASSWORD
-                # backstage-db's password is still the dev literal in base/backstage.yaml; zla1.6
-                # moves it to the Secret seam, at which point this becomes a secretKeyRef.
-                - name: BACKSTAGE_PG_PASSWORD
-                  value: backstage
                 - name: S3_ENDPOINT
                   valueFrom:
                     secretKeyRef:
