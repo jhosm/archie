@@ -96,9 +96,26 @@ cluster-admin credential at apply time). The Hetzner CCM + CSI driver come up au
 ## 2. Redeploy / promote a new build
 
 `cd.yml` (workflow_dispatch, `overlay: staging`, `apply: true`) cosign-verifies the images by
-digest, gates the forward-only migrations, renders + kubeconforms the overlay, applies it, and
-`deck sync`s Kong. The event-store migration Job + the engine initContainer handle schema
-ordering automatically (the engine waits on the migration sentinel).
+digest, gates the forward-only migrations, renders + kubeconforms the overlay, applies it,
+`deck sync`s Kong, and finally reconciles the first-party Logto config (the `configure-logto`
+job). The event-store migration Job + the engine initContainer handle schema ordering
+automatically (the engine waits on the migration sentinel).
+
+**Logto Management-API config is now pipeline-driven (bd babelstone-zla1.10.x).** The three
+`scripts/iam/*.py` reproduce-path scripts — the MCP API resource + scopes, the ops-console client,
+and default-tenant MFA — are **no longer run by hand** after a deploy. The `configure-logto` job
+runs them idempotently on every staging promote, so a Logto re-onboard self-heals on the next
+deploy instead of leaving the ADR-IC-021 C1/C5/C4/C7 substrate silently wiped. It also runs
+**standalone**: dispatch `cd.yml` with `apply: false, configure_logto: true` to re-heal a
+hand-re-onboarded Logto **without** re-promoting images. It **fails loud** if the Logto-registered
+ops-console App ID drifts from the deployed `OIDC_CLIENT_ID` (`mission-control.yaml`; see
+[`mission-control-oidc-registration.md`](./mission-control-oidc-registration.md) §1.3).
+
+One-time prerequisite (Phase 2, like the deploy kubeconfig): seed the deploy-scoped `babelstone-mgmt`
+M2M app's credentials as the `p6-staging` environment secrets `LOGTO_MGMT_APP_ID` /
+`LOGTO_MGMT_APP_SECRET` (client_credentials against `…/api`, **never** the root token — same
+secrets discipline as §1 step 5). `prove-refresh-family-revoke.py` stays a **manual** verification
+(a timing-sensitive proof, not config) and is deliberately **not** in the build lane.
 
 ## 3. Restore
 

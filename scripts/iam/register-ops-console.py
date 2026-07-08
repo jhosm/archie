@@ -26,16 +26,19 @@ token, never a literal:
 
 Idempotent: keyed on the app NAME. If the app exists it is left untouched and its id is reported.
 
-IMPORTANT — the App ID: Logto's Management API assigns a random App ID (e.g. `drvvp3sfzk4ssckg5d5si`);
-it does NOT let you pin it to `babelstone-mission-control`. So after first creation you MUST set
-`OIDC_CLIENT_ID` in `infra/k8s/overlays/staging/mission-control.yaml` to the id printed here and
-redeploy — exactly the hedge `mission-control-oidc-registration.md` §1.3 anticipates. This script
-reports the mismatch loudly so it is not missed (that manifest edit + redeploy is a maintainer step).
+IMPORTANT — the App ID: Logto's Management API assigns the App ID (= the immutable OAuth client_id,
+e.g. `tvtbmr5y6vbhkswvmk5a5`) at create time; it does NOT let you pin it to a chosen name. So the
+deployed Mission Control must dial THIS id via `OIDC_CLIENT_ID` in
+`infra/k8s/overlays/staging/mission-control.yaml`. Set `OPS_EXPECT_CLIENT_ID` to that deployed id and
+this script FAILS LOUD (exits non-zero) on a mismatch — the CD `configure-logto` job does exactly this,
+so a drifted id blocks the promote instead of silently breaking operator login. A bare hand-run (the
+var unset) never fails; it just reports the id so a first-onboard operator can pin it (runbook §1.3).
 
 Config via env (defaults are the staging values):
-    LOGTO_BASE_URL   default https://auth.babelstone.dev
-    MC_PUBLIC_BASE   default https://app.babelstone.dev   (must equal MC_PUBLIC_BASE_URL in the manifest)
-    OPS_APP_NAME     default babelstone-mission-control
+    LOGTO_BASE_URL       default https://auth.babelstone.dev
+    MC_PUBLIC_BASE       default https://app.babelstone.dev   (must equal MC_PUBLIC_BASE_URL in the manifest)
+    OPS_APP_NAME         default babelstone-mission-control
+    OPS_EXPECT_CLIENT_ID default (unset)  the deployed OIDC_CLIENT_ID; when set, a mismatch exits non-zero
 """
 import json
 import os
@@ -47,6 +50,9 @@ BASE = os.environ.get("LOGTO_BASE_URL", "https://auth.babelstone.dev").rstrip("/
 MC_BASE = os.environ.get("MC_PUBLIC_BASE", "https://app.babelstone.dev").rstrip("/")
 APP_NAME = os.environ.get("OPS_APP_NAME", "babelstone-mission-control")
 TOKEN = os.environ.get("LOGTO_MGMT_TOKEN", "").strip()
+# The deployed OIDC_CLIENT_ID to assert against. When set (the CD configure-logto job passes it),
+# a registered-vs-deployed mismatch is fatal; when unset (a bare hand-run), the id is only reported.
+EXPECT_CLIENT_ID = os.environ.get("OPS_EXPECT_CLIENT_ID", "").strip()
 
 REDIRECT_URI = f"{MC_BASE}/callback"          # serve.py derives {MC_PUBLIC_BASE_URL}/callback
 POST_LOGOUT_URI = f"{MC_BASE}/"               # where /logout bounces after Logto clears its session
@@ -115,12 +121,25 @@ def main():
         print(f"  redirectUris=[{REDIRECT_URI}] postLogoutRedirectUris=[{POST_LOGOUT_URI}]")
 
     print()
-    if app_id != "babelstone-mission-control":
-        print("⚠️  App ID is Logto-generated, NOT 'babelstone-mission-control'. Maintainer follow-up:")
-        print(f"    1. Set OIDC_CLIENT_ID in infra/k8s/overlays/staging/mission-control.yaml to: {app_id}")
-        print("    2. Seed LOGTO_MISSION_CONTROL_CLIENT_SECRET into babelstone-dev-secrets "
-              "(infra/runbooks/mission-control-oidc-registration.md §3) — NEVER commit it.")
-        print("    3. Redeploy Mission Control so app.babelstone.dev login works again.")
+    # App-ID reconciliation. Logto mints the App ID (= the immutable OAuth client_id) at create time
+    # and won't let it be pinned to a name, so the registered id and the deployed OIDC_CLIENT_ID must
+    # agree or operator login silently breaks. OPS_EXPECT_CLIENT_ID turns that from a warning into a
+    # gate: set (CD passes the deployed id) → mismatch is fatal; unset (hand-run) → id is only reported.
+    if EXPECT_CLIENT_ID:
+        if app_id == EXPECT_CLIENT_ID:
+            print(f"OK — registered App ID matches the deployed OIDC_CLIENT_ID ({app_id}).")
+        else:
+            print(f"❌ MISMATCH — registered App ID {app_id!r} != deployed OIDC_CLIENT_ID {EXPECT_CLIENT_ID!r}.")
+            print("   Mission Control login is broken until they agree. Maintainer follow-up:")
+            print(f"    1. Set OIDC_CLIENT_ID in infra/k8s/overlays/staging/mission-control.yaml to: {app_id}")
+            print("    2. Seed LOGTO_MISSION_CONTROL_CLIENT_SECRET into babelstone-dev-secrets "
+                  "(infra/runbooks/mission-control-oidc-registration.md §3) — NEVER commit it.")
+            print("    3. Redeploy Mission Control so app.babelstone.dev login works again.")
+            sys.exit(1)
+    else:
+        print(f"ops-console App ID: {app_id}")
+        print("   (set OPS_EXPECT_CLIENT_ID to the deployed OIDC_CLIENT_ID to assert they agree; on a "
+              "first onboard, pin this id into mission-control.yaml per runbook §1.3, then redeploy.)")
     print("\nDone. This closes the live 'ops-console client missing' gap C7 depends on "
           "(also advances bd babelstone-zla1.10.8).")
 
