@@ -763,30 +763,52 @@ def topology_manifest():
 #     no Logto-specific (or any-IdP-specific) path is baked in. Point OIDC_ISSUER at any conformant
 #     issuer and the flow follows the discovered endpoints.
 #
-#   • STATELESS. There is no server-side session store (serve.py is a threaded single process that a
-#     deployment may scale out). Both the in-flight login transaction (verifier/state/nonce/return-to)
-#     and the established session are carried in HMAC-signed cookies keyed by MC_SESSION_SIGNING_KEY,
+#   • STATELESS + DOMAIN-SEPARATED COOKIES. There is no server-side session store (serve.py is a
+#     threaded single process that a deployment may scale out). Both the in-flight login transaction
+#     (verifier/state/nonce/return-to) and the established session are carried in HMAC-signed cookies,
 #     so any instance can validate any request. The HMAC (stdlib hmac/hashlib, constant-time compare)
 #     is an integrity seal, not encryption — the payloads carry no secret, only an opaque subject id
-#     and a short profile, and are HttpOnly+Secure+SameSite=Lax.
+#     and a short profile, and are HttpOnly+Secure+SameSite=Lax. The two cookie families are KEY- AND
+#     TYPE-SEPARATED to defeat cross-cookie type confusion: each is signed with its OWN key derived
+#     from MC_SESSION_SIGNING_KEY (HKDF-style, distinct info strings) AND carries a mandatory `typ`
+#     ("tx"/"sess") that _read_signed checks before anything else — so a validly-signed tx blob (handed
+#     to every anonymous visitor on the login 302) can NEVER be replayed under the session-cookie name,
+#     and vice-versa.
 #
 #   • id_token VERIFICATION — the deliberate stdlib-only choice. We do NOT verify the id_token's JWKS
 #     RS256 signature; instead we trust the DIRECT TLS BACKCHANNEL to the discovered token_endpoint
-#     plus FULL claim validation (iss == issuer, aud contains client_id, exp not past, nonce matches
-#     the login transaction). This is explicitly blessed by OIDC Core 1.0 §3.1.3.7 item 6: when the
-#     id_token is obtained by direct Client↔Token-Endpoint communication (exactly this code flow),
-#     TLS server-cert validation MAY stand in for verifying the token signature. urllib validates the
-#     server certificate by default for https URLs, and _preflight refuses a non-loopback issuer that
-#     is not https — so the backchannel is authenticated. We keep serve.py dependency-light (no PyJWT
-#     / cryptography — mirroring the "stdlib-only except the lazily-imported psycopg" ethos of this
-#     file), and the token is never accepted from an untrusted front channel, only from that TLS
-#     backchannel. Trade-off documented here and in the PR; upgrading to JWKS RS256 verification is a
-#     drop-in in _OidcGate._validate_id_token if a future deployment wants belt-and-braces.
+#     plus claim validation. Exactly which claims are checked: iss == issuer, aud contains client_id,
+#     azp == client_id when aud is multi-valued (OIDC Core §3.1.3.7 items 4-5), exp not past (± leeway),
+#     and nonce == the login transaction's nonce. The SIGNATURE is intentionally NOT verified. This is
+#     blessed by OIDC Core 1.0 §3.1.3.7 item 6: when the id_token is obtained by direct Client↔Token-
+#     Endpoint communication (exactly this code flow), TLS server-cert validation MAY stand in for
+#     verifying the token signature. The load-bearing anchor is therefore the TLS-authenticated channel
+#     to the discovered TOKEN_ENDPOINT (not merely the issuer): urllib validates the server certificate
+#     by default for https URLs, and both _build_oidc_gate (the issuer) AND discover() (the discovered
+#     authorization/token/jwks endpoints) refuse a non-loopback http URL — so the token can only arrive
+#     over an authenticated backchannel, never an untrusted front channel. We keep serve.py dependency-
+#     light (no PyJWT / cryptography — mirroring the "stdlib-only except the lazily-imported psycopg"
+#     ethos of this file); upgrading to JWKS RS256 verification is a drop-in in _validate_id_token.
 
 _TX_COOKIE = "mc_oidc_tx"        # short-lived signed cookie carrying the in-flight login transaction
 _SESSION_COOKIE = "mc_session"   # signed cookie carrying the established session
 _TX_TTL = 600                    # a login round-trip must complete within 10 minutes
 _CLAIM_LEEWAY = 60               # clock-skew tolerance (seconds) on the id_token exp check
+
+# Domain-separation for the two cookie families (defeats cross-cookie type confusion). Each cookie
+# is signed with its OWN key derived from MC_SESSION_SIGNING_KEY via a one-step HMAC-KDF over a
+# distinct info string, and carries a mandatory `typ` that _read_signed checks. A tx blob therefore
+# cannot verify under the session key at all, and even a hypothetical key reuse is caught by `typ`.
+_TX_PURPOSE = b"mc-tx-v1"
+_SESSION_PURPOSE = b"mc-session-v1"
+_TYP_TX = "tx"
+_TYP_SESSION = "sess"
+
+
+def _derive_key(base, purpose):
+    """A distinct signing key per cookie family: HMAC(MC_SESSION_SIGNING_KEY, info). Returns hex so
+    it is a str the cookie signer can .encode()."""
+    return hmac.new(base.encode("utf-8"), purpose, hashlib.sha256).hexdigest()
 
 
 class OidcConfigError(Exception):
@@ -859,6 +881,10 @@ class _OidcGate:
         self.scopes = scopes
         self.redirect_url = redirect_url
         self.signing_key = signing_key
+        # Per-family signing keys — the tx cookie and the session cookie are cryptographically
+        # distinct, so neither can be replayed as the other (auth-bypass fix, bd zla1.10.8.*).
+        self.tx_key = _derive_key(signing_key, _TX_PURPOSE)
+        self.session_key = _derive_key(signing_key, _SESSION_PURPOSE)
         self.session_ttl = session_ttl
         # filled by discover()
         self.authorization_endpoint = None
@@ -878,8 +904,12 @@ class _OidcGate:
                 doc = json.loads(resp.read())
         except Exception as e:
             raise OidcConfigError("OIDC discovery failed at %s: %s" % (url, e))
+        # RFC 8414 makes `issuer` REQUIRED and mandates an exact match with the config value — a doc
+        # that omits it (or disagrees) is not trustworthy discovery metadata, so we fail closed.
         disc_issuer = (doc.get("issuer") or "").rstrip("/")
-        if disc_issuer and disc_issuer != self.issuer:
+        if not disc_issuer:
+            raise OidcConfigError("discovery document at %s is missing the required 'issuer' (RFC 8414)" % url)
+        if disc_issuer != self.issuer:
             raise OidcConfigError("discovery issuer %r does not match OIDC_ISSUER %r"
                                   % (disc_issuer, self.issuer))
         self.authorization_endpoint = doc.get("authorization_endpoint")
@@ -890,22 +920,42 @@ class _OidcGate:
                    if not getattr(self, k)]
         if missing:
             raise OidcConfigError("discovery document at %s is missing: %s" % (url, ", ".join(missing)))
+        # The "skip JWKS signature verification" premise rests on a TLS-authenticated backchannel to
+        # the DISCOVERED endpoints (the token_endpoint above all). A discovery doc that advertises an
+        # http endpoint on a non-loopback host would void that anchor, so we refuse it — fail-closed.
+        for name in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+            ep = getattr(self, name)
+            parts = urllib.parse.urlsplit(ep)
+            if parts.scheme != "https" and not _is_loopback(parts.hostname or ""):
+                raise OidcConfigError(
+                    "discovered %s must be https for a non-loopback host (got %r)" % (name, ep))
         return self
 
     # ── per-request: session check ──────────────────────────────────────────────────────────
     def session_for(self, cookies):
-        """Return the session dict for a valid, unexpired session cookie, else None."""
-        return self._read_signed(cookies.get(_SESSION_COOKIE))
+        """Return the session dict for a valid, unexpired SESSION cookie, else None. Verified with the
+        session key AND required to carry typ=="sess" and a non-empty `sub` — a tx blob (different key
+        and typ) can never satisfy this, closing the cross-cookie type-confusion bypass."""
+        data = self._read_signed(cookies.get(_SESSION_COOKIE), self.session_key, _TYP_SESSION)
+        if not data or not data.get("sub"):
+            return None
+        return data
 
     def read_tx(self, cookies):
-        """Return the in-flight login-transaction dict for a valid, unexpired tx cookie, else None."""
-        return self._read_signed(cookies.get(_TX_COOKIE))
+        """Return the in-flight login-transaction for a valid, unexpired TX cookie, else None. Verified
+        with the tx key AND required to carry typ=="tx"."""
+        return self._read_signed(cookies.get(_TX_COOKIE), self.tx_key, _TYP_TX)
 
-    def _read_signed(self, value):
+    def _read_signed(self, value, key, expected_typ):
+        """Verify a signed cookie with the FAMILY key, enforce its declared `typ` BEFORE anything else,
+        then the exp. A signature made with the other family's key fails the HMAC; a payload with the
+        wrong (or absent) `typ` is rejected here even if the keys were somehow shared."""
         if not value:
             return None
-        data = _unsign_cookie(value, self.signing_key)
+        data = _unsign_cookie(value, key)
         if not data:
+            return None
+        if data.get("typ") != expected_typ:
             return None
         if int(data.get("exp", 0)) <= int(time.time()):
             return None
@@ -918,9 +968,9 @@ class _OidcGate:
         verifier, challenge = _pkce_pair()
         state = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(24)
-        tx = {"v": 1, "state": state, "nonce": nonce, "verifier": verifier,
+        tx = {"typ": _TYP_TX, "v": 1, "state": state, "nonce": nonce, "verifier": verifier,
               "return_to": _safe_return_to(return_to), "exp": int(time.time()) + _TX_TTL}
-        cookie = _cookie_attrs(_TX_COOKIE, _sign_cookie(tx, self.signing_key), _TX_TTL)
+        cookie = _cookie_attrs(_TX_COOKIE, _sign_cookie(tx, self.tx_key), _TX_TTL)
         params = {
             "response_type": "code",
             "client_id": self.client_id,
@@ -944,16 +994,20 @@ class _OidcGate:
         if not id_token:
             raise OidcAuthError("token response carried no id_token")
         claims = self._validate_id_token(id_token, tx["nonce"])
+        sub = claims.get("sub")
+        if not sub:
+            raise OidcAuthError("id_token has no subject (sub)")
         now = int(time.time())
         session = {
+            "typ": _TYP_SESSION,
             "v": 1,
-            "sub": claims.get("sub"),
+            "sub": sub,
             "email": claims.get("email"),
             "name": claims.get("name") or claims.get("preferred_username"),
             "iat": now,
             "exp": now + self.session_ttl,
         }
-        cookie = _cookie_attrs(_SESSION_COOKIE, _sign_cookie(session, self.signing_key), self.session_ttl)
+        cookie = _cookie_attrs(_SESSION_COOKIE, _sign_cookie(session, self.session_key), self.session_ttl)
         return cookie, _safe_return_to(tx.get("return_to"))
 
     def _exchange_code(self, code, verifier):
@@ -995,6 +1049,12 @@ class _OidcGate:
         auds = aud if isinstance(aud, list) else [aud]
         if self.client_id not in auds:
             raise OidcAuthError("id_token aud does not contain client_id")
+        # OIDC Core §3.1.3.7 items 4-5: with multiple audiences the `azp` (authorized party) MUST be
+        # present and equal to our client_id. This matters MORE here precisely because we do not verify
+        # the signature — it stops a token minted for a different (co-audienced) client being accepted.
+        if isinstance(aud, list) and len(aud) > 1:
+            if claims.get("azp") != self.client_id:
+                raise OidcAuthError("multi-audience id_token requires azp == client_id")
         now = int(time.time())
         if int(claims.get("exp", 0)) <= now - _CLAIM_LEEWAY:
             raise OidcAuthError("id_token is expired")
@@ -1011,11 +1071,17 @@ class _OidcGate:
 
 
 def _safe_return_to(path):
-    """Only ever bounce back to a SAME-ORIGIN relative path — never an attacker-supplied absolute
-    URL or protocol-relative //host (open-redirect guard). Anything suspicious collapses to '/'."""
+    """Only ever bounce back to a SAME-ORIGIN relative path — never an attacker-supplied absolute URL,
+    a protocol-relative //host, or a backslash form like /\\host that browsers normalise to //host
+    (open-redirect guard). Anything suspicious collapses to '/'."""
     if not path or not isinstance(path, str):
         return "/"
+    if "\\" in path:                       # browsers treat '\' as '/', so /\evil.com → //evil.com
+        return "/"
     if not path.startswith("/") or path.startswith("//"):
+        return "/"
+    parts = urllib.parse.urlsplit(path)    # belt-and-braces: no scheme, no host may survive
+    if parts.scheme or parts.netloc:
         return "/"
     return path
 
@@ -1419,6 +1485,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route is not None:
             return self._relay("GET", route[0], route[1], route[2])
         return super().do_GET()
+
+    def do_HEAD(self):
+        # HEAD must be gated too (bd zla1.10.8.*): without this override it would fall through to
+        # SimpleHTTPRequestHandler.do_HEAD and leak the static UI tree's file existence/sizes with no
+        # session check in oidc mode. Mirror do_GET — run the gate first.
+        if self._authgate():
+            return
+        return super().do_HEAD()
 
     def _refuse_mutation(self):
         """The GET-only arms (the OCI /registry window; Prometheus /prom): reads are the whole
