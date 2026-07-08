@@ -343,28 +343,17 @@ services:
   #
   # HUMAN-HANDOFF TAIL: Backstage ships no turnkey image — an app must be scaffolded
   # (`npx @backstage/create-app`), the AsyncAPI catalog provider plugins added, and an image
-  # built + pushed; then point `image:` below at it. Until that image exists, both services
-  # below are gated behind the `catalog` Compose profile, so the default `make up` SKIPS them —
+  # built + pushed; then point `image:` below at it. Until that image exists, the service
+  # below is gated behind the `catalog` Compose profile, so the default `make up` SKIPS it —
   # a placeholder `image:` would otherwise fail to pull and abort the whole bring-up. The estate
   # stays Git-native (AsyncAPI files + CI gate, ADR-IC-015 §9) until the host is genuinely stood
   # up; once a real image is pushed, run `docker compose --profile catalog up` to start it. The
   # whole contracts/catalog/ tree is mounted at /catalog so catalog-info.yaml's relative $text
   # AsyncAPI refs resolve.
-  backstage-db:
-    profiles: ["catalog"]
-    image: postgres:16-alpine
-    container_name: babelstone-backstage-db
-    environment:
-      POSTGRES_USER: backstage
-      POSTGRES_PASSWORD: backstage   # dev-only placeholder; a real deploy uses a secret
-      POSTGRES_DB: backstage
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U backstage"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 5s
-
+  #
+  # DB: Backstage uses in-memory SQLite (better-sqlite3), NOT Postgres — bd babelstone-zla1.6.6.
+  # It is a read-only catalogue portal whose state rebuilds from /catalog on boot, so there is
+  # nothing to persist. The separate backstage-db Postgres service was removed accordingly.
   backstage:
     # PLACEHOLDER — replace with the pushed babelstone Backstage app image (see the handoff
     # note above). There is no turnkey upstream image to pin here. Profile-gated (`catalog`)
@@ -372,15 +361,8 @@ services:
     profiles: ["catalog"]
     image: ghcr.io/jhosm/babelstone-backstage:placeholder
     container_name: babelstone-backstage
-    depends_on:
-      backstage-db:
-        condition: service_healthy
     environment:
       BACKSTAGE_BASE_URL: "http://localhost:${BACKSTAGE_PORT:-7007}"
-      BACKSTAGE_PG_HOST: backstage-db
-      BACKSTAGE_PG_PORT: "5432"
-      BACKSTAGE_PG_USER: backstage
-      BACKSTAGE_PG_PASSWORD: backstage
     ports:
       - "${BACKSTAGE_PORT:-7007}:7007"
     volumes:
@@ -404,7 +386,7 @@ services:
   # not a CI dependency. Start with: docker compose -f infra/compose.yaml --profile pact up -d
   # NB: the official image does not embed PostgreSQL (the ADR-IC-009 S1 narrative overstates the
   # trial image — see the dated correction in the ADR) — it needs the companion database below,
-  # the same service-scoped-second-Postgres shape as backstage-db.
+  # a service-scoped second Postgres (the same shape the pact-broker itself needs).
   pact-broker-db:
     profiles: ["pact"]
     image: postgres:16-alpine
