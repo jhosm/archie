@@ -437,5 +437,5 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           echo "Build matrix completed; representative pushed digest: ${DIGEST:-<none>}"
-          echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,acl,orchestrator,notification,mcp-server,pack-validate}"
+          echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,acl,orchestrator,notification,mcp-server,pack-validate,mission-control,backstage}"
           echo "Each pushed image is cosign-signed by digest (keyless OIDC) in its build leg (bd Q.5)."
