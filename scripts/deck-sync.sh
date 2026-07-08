@@ -91,6 +91,19 @@ BAO_IAM_JWT_PUBKEY_PATH="${BAO_IAM_JWT_PUBKEY_PATH:-secret/data/babelstone/edge/
 IAM_ISSUER_POC="https://iam.babelstone.example/"          # the committed placeholder iss
 BABELSTONE_IAM_ISSUER="${BABELSTONE_IAM_ISSUER:-https://auth.babelstone.dev/oidc}"  # Logto staging iss
 
+# ── MCP resource repoint (ADR-IC-021 rollout step 5 / bd babelstone-zla1.10.5 slice 4) ─
+# The committed kong.yml hard-codes the POC MCP resource URI `http://localhost:8000/mcp` in the /mcp
+# route's aud-check pre-function (and the RFC 9728 resource-metadata pointer) — fine for the dev/CI
+# stack + the offline mcp-contract-test harness, which mint tokens with that aud. At staging the MCP
+# server is fronted at `https://api.babelstone.dev/mcp` and Logto binds tokens to that indicator
+# (RFC 8707, bd zla1.10.5.2 slice 1). Rewriting the committed placeholder here is the SAME deploy-time
+# swap as the iss/JWKS — so the deployed gateway enforces the real MCP aud with NO edge-contract
+# change, while the committed file stays POC so CI + the offline harness keep passing. Overridable.
+MCP_URI_POC="http://localhost:8000/mcp"                    # committed placeholder MCP aud
+MCP_META_POC="http://localhost:8000/.well-known/oauth-protected-resource"  # committed RFC 9728 pointer
+BABELSTONE_MCP_SERVER_URI="${BABELSTONE_MCP_SERVER_URI:-https://api.babelstone.dev/mcp}"  # staging MCP aud
+BABELSTONE_MCP_RESOURCE_METADATA="${BABELSTONE_MCP_RESOURCE_METADATA:-https://api.babelstone.dev/.well-known/oauth-protected-resource}"
+
 # ── arg parse ────────────────────────────────────────────────────────────────────────
 MODE="sync"          # sync | render-only | rotate | dry-run
 ROTATE_OP=""         # add | remove
@@ -273,6 +286,39 @@ with open(render, "w") as f:
 PY
 }
 
+# ── repoint the MCP resource URI at the staging edge (ADR-IC-021 step 5, bd zla1.10.5 slice 4) ─
+# Rewrite the /mcp route pre-function's hard-coded POC MCP aud + RFC 9728 resource-metadata pointer to
+# the real staging values. The committed kong.yml carries exactly ONE `MCP_SERVER_URI = "<poc>"` (the
+# aud-check target) and exactly TWO `"<poc metadata>"` occurrences (RESOURCE_METADATA +
+# CNF_RESOURCE_METADATA); we replace their VALUES only, count-checked, so a botched edit fails the
+# `deck file validate` gate, not Kong. The `MCP_SERVER_URI below` comment (a bare mention, no `= "…"`)
+# is never touched. Same deploy-time-placeholder-swap discipline as rewrite_iam_issuer.
+rewrite_mcp_server_uri() {
+  MCP_POC="$MCP_URI_POC" MCP_NEW="$BABELSTONE_MCP_SERVER_URI" \
+  META_POC="$MCP_META_POC" META_NEW="$BABELSTONE_MCP_RESOURCE_METADATA" \
+  mise exec -- python3 - "$RENDER" <<'PY'
+import os, re, sys
+render = sys.argv[1]
+mcp_poc, mcp_new = os.environ["MCP_POC"], os.environ["MCP_NEW"]
+meta_poc, meta_new = os.environ["META_POC"], os.environ["META_NEW"]
+with open(render) as f:
+    src = f.read()
+# 1) the single `MCP_SERVER_URI = "<poc>"` aud-check target (value only, not the comment mention).
+src, n_uri = re.subn(r'(MCP_SERVER_URI\s*=\s*")' + re.escape(mcp_poc) + r'(")',
+                     lambda m: m.group(1) + mcp_new + m.group(2), src)
+if n_uri != 1:
+    sys.exit(f"MCP_SERVER_URI rewrite: expected exactly 1 occurrence of {mcp_poc}, found {n_uri}")
+# 2) the two RFC 9728 resource-metadata pointers (RESOURCE_METADATA + CNF_RESOURCE_METADATA).
+needle = '"' + meta_poc + '"'
+n_meta = src.count(needle)
+if n_meta != 2:
+    sys.exit(f"MCP resource-metadata rewrite: expected exactly 2 occurrences of {meta_poc}, found {n_meta}")
+src = src.replace(needle, '"' + meta_new + '"')
+with open(render, "w") as f:
+    f.write(src)
+PY
+}
+
 # ── flip `tls_verify: false` → true on the orchestrator/engine upstreams (§P5) ───────
 # The MCP service already runs tls_verify: true; the orchestrator-edge + engine upstreams
 # are POC `false` until the CA bundle is mounted. Now that the real internal CA bundle is
@@ -312,6 +358,10 @@ render_from_openbao() {
   # 4b) repoint the iam-issuer `iss` at Logto (ADR-IC-021 step 3): the committed POC issuer →
   #     the real Logto staging issuer, so the gateway trusts Logto-minted tokens.
   rewrite_iam_issuer
+
+  # 4c) repoint the /mcp aud check + RFC 9728 pointer from the POC placeholder to the staging MCP
+  #     resource (ADR-IC-021 step 5): so the deployed edge enforces aud=https://api.babelstone.dev/mcp.
+  rewrite_mcp_server_uri
 
   # 5) now the CA bundle is real, flip upstream verify on (the reverse half of §P5 mTLS)
   flip_tls_verify
