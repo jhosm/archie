@@ -32,6 +32,11 @@ spec:
         app.kubernetes.io/name: logto-db-init
     spec:
       restartPolicy: OnFailure
+      # Shared scratch so the psql-equipped init step can signal the seed step whether the schema
+      # already exists (bd babelstone-zla1.10.13).
+      volumes:
+        - name: init-state
+          emptyDir: {}
       initContainers:
         - name: create-logto-db
           image: postgres:18-alpine
@@ -48,6 +53,19 @@ spec:
                 echo "creating database logto"
                 psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE logto"
               fi
+              # Idempotency sentinel for the seed step (bd babelstone-zla1.10.13): Logto's `db seed`
+              # is NOT idempotent — it CREATE ROLEs its RLS/tenant roles and fails Postgres 42710 on a
+              # re-run. Only seed when the schema is absent; logto_configs is the table logto.yaml's
+              # readiness gate keys on, so its presence means "already seeded".
+              if [ "$(psql -d logto -tAc "SELECT to_regclass('public.logto_configs') IS NOT NULL")" = "t" ]; then
+                echo "logto schema already seeded — db seed will be skipped"
+                touch /state/seeded
+              else
+                echo "logto schema absent — db seed will run"
+              fi
+          volumeMounts:
+            - name: init-state
+              mountPath: /state
           env:
             - name: PGHOST
               value: postgres
@@ -79,9 +97,22 @@ spec:
       containers:
         - name: db-init
           image: svhd/logto:latest
-          # `logto db init` — seed the schema into the freshly created `logto` DB (idempotent;
-          # a no-op if already seeded).
-          command: ["sh", "-c", "npm run cli db seed"]
+          # Seed the schema into the freshly created `logto` DB. `db seed` is NOT idempotent — it
+          # CREATE ROLEs Logto's RLS/tenant roles and fails Postgres 42710 on a re-run — so we only
+          # seed when the create-logto-db init step did NOT find an existing schema (its
+          # /state/seeded sentinel is absent). bd babelstone-zla1.10.13.
+          command:
+            - sh
+            - -c
+            - |
+              if [ -f /state/seeded ]; then
+                echo "logto already seeded (sentinel present) — skipping db seed"
+              else
+                npm run cli db seed
+              fi
+          volumeMounts:
+            - name: init-state
+              mountPath: /state
           env:
             - name: LOGTO_DB_PASSWORD
               valueFrom:
