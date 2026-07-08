@@ -164,15 +164,18 @@ jobs:
           version: "2026.6.6"      # same TEMP pin as ci.yml's infra job (broken mise latest release)
       - name: Render + kubeconform the promotion overlay (P.6)
         # The overlay the dispatch chose (default staging on the gate lane). Same render command +
-        # --load-restrictor + pinned kubeconform as ci.yml's infra job, so CD agrees with CI on
-        # "a valid manifest set".
+        # --load-restrictor + pinned kubeconform + VENDORED schema-location as ci.yml's infra job,
+        # so CD agrees with CI on "a valid manifest set" — schemas resolve offline from
+        # infra/k8s/schemas/ (bd babelstone-6qt9), never the rate-limited raw.githubusercontent.com.
         env:
           OVERLAY: ${{ github.event.inputs.overlay || 'staging' }}
+          SCHEMA_LOC: 'infra/k8s/schemas/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json'
         run: |
           set -euo pipefail
           echo "== rendering infra/k8s/overlays/$OVERLAY =="
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
-            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0 \
+                -schema-location "$SCHEMA_LOC"
       - name: Secret preflight — the staging render must carry NO placeholder credential bodies
         # bd babelstone-zla1.12.4 (ADR-PC-004 §A1): staging drops the committed dev-placeholder
         # Secret (drop-dev-secrets.patch.yaml); this gate proves it stays dropped. Staging only —

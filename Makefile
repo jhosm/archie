@@ -104,6 +104,9 @@ gen-saga-topics: ## Regenerate the saga family-integration-topic manifest from t
 gen-saga-topics-check: ## Gate: the generated saga-topic manifest matches the catalogue channels (CI failure on drift, ADR-IC-003)
 	@mise exec -- python3 scripts/gen-saga-topics.py --check
 
+k8s-schemas: ## Vendor the K8s JSON schemas kubeconform needs for OFFLINE manifest validation (run after adding a new Kind; bd babelstone-6qt9)
+	@./scripts/k8s-schemas-vendor.sh
+
 kong-config-check: ## Validate the Kong edge config: deck + kong config parse + edge-contract assertions (ADR-IC-006 §P1, needs deck + Docker)
 	@./scripts/kong-config-check.sh
 
