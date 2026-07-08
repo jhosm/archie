@@ -83,9 +83,9 @@ def main():
     if not TOKEN:
         sys.exit("LOGTO_MGMT_TOKEN is unset — export a Management-API token (see the module docstring).")
 
-    status, sie = api("GET", "/sign-in-exp")
+    status, sie = api("GET", "/api/sign-in-exp")
     if status != 200:
-        sys.exit(f"GET /sign-in-exp failed: {status} {sie}")
+        sys.exit(f"GET /api/sign-in-exp failed: {status} {sie}")
 
     current = sie.get("mfa") or {}
     cur_factors = sorted(current.get("factors") or [])
@@ -97,9 +97,9 @@ def main():
         return
 
     print(f"MFA before: factors={cur_factors or '[]'} policy={cur_policy}")
-    status, res = api("PATCH", "/sign-in-exp", {"mfa": {"factors": FACTORS, "policy": POLICY}})
+    status, res = api("PATCH", "/api/sign-in-exp", {"mfa": {"factors": FACTORS, "policy": POLICY}})
     if status != 200:
-        sys.exit(f"PATCH /sign-in-exp mfa failed: {status} {res}")
+        sys.exit(f"PATCH /api/sign-in-exp mfa failed: {status} {res}")
 
     new = res.get("mfa") or {}
     print(f"MFA after:  factors={sorted(new.get('factors') or [])} policy={new.get('policy')}")

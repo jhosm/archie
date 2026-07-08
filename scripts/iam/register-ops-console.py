@@ -87,9 +87,9 @@ def main():
     if not TOKEN:
         sys.exit("LOGTO_MGMT_TOKEN is unset — export a Management-API token (see the module docstring).")
 
-    status, apps = api("GET", "/applications")
+    status, apps = api("GET", "/api/applications")
     if status != 200:
-        sys.exit(f"GET /applications failed: {status} {apps}")
+        sys.exit(f"GET /api/applications failed: {status} {apps}")
     existing = next((a for a in apps if a.get("name") == APP_NAME), None)
 
     if existing:
@@ -107,7 +107,7 @@ def main():
                 "postLogoutRedirectUris": [POST_LOGOUT_URI],
             },
         }
-        status, app = api("POST", "/applications", body)
+        status, app = api("POST", "/api/applications", body)
         if status not in (200, 201):
             sys.exit(f"create ops-console app failed: {status} {_redact(app)}")
         app_id = app["id"]
