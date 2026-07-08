@@ -54,12 +54,17 @@ spec:
               value: http://engine:8080
             - name: BABELSTONE_ORCHESTRATOR_URL
               value: http://orchestrator:8080
-            # Must stay in LOCK-STEP with kong.yml: the aud the /mcp pre-function checks
-            # (MCP_SERVER_URI = http://localhost:8000/mcp, kong.yml) and the IAM `iss`.
+            # The deployed MCP aud + advertised authorization server. LOCK-STEP with kong.yml's /mcp
+            # pre-function MCP_SERVER_URI: the committed kong.yml keeps the POC value (so CI + the
+            # offline mcp-contract-test harness still pass), and scripts/deck-sync.sh rewrites BOTH the
+            # aud check and the RFC 9728 metadata pointer to these staging values at deploy — the same
+            # placeholder-swap as the iss/JWKS (ADR-IC-021 step 5, bd babelstone-zla1.10.5 slice 4).
             - name: BABELSTONE_MCP_SERVER_URI
-              value: http://localhost:8000/mcp
+              value: https://api.babelstone.dev/mcp
+            # The authorization server advertised in the RFC 9728 protected-resource metadata (§P2) —
+            # Logto's real issuer (matches the live discovery doc's `issuer`, ADR-IC-021).
             - name: BABELSTONE_IAM_URL
-              value: https://iam.babelstone.example/
+              value: https://auth.babelstone.dev/oidc
             - name: MCP_BIND_HOST
               value: 0.0.0.0
             - name: MCP_BIND_PORT
