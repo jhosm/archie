@@ -20,7 +20,9 @@ import {
 import { TechDocsAddons } from '@backstage/plugin-techdocs-react';
 import { ReportIssue } from '@backstage/plugin-techdocs-module-addons-contrib';
 import { UserSettingsPage } from '@backstage/plugin-user-settings';
-import { apis } from './apis';
+import { configApiRef, useApi } from '@backstage/core-plugin-api';
+import type { IdentityApi } from '@backstage/core-plugin-api';
+import { apis, oidcAuthApiRef } from './apis';
 import { entityPage } from './components/catalog/EntityPage';
 import { searchPage } from './components/search/SearchPage';
 import { Root } from './components/Root';
@@ -30,6 +32,7 @@ import {
   OAuthRequestDialog,
   SignInPage,
 } from '@backstage/core-components';
+import type { ReactNode } from 'react';
 import { createApp } from '@backstage/app-defaults';
 import { AppRouter, FlatRoutes } from '@backstage/core-app-api';
 import { CatalogGraphPage } from '@backstage/plugin-catalog-graph';
@@ -37,6 +40,33 @@ import { RequirePermission } from '@backstage/plugin-permission-react';
 import { catalogEntityCreatePermission } from '@backstage/plugin-catalog-common/alpha';
 import { NotificationsPage } from '@backstage/plugin-notifications';
 import { SignalsDisplay } from '@backstage/plugin-signals';
+
+// Sign-in gate (ADR-IC-021). On the deployed box (auth.environment=production) the ONLY way in is
+// the Logto OIDC gate — `auto` transparently redirects to auth.babelstone.dev (Backstage blocks
+// guest in production anyway). In local dev (`yarn dev`, no auth.environment) it falls back to the
+// guest provider, so no IdP is needed to hack on the portal. One image, both behaviours.
+const AppSignInPage = (props: {
+  onSignInSuccess: (identityApi: IdentityApi) => void;
+  children?: ReactNode;
+}) => {
+  const configApi = useApi(configApiRef);
+  const isProduction =
+    configApi.getOptionalString('auth.environment') === 'production';
+  return isProduction ? (
+    <SignInPage
+      {...props}
+      auto
+      provider={{
+        id: 'oidc',
+        title: 'babelstone (Logto)',
+        message: 'Sign in with your babelstone identity',
+        apiRef: oidcAuthApiRef,
+      }}
+    />
+  ) : (
+    <SignInPage {...props} auto providers={['guest']} />
+  );
+};
 
 const app = createApp({
   apis,
@@ -58,7 +88,7 @@ const app = createApp({
     });
   },
   components: {
-    SignInPage: props => <SignInPage {...props} auto providers={['guest']} />,
+    SignInPage: props => <AppSignInPage {...props} />,
   },
 });
 

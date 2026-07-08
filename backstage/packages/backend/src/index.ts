@@ -8,6 +8,7 @@
 
 import { createBackend } from '@backstage/backend-defaults';
 import { fileUrlReaderServiceFactory } from './fileUrlReader';
+import { oidcGateProviderModule } from './oidcGateProvider';
 
 const backend = createBackend();
 
@@ -32,8 +33,19 @@ backend.add(import('@backstage/plugin-techdocs-backend'));
 // auth plugin
 backend.add(import('@backstage/plugin-auth-backend'));
 // See https://backstage.io/docs/backend-system/building-backends/migrating#the-auth-plugin
+// guest — local-dev only (Backstage blocks it in production); kept so `yarn dev` needs no IdP.
 backend.add(import('@backstage/plugin-auth-backend-module-guest-provider'));
 // See https://backstage.io/docs/auth/guest/provider
+// Logto OIDC gate (ADR-IC-021, Boundary 6) — the real sign-in on the deployed box. Registered ONLY
+// when BACKSTAGE_AUTH_ENVIRONMENT=production (set by infra/k8s/overlays/staging/backstage-oidc.patch.yaml).
+// The auth plugin eagerly initialises EVERY environment sub-block of a registered provider at
+// startup (independent of auth.environment), so registering it unconditionally would make the image
+// fail-closed-crash anywhere the OIDC client secret / Logto discovery isn't present (local runs,
+// `make demo`). Gating registration keeps the image guest-by-default there, and fail-closed on the
+// deployed box (a missing BACKSTAGE_OIDC_CLIENT_SECRET stops the pod). See ./oidcGateProvider.ts.
+if (process.env.BACKSTAGE_AUTH_ENVIRONMENT === 'production') {
+  backend.add(oidcGateProviderModule);
+}
 
 // catalog plugin
 backend.add(import('@backstage/plugin-catalog-backend'));

@@ -166,6 +166,12 @@ patches:
   # grafana-rbac ConfigMap generated below from the same infra/grafana/rbac/ source the
   # grafana-rbac-check gate uses (single config source).
   - path: grafana-oidc.patch.yaml
+  # Turn on the Logto OIDC gate for the Backstage portal (Boundary 6, ADR-IC-021; bd
+  # babelstone-zla1.10.11). Deployment-only env patch — sets the public BACKSTAGE_BASE_URL (the base
+  # leaves it at localhost), selects the production auth environment, points at Logto discovery, and
+  # pulls the client secret from babelstone-dev-secrets. Fail-closed until the Logto app is
+  # hand-registered + the secret seeded (infra/runbooks/backstage-oidc-registration.md).
+  - path: backstage-oidc.patch.yaml
 
 # The Critical-SLI rule files for the bundled Prometheus, carried in as a ConfigMap
 # generated FROM the SAME infra/grafana/prometheus/ source the Compose stack mounts

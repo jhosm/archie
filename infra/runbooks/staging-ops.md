@@ -37,7 +37,7 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
    placeholders are dropped from the build, so a redeploy can never overwrite what you set
    here), and the deploy **fails closed** if `babelstone-dev-secrets` is missing or still
    holds a placeholder value (`scripts/cd-secret-preflight.sh`, wired into `cd.yml`).
-   Create it once with real values (all seven keys are secretKeyRef'd by workloads):
+   Create it once with real values (all nine keys are secretKeyRef'd by workloads):
 
    ```bash
    kubectl -n babelstone-staging create secret generic babelstone-dev-secrets \
@@ -47,16 +47,20 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
      --from-file=OIDC_PRIVATE_KEYS=<real PEM signing key file> \
      --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>" \
      --from-literal=LOGTO_MISSION_CONTROL_CLIENT_SECRET="<the Logto mission-control app client secret>" \
-     --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)"
+     --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)" \
+     --from-literal=LOGTO_BACKSTAGE_CLIENT_SECRET="<the Logto backstage app client secret>" \
+     --from-literal=BACKSTAGE_AUTH_SESSION_SECRET="$(openssl rand -base64 32)"
    ```
 
-   `LOGTO_GRAFANA_CLIENT_SECRET` and `LOGTO_MISSION_CONTROL_CLIENT_SECRET` come from **hand-registered
-   Logto applications** (DCR is the accepted [ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
-   §C6 gap): register the Grafana app per that ADR's rollout step 3 and the Mission Control app per
-   [`mission-control-oidc-registration.md`](./mission-control-oidc-registration.md), then paste each
-   client secret here. `MC_SESSION_SIGNING_KEY` is a freshly generated HMAC key (Mission Control
-   signs its own session cookie with it — it is NOT a Logto value), so mint it with `openssl rand`
-   as shown. Rotating it invalidates every live Mission Control session.
+   `LOGTO_GRAFANA_CLIENT_SECRET`, `LOGTO_MISSION_CONTROL_CLIENT_SECRET`, and
+   `LOGTO_BACKSTAGE_CLIENT_SECRET` come from **hand-registered Logto applications** (DCR is the
+   accepted [ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
+   §C6 gap): register the Grafana app per that ADR's rollout step 3, the Mission Control app per
+   [`mission-control-oidc-registration.md`](./mission-control-oidc-registration.md), and the Backstage
+   app per [`backstage-oidc-registration.md`](./backstage-oidc-registration.md), then paste each client
+   secret here. `MC_SESSION_SIGNING_KEY` and `BACKSTAGE_AUTH_SESSION_SECRET` are freshly generated HMAC
+   keys (Mission Control / Backstage each sign their own session cookie with one — NOT a Logto value),
+   so mint them with `openssl rand` as shown. Rotating one invalidates that app's live sessions.
 
    Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
    the Kong mTLS material (via `deck-sync`).
