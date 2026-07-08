@@ -113,8 +113,8 @@ RUN tar xzf bundle.tar.gz && rm bundle.tar.gz
 #   * ./events/*.asyncapi.yaml         -> /catalog/events/…          (from contracts/catalog/)
 #   * ./reconciliation/*.yaml          -> /catalog/reconciliation/…  (from contracts/catalog/)
 #   * ../openapi/specs|internal/*.yaml -> /openapi/specs|internal/…  (referenced by catalog-info.yaml)
-# The OpenAPI specs/ + internal/ dirs are baked at /openapi so the 9 OpenAPI API entities + their
-# Location resolve too — omitting them would leave the governed catalogue rendering with broken
+# The OpenAPI specs/ + internal/ dirs are baked at /openapi so the 9 OpenAPI API entities' $text
+# refs resolve too — omitting them would leave the governed catalogue rendering with broken
 # $text refs, contradicting the very no-drift invariant this image exists to serve. The _selftest/
 # fixtures under contracts/openapi/ are intentionally NOT baked (malformed-by-design gate inputs,
 # unreferenced by the descriptor).

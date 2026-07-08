@@ -91,13 +91,23 @@ backend:
     client: better-sqlite3
     connection: ':memory:'
 
-# The ONLY catalogue source: the in-repo Backstage descriptor. It is mounted into the
-# container at /catalog/catalog-info.yaml (see the Deployment / compose volume). All event +
-# reconciliation API entities, and the AsyncAPI definitions they $text-reference, flow from it.
-# No second registration, no inline entity, no schema copy — the no-drift invariant.
+# The ONLY catalogue source: the in-repo Backstage descriptor. It is BAKED into the image at
+# /catalog/catalog-info.yaml (backstage/Dockerfile). All event + reconciliation + OpenAPI API
+# entities, and the definitions they $text-reference, flow from it. No second registration, no
+# inline entity, no schema copy — the no-drift invariant.
+#
+# WHY `type: url` + a `file://` URL (not `type: file` + a bare path): Backstage resolves each
+# relative `$text` ref (`./events/…`, `../openapi/…`) by `new URL(value, base)`, where the base is
+# this location's target. A bare filesystem path (`/catalog/catalog-info.yaml`) has no URL scheme,
+# so `new URL` throws `Invalid URL` and every definition renders blank (bd zla1.6.10). A `file://`
+# URL is a valid base, so the refs resolve to `file:///catalog/events/…` and `file:///openapi/…`.
+# The stock backend ships no reader for the `file:` scheme, so a read-only one is registered in the
+# image (backstage/packages/backend/src/fileUrlReader.ts) — restricted to the baked /catalog +
+# /openapi roots. This keeps the schema NEVER inlined (ADR-IC-015 Decision §2) and reads the tree
+# from the image (no network, no drift), unlike a GitHub `type: url` target.
 catalog:
   rules:
     - allow: [Location, API]
   locations:
-    - type: file
-      target: /catalog/catalog-info.yaml
+    - type: url
+      target: file:///catalog/catalog-info.yaml
