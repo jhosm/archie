@@ -72,15 +72,17 @@ spec:
               image: bitnami/kubectl:1.31
               # printf (not a heredoc) builds each VolumeSnapshot on one logical line, so there's
               # no block-scalar-indentation fragility. The data PVCs: the StatefulSet VCTs
-              # (postgres/redpanda) name PVCs <vct>-<sts>-<ordinal>; backstage-db-data is the
-              # standalone PVC (zla1.4). Retention/pruning is manual for v1 — see the runbook.
+              # (postgres/redpanda) name PVCs <vct>-<sts>-<ordinal>. Backstage keeps NO durable
+              # state (in-memory SQLite, rebuilt from the baked /catalog on boot — bd
+              # babelstone-zla1.6.6), so it has no PVC to snapshot. Retention/pruning is manual
+              # for v1 — see the runbook.
               command:
                 - /bin/sh
                 - -c
                 - |
                   set -eu
                   TS="$(date -u +%Y%m%dT%H%M%SZ)"
-                  for pvc in postgres-data-postgres-0 redpanda-data-redpanda-0 backstage-db-data; do
+                  for pvc in postgres-data-postgres-0 redpanda-data-redpanda-0; do
                     echo "snapshotting ${pvc} ..."
                     printf 'apiVersion: snapshot.storage.k8s.io/v1\nkind: VolumeSnapshot\nmetadata:\n  name: %s-%s\n  labels:\n    babelstone.io/dr-role: volume-snapshot\nspec:\n  volumeSnapshotClassName: hcloud-volumes\n  source:\n    persistentVolumeClaimName: %s\n' "${pvc}" "${TS}" "${pvc}" | kubectl apply -f -
                   done

@@ -4,21 +4,25 @@
 # its only catalogue source is the registered contracts/catalog/catalog-info.yaml
 # descriptor (the no-drift invariant, ADR-IC-015 Decision §1–§2).
 #
-# Backstage is a Node.js service + its own PostgreSQL backend (the S1 cost ADR-IC-015
-# records, paid only at host-deploy time). This manifest declares both.
+# In plain English: this runs the real, self-contained Backstage image. It stores its state in
+# a lightweight in-process database (SQLite), NOT Postgres — there is no separate DB pod. Nothing
+# is persisted: the portal rebuilds its entire catalogue from the /catalog descriptor baked into
+# the image on every boot, so an in-memory DB costs zero memory and loses nothing.
 #
-# HUMAN-HANDOFF TAIL — these manifests are the infrastructure half; a truly running
-# portal additionally needs (platform work, requires a live cluster):
-#   1. A built Backstage app image. Backstage ships NO turnkey image — scaffold an app
-#      (`npx @backstage/create-app`), add the AsyncAPI catalog provider plugins, build +
-#      push an image, then replace the `image:` placeholder below with that reference.
-#   2. The catalog-info.yaml descriptor tree mounted at /catalog. In-cluster this is a
-#      ConfigMap or an init-container `git`-clone of contracts/catalog/; the kustomization
-#      generates a ConfigMap from the descriptor for the dev stack (see note in the README).
-#   3. The Backstage GDPR surface (ADR-IC-015 Residual Risk): once user/team identity data
-#      is entered for ownership/access control, it MUST go in the GDPR data inventory.
-# Until that image exists this Deployment will not become Ready — intentional; the estate
-# stays Git-native (files + CI gate) until the host is genuinely stood up (ADR-IC-015 §9).
+# TOPOLOGY (maintainer's call recorded on bd babelstone-zla1.6.1 — NO ADR governs it):
+#   * DB: SQLite (better-sqlite3), in-memory (:memory:) — see infra/backstage/app-config.yaml.
+#     No Postgres of any kind: not a separate pod, not the shared cluster instance. Backstage is
+#     a read-only catalogue portal whose state is fully reconstructible from the baked /catalog
+#     tree, so it re-ingests on boot in seconds; nothing to persist, nothing to back up.
+#   * Image: ghcr.io/jhosm/babelstone-backstage:latest — the multi-stage image built by
+#     backstage/Dockerfile (bd babelstone-zla1.6.3). It BAKES the governed app-config
+#     (infra/backstage/app-config.yaml → /app/app-config.production.yaml) AND the whole
+#     contracts/catalog/ tree (→ /catalog/), so the portal is self-contained: no app-config
+#     ConfigMap mount and no flat catalog ConfigMap mount (a flat ConfigMap cannot carry the
+#     events/ + reconciliation/ SUBDIRS the descriptor $text-references). cd.yml pins the
+#     digest at deploy, matching the :latest convention infra/k8s/apps/engine.yaml uses.
+#   * GDPR (ADR-IC-015 Residual Risk): once user/team identity data is entered for
+#     ownership/access control, it MUST go in the GDPR data inventory.
 ---
 apiVersion: v1
 kind: Service
@@ -35,73 +39,6 @@ spec:
     - name: http
       port: 7007
       targetPort: 7007
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: backstage-db
-  labels:
-    app.kubernetes.io/name: backstage-db
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: backstage-db
-  ports:
-    - name: postgres
-      port: 5432
-      targetPort: 5432
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backstage-db
-  labels:
-    app.kubernetes.io/name: backstage-db
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: backstage-db
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: backstage-db
-    spec:
-      # fsGroup chowns the data volume to the postgres gid so the non-root process can write
-      # PGDATA; pairs with the container runAsUser (#420 set runAsNonRoot without either).
-      securityContext:
-        fsGroup: 70
-      containers:
-        - name: postgres
-          image: postgres:16-alpine
-          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
-          # is omitted: Postgres writes its unix socket to /var/run/postgresql and scratch
-          # to /tmp on the root fs, so a read-only root would break initdb/startup.
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 70            # 'postgres' user in postgres:16-alpine (Alpine); numeric UID lets the kubelet verify non-root
-            runAsGroup: 70
-            allowPrivilegeEscalation: false
-            seccompProfile:
-              type: RuntimeDefault
-            capabilities:
-              drop: ["ALL"]
-          ports:
-            - name: postgres
-              containerPort: 5432
-          env:
-            - name: POSTGRES_USER
-              value: backstage
-            - name: POSTGRES_PASSWORD
-              # Dev-only placeholder; a real deploy sources this from a Secret.
-              value: backstage
-            - name: POSTGRES_DB
-              value: backstage
-          readinessProbe:
-            exec:
-              command: ["pg_isready", "-U", "backstage"]
-            initialDelaySeconds: 5
-            periodSeconds: 10
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -122,9 +59,11 @@ spec:
     spec:
       containers:
         - name: backstage
-          # PLACEHOLDER — replace with the pushed babelstone Backstage app image (see the
-          # human-handoff note above). There is no turnkey upstream image to pin here.
-          image: ghcr.io/jhosm/babelstone-backstage:placeholder
+          # The real, self-contained catalogue-portal image (backstage/Dockerfile, bd
+          # babelstone-zla1.6.3): it bakes the governed app-config + the whole contracts/catalog/
+          # tree, so no config/catalogue volumes are mounted. :latest matches the apps/ convention;
+          # cd.yml pins the digest at deploy.
+          image: ghcr.io/jhosm/babelstone-backstage:latest
           imagePullPolicy: IfNotPresent
           # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
           # is omitted: the Backstage Node app writes caches/scratch to /tmp and its working
@@ -139,38 +78,14 @@ spec:
           ports:
             - name: http
               containerPort: 7007
+          # No DB env: the baked app-config uses in-memory SQLite (no Postgres connection). Only
+          # the public base URL is wired.
           env:
             - name: BACKSTAGE_BASE_URL
               value: http://localhost:7007
-            - name: BACKSTAGE_PG_HOST
-              value: backstage-db
-            - name: BACKSTAGE_PG_PORT
-              value: "5432"
-            - name: BACKSTAGE_PG_USER
-              value: backstage
-            - name: BACKSTAGE_PG_PASSWORD
-              value: backstage
-          volumeMounts:
-            # The app-config and the catalogue descriptor tree. The descriptor is the ONLY
-            # catalogue source (no-drift invariant) — Backstage resolves the $text AsyncAPI
-            # refs relative to catalog-info.yaml's mount location.
-            - name: backstage-app-config
-              mountPath: /app/app-config.production.yaml
-              subPath: app-config.yaml
-              readOnly: true
-            - name: catalog-descriptor
-              mountPath: /catalog
-              readOnly: true
           readinessProbe:
             httpGet:
               path: /
               port: 7007
             initialDelaySeconds: 20
             periodSeconds: 15
-      volumes:
-        - name: backstage-app-config
-          configMap:
-            name: backstage-app-config
-        - name: catalog-descriptor
-          configMap:
-            name: backstage-catalog-descriptor
