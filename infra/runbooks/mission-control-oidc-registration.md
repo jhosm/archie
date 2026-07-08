@@ -54,7 +54,11 @@ for the full rationale.
 3. Logto **generates** the **App ID** (= the OAuth `client_id`) and it is immutable — you do NOT get
    to choose it. Copy the generated value into `OIDC_CLIENT_ID` in
    `overlays/staging/mission-control.yaml` and redeploy; the two MUST match. (The current staging app
-   is `tvtbmr5y6vbhkswvmk5a5` — bd babelstone-zla1.10.12.)
+   is `tvtbmr5y6vbhkswvmk5a5` — bd babelstone-zla1.10.12.) The CD `configure-logto` job **enforces**
+   this match: it runs `scripts/iam/register-ops-console.py` with `OPS_EXPECT_CLIENT_ID` set to the
+   deployed `OIDC_CLIENT_ID`, and the script **fails loud** (non-zero, blocking the promote) if the
+   Logto-registered App ID differs. So on a fresh re-onboard the first promote fails by design until
+   you pin the newly-minted id here and redeploy — that is the fail-loud gate working, not a fault.
 
 ## 2. Configure the redirect + flow (auth-code + PKCE S256)
 

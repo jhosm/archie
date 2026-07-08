@@ -8,9 +8,12 @@ name: CD — promote to P.6 (Kubernetes)
 # the images it is about to deploy are genuinely the cosign-signed bytes (verify by digest, never
 # by a movable tag); (2) gates the forward-only DB migrations (refuse a release that rewrote an
 # already-applied migration or would roll the schema backward); (3) renders + kubeconforms the
-# environment's Kustomize overlay; and (4) runs a declarative Kong `deck sync` with the REAL edge
+# environment's Kustomize overlay; (4) runs a declarative Kong `deck sync` with the REAL edge
 # mTLS + IAM key material pulled from OpenBao at sync time (bd babelstone-4c81.1) — never the
-# committed POC placeholders.
+# committed POC placeholders; and (5) reconciles the first-party Logto Management-API config
+# (the MCP API resource + scopes, the ops-console client, default-tenant MFA) that lives in Logto's
+# own DB and is NOT captured in any manifest — so a Logto re-onboard self-heals on the next promote
+# instead of leaving the substrate ADR-IC-021 C1/C5/C4/C7 depend on silently wiped (bd zla1.10.x).
 #
 # Honours, as the deploy-time realisation of decisions CI only validates:
 #   • ADR-PC-019 §P1 — path-scoped monorepo CI; this is the promotion lane those subtrees feed.
@@ -18,6 +21,10 @@ name: CD — promote to P.6 (Kubernetes)
 #     Admin-API mutation. §P5 — Boundary-2 upstream mTLS (real internal-CA cert + tls_verify on).
 #     §P7 — JWT key registration/rotation as the deliberate 3-step `deck sync`.
 #   • ADR-PC-018 — the SoR-routing edge config rides the same one git-tracked kong.yml this syncs.
+#   • ADR-IC-021 — the IAM authorization server. §C1/C5 (aud-bound MCP resource + per-tool scopes) and
+#     §C4/C7 (step-up MFA factors) are kept reproducible by the configure-logto job; §C6 (curated
+#     client registration / the DCR gap) stays a deliberate HAND step — this job does NOT onboard
+#     arbitrary clients, only the first-party MCP resource, ops-console client, and default MFA.
 #
 # Promotion targets (P.6): the Kustomize overlays under infra/k8s/overlays — `ha`
 # (the P.7 production-shaped topology) and `staging` (the always-on demo box —
@@ -46,6 +53,7 @@ on:
       - 'scripts/deck-sync.sh'
       - 'scripts/cd-migrate.sh'
       - 'scripts/cd-secret-preflight.sh'
+      - 'scripts/iam/**'
       - 'engine/src/Babelstone.EventStore.Migrations/**'
       - 'orchestrator/src/Babelstone.Orchestrator.Substrate/Migrations/**'
       - 'families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Migrations/**'
@@ -67,6 +75,10 @@ on:
         description: 'Actually apply to the cluster + deck sync (needs the environment secrets); false = gates + render only'
         type: boolean
         default: false
+      configure_logto:
+        description: 'Reconcile the first-party Logto Management-API config (MCP resource/scopes, ops-console client, default MFA). Runs after a staging apply, or standalone (apply=false) to re-heal a re-onboarded Logto without re-promoting. staging only.'
+        type: boolean
+        default: true
 
 concurrency:
   # One promotion of a given ref at a time; never cancel an in-flight apply (a half-applied
@@ -308,10 +320,141 @@ jobs:
             echo "no port-forward was started (an earlier step failed before 4e)"
           fi
 
+  # ── 5 · hermetic contract lane for the Logto-config path (push/PR, no live Logto) ────
+  #     The static mirror of the configure-logto job below — proves the reconcile path parses and
+  #     stays wired on every push/PR, WITHOUT a live Logto or the p6-staging secrets, exactly as
+  #     verify-images asserts its cosign contract with no digests and migration-gate is the static
+  #     half of the apply-time migration. Cheap; no network, no token.
+  configure-logto-contract:
+    name: configure-logto contract (hermetic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert the Logto-config path parses and stays wired (no network, no token)
+        run: |
+          set -euo pipefail
+          # 1. All three reconcile scripts must byte-compile.
+          python3 -m py_compile \
+            scripts/iam/register-mcp-resource.py \
+            scripts/iam/enable-default-mfa.py \
+            scripts/iam/register-ops-console.py
+          # 2. Each must still read its Management-API token from the environment (never a literal).
+          for f in register-mcp-resource enable-default-mfa register-ops-console; do
+            grep -q 'LOGTO_MGMT_TOKEN' "scripts/iam/$f.py" \
+              || { echo "::error::scripts/iam/$f.py no longer reads LOGTO_MGMT_TOKEN from the environment"; exit 1; }
+          done
+          # 3. The ops-console fail-loud target var must still be honoured.
+          grep -q 'OPS_EXPECT_CLIENT_ID' scripts/iam/register-ops-console.py \
+            || { echo "::error::register-ops-console.py dropped the OPS_EXPECT_CLIENT_ID fail-loud check"; exit 1; }
+          # 4. This workflow must still invoke all three from the live configure-logto job.
+          for f in register-mcp-resource enable-default-mfa register-ops-console; do
+            grep -q "scripts/iam/$f.py" .github/workflows/cd.yml \
+              || { echo "::error::cd.yml no longer invokes scripts/iam/$f.py"; exit 1; }
+          done
+          echo "configure-logto contract OK"
+
+  # ── 6 · reconcile the first-party Logto Management-API config (apply, post-promote) ──
+  #     The idempotent reproduce-path for Logto state that lives in Logto's own DB, NOT in any
+  #     manifest or `logto db seed` Job — so a re-onboard would otherwise silently wipe the
+  #     ADR-IC-021 C1/C5/C4/C7 substrate. Runs after a staging promote (configure_logto=true,
+  #     the default) OR standalone (apply=false) to re-heal a hand-re-onboarded Logto without
+  #     re-promoting images. Unlike the Kong deck-sync (4e/4f) it needs NO kubeconfig and NO
+  #     port-forward: Logto's Management API is deliberately PUBLIC (auth.babelstone.dev via
+  #     Cloudflare), and its state is not Kubernetes state. It only needs a deploy-scoped
+  #     Management-API token, minted in-process from the babelstone-mgmt M2M app (never root).
+  configure-logto:
+    name: configure Logto (Management-API reconcile)
+    needs: [render, promote]
+    # Run on a staging promote (with configure_logto on), OR standalone when apply=false (promote
+    # skipped). Require render green in both modes; tolerate a skipped promote (the standalone lane).
+    if: >-
+      ${{ !cancelled()
+          && github.event_name == 'workflow_dispatch'
+          && github.event.inputs.overlay == 'staging'
+          && github.event.inputs.configure_logto == 'true'
+          && needs.render.result == 'success'
+          && (needs.promote.result == 'success' || needs.promote.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: p6-staging
+    permissions:
+      contents: read
+    env:
+      # The public default-tenant issuer host — same one Mission Control + Grafana dial. Override
+      # via a repo/environment variable if the host ever changes; the scripts default to the same.
+      LOGTO_BASE_URL: ${{ vars.LOGTO_BASE_URL || 'https://auth.babelstone.dev' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4   # pins kustomize (to render the deployed OIDC_CLIENT_ID)
+        with:
+          version: "2026.6.6"
+      # 6a — never race the logto-db-init/seed Jobs: wait until the issuer answers discovery.
+      - name: Wait for the Logto OIDC issuer (discovery 200)
+        run: |
+          set -euo pipefail
+          url="$LOGTO_BASE_URL/oidc/.well-known/openid-configuration"
+          for i in $(seq 1 30); do
+            # Descriptive UA is mandatory: Cloudflare managed-bot rule 1010 bans the default agent
+            # in front of auth.babelstone.dev (same reason the scripts set one).
+            if curl -fsS -A babelstone-iam/1.0 --max-time 5 "$url" >/dev/null 2>&1; then
+              echo "Logto issuer reachable (after ~$((i * 2))s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Logto OIDC discovery ($url) not reachable after ~60s"; exit 1
+      # 6b — the fail-loud target: the OIDC_CLIENT_ID Mission Control is actually deployed with.
+      #      Read from the RENDERED overlay (== what promote applied this run), so a future patch
+      #      that overrides it is still caught. register-ops-console.py exits non-zero if the
+      #      Logto-registered ops-console App ID does not equal this (your fail-loud choice).
+      - name: Extract the deployed Mission Control OIDC_CLIENT_ID
+        id: mc
+        run: |
+          set -euo pipefail
+          rendered=$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging)
+          cid=$(printf '%s\n' "$rendered" \
+            | grep -A1 -E '^[[:space:]]*-?[[:space:]]*name:[[:space:]]+OIDC_CLIENT_ID[[:space:]]*$' \
+            | grep -E '^[[:space:]]*value:' | head -1 \
+            | sed -E 's/^[[:space:]]*value:[[:space:]]*//; s/^"//; s/"$//')
+          if [ -z "$cid" ]; then
+            echo "::error::could not extract OIDC_CLIENT_ID from the rendered staging overlay"; exit 1
+          fi
+          echo "deployed Mission Control OIDC_CLIENT_ID = $cid"
+          echo "client_id=$cid" >> "$GITHUB_OUTPUT"
+      # 6c — mint a Management-API token in-process and run the three idempotent reconcile scripts.
+      #      The token is a LOCAL shell var (masked, never written to $GITHUB_OUTPUT/$GITHUB_ENV),
+      #      so it lives only inside this step. register-mcp-resource + enable-default-mfa run first
+      #      (pure idempotent config); register-ops-console runs last so its fail-loud mismatch check
+      #      cannot skip the other two reconciles.
+      - name: Reconcile Logto config (MCP resource + scopes, default MFA, ops-console client)
+        env:
+          LOGTO_MGMT_APP_ID: ${{ secrets.LOGTO_MGMT_APP_ID }}
+          LOGTO_MGMT_APP_SECRET: ${{ secrets.LOGTO_MGMT_APP_SECRET }}
+          OPS_EXPECT_CLIENT_ID: ${{ steps.mc.outputs.client_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LOGTO_MGMT_APP_ID:-}" ] || [ -z "${LOGTO_MGMT_APP_SECRET:-}" ]; then
+            echo "::error::LOGTO_MGMT_APP_ID / LOGTO_MGMT_APP_SECRET must be set as p6-staging environment secrets (the deploy-scoped babelstone-mgmt M2M app — never root)."
+            exit 1
+          fi
+          LOGTO_MGMT_TOKEN=$(curl -fsS -A babelstone-iam/1.0 \
+            -u "$LOGTO_MGMT_APP_ID:$LOGTO_MGMT_APP_SECRET" \
+            -d grant_type=client_credentials \
+            --data-urlencode resource=https://default.logto.app/api \
+            -d scope=all "$LOGTO_BASE_URL/oidc/token" | jq -r '.access_token // empty')
+          if [ -z "$LOGTO_MGMT_TOKEN" ]; then
+            echo "::error::Management-API token mint returned no access_token (check the babelstone-mgmt M2M credentials + its resource grant)."
+            exit 1
+          fi
+          echo "::add-mask::$LOGTO_MGMT_TOKEN"
+          export LOGTO_MGMT_TOKEN LOGTO_BASE_URL
+          echo "::group::register-mcp-resource"; python3 scripts/iam/register-mcp-resource.py; echo "::endgroup::"
+          echo "::group::enable-default-mfa";    python3 scripts/iam/enable-default-mfa.py;    echo "::endgroup::"
+          echo "::group::register-ops-console";  python3 scripts/iam/register-ops-console.py;  echo "::endgroup::"
+          echo "Logto Management-API config reconciled."
+
   # ── always-run aggregator (same gate pattern as ci.yml) ─────────────────────────────
   gate:
     name: CD gate
-    needs: [verify-images, migration-gate, render, promote]
+    needs: [verify-images, migration-gate, render, promote, configure-logto-contract, configure-logto]
     if: always()
     runs-on: ubuntu-latest
     steps:
