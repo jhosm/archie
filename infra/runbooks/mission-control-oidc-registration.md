@@ -44,17 +44,17 @@ write 401s on a port-forward. See
 [`iam-mcp-resource-registration.md` §0](./iam-mcp-resource-registration.md#0-reach-the-logto-admin-console)
 for the full rationale.
 
-## 1. Create the `babelstone-mission-control` application
+## 1. Create the Mission Control application
 
 1. Console → **Applications** → **Create application** → type **Traditional Web** (a *confidential*
    server-side client). Mission Control's `serve.py` runs the code→token exchange **server-side**
    with a client secret (`client_secret_post`) **plus** PKCE — it is not a browser SPA, so pick the
    confidential Web app type, not Single-Page App.
 2. Name it so it is unmistakable in the cohort register, e.g. **Mission Control (staging)**.
-3. Set the **App ID** (client_id) to **`babelstone-mission-control`** — this MUST equal
-   `OIDC_CLIENT_ID` in `overlays/staging/mission-control.yaml`. (If Logto generates a random App ID
-   instead of letting you set it, put that generated value into `OIDC_CLIENT_ID` and redeploy — the
-   two must match, whichever way round.)
+3. Logto **generates** the **App ID** (= the OAuth `client_id`) and it is immutable — you do NOT get
+   to choose it. Copy the generated value into `OIDC_CLIENT_ID` in
+   `overlays/staging/mission-control.yaml` and redeploy; the two MUST match. (The current staging app
+   is `tvtbmr5y6vbhkswvmk5a5` — bd babelstone-zla1.10.12.)
 
 ## 2. Configure the redirect + flow (auth-code + PKCE S256)
 
@@ -110,10 +110,10 @@ holds a `dev-placeholder-…` value.
    ```bash
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
      -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' https://app.babelstone.dev/
-   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=babelstone-mission-control...
+   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=tvtbmr5y6vbhkswvmk5a5...
    ```
 
-   A `302` to `auth.babelstone.dev` with `client_id=babelstone-mission-control` confirms the app is
+   A `302` to `auth.babelstone.dev` with `client_id=tvtbmr5y6vbhkswvmk5a5` confirms the app is
    registered and the discovery + redirect wiring agree. Completing the login in a browser lands you
    back at `https://app.babelstone.dev/callback` and then the UI.
 
