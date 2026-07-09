@@ -133,33 +133,32 @@ echo "creating the cluster: hetzner-k3s create --config $RENDERED"
 hetzner-k3s create --config "$RENDERED"
 
 # ── 5 · scrub the unconditionally-planted Hetzner token Secret (bd babelstone-zla1.12.20) ──
-# The box now EXISTS with the kube-system/hcloud token Secret in it. Three fail-CLOSED guards:
-#   • trap (the "finally"): any early exit from here fails LOUD with the manual remediation,
-#     never silently leaves the token in a running box;
-#   • verify distinguishes "gone" from "could not check" (a kubectl/API error is NOT an all-clear);
-#   • a version-drift guard: the hcloud/kube-system name is what hetzner-k3s v2.6.0 plants — if the
-#     installed version differs, warn LOUD that the assumption is unverified (no silent no-op).
-KUBECONFIG_PATH="./kubeconfig"
-TOKEN_NS="kube-system"; TOKEN_SECRET="hcloud"; TESTED_HK3S="2.6.0"
+# The box now EXISTS with the Hetzner token in a kube-system Secret. Fail-CLOSED throughout:
+#   • trap (the "finally"): any early exit from here fails LOUD with the manual remediation;
+#   • targeted delete of the kube-system/hcloud Secret hetzner-k3s v2.6 plants;
+#   • then a NAME- AND VERSION-INDEPENDENT proof: the token VALUE must be absent from EVERY
+#     kube-system Secret — so a renamed Secret on a future hetzner-k3s cannot produce a false
+#     all-clear, and a kubectl/API error is a hard fail (never an all-clear), not a warning.
+KUBECONFIG_PATH="./kubeconfig"; TOKEN_NS="kube-system"; TOKEN_SECRET="hcloud"
 warn_unscrubbed() {
   echo "" >&2
-  echo "!!! SECURITY: cluster CREATED but ${TOKEN_NS}/${TOKEN_SECRET} token Secret NOT confirmed removed." >&2
-  echo "!!! The all-powerful read/write Hetzner token may still be in-cluster. Remove + verify NOW:" >&2
+  echo "!!! SECURITY: cluster CREATED but the Hetzner token was NOT confirmed removed from ${TOKEN_NS}." >&2
+  echo "!!! The all-powerful read/write Hetzner token may still be in-cluster. Inspect + remove NOW:" >&2
+  echo "!!!   kubectl --kubeconfig $PWD/$KUBECONFIG_PATH -n ${TOKEN_NS} get secret -o name" >&2
   echo "!!!   kubectl --kubeconfig $PWD/$KUBECONFIG_PATH -n ${TOKEN_NS} delete secret ${TOKEN_SECRET}" >&2
-  echo "!!!   kubectl --kubeconfig $PWD/$KUBECONFIG_PATH -n ${TOKEN_NS} get secret -o name  # eyeball for any token Secret" >&2
   echo "!!! Do not expose the box until confirmed clean." >&2
 }
 trap warn_unscrubbed EXIT
-command -v kubectl >/dev/null || fail "kubectl not found on PATH — cannot scrub the ${TOKEN_NS}/${TOKEN_SECRET} token Secret"
-HK3S_VER="$(hetzner-k3s --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-if [ "$HK3S_VER" != "$TESTED_HK3S" ]; then
-  echo "WARNING: hetzner-k3s '${HK3S_VER}' != tested '${TESTED_HK3S}' — the ${TOKEN_NS}/${TOKEN_SECRET} token-Secret name may have drifted." >&2
-  echo "         After this run, MANUALLY confirm no Hetzner token Secret remains: kubectl -n ${TOKEN_NS} get secret -o name" >&2
-fi
-echo "scrubbing the orphaned ${TOKEN_NS}/${TOKEN_SECRET} token Secret (CCM/CSI off → nothing consumes it)"
+command -v kubectl >/dev/null || fail "kubectl not found on PATH — cannot scrub the Hetzner token Secret"
+echo "scrubbing the kube-system Hetzner token Secret (CCM/CSI off -> nothing consumes it)"
 kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TOKEN_NS" delete secret "$TOKEN_SECRET" --ignore-not-found
-remaining="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TOKEN_NS" get secret "$TOKEN_SECRET" --ignore-not-found -o name)" \
-  || fail "could not VERIFY the ${TOKEN_NS}/${TOKEN_SECRET} Secret is gone (kubectl/API error) — do NOT expose the box"
-[ -z "$remaining" ] || fail "${TOKEN_NS}/${TOKEN_SECRET} token Secret STILL present after scrub — do not expose the box"
+# name/version-independent proof: the token VALUE must be gone from EVERY kube-system Secret.
+token_b64="$(printf '%s' "$HCLOUD_TOKEN" | base64 | tr -d '\n')"
+secrets_json="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TOKEN_NS" get secret -o json)" \
+  || fail "could not enumerate ${TOKEN_NS} Secrets to verify the token is gone (kubectl/API error) -- do NOT expose the box"
+if printf '%s' "$secrets_json" | grep -qF "$token_b64"; then
+  fail "the Hetzner API token is STILL present in a ${TOKEN_NS} Secret (possibly under a name other than '${TOKEN_SECRET}') -- remove it before exposing the box"
+fi
+unset token_b64 secrets_json
 trap - EXIT
-echo "confirmed: no ${TOKEN_NS}/${TOKEN_SECRET} Hetzner API token Secret present"
+echo "confirmed: the Hetzner API token is absent from all ${TOKEN_NS} Secrets"
