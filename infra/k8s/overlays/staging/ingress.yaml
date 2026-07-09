@@ -20,7 +20,8 @@
 # the token ISSUER, not a product route) likewise gets its own auth subdomain
 # straight through Traefik, so Kong's product routes stay the ADR-IC-006 edge.
 # Grafana is intentionally NOT exposed (no public unauthenticated dashboard); OTLP
-# 4317/4318 stays unexposed per ADR-IC-007 §P1.
+# 4317/4318 is never fronted on an Ingress per ADR-IC-007 §P1 (it is published on the
+# grafana-lgtm ClusterIP Service, walled to the Collector by NetworkPolicy — §P1 amendment 2026-07-09).
 #
 # Hosts are babelstone.dev subdomains (the locked domain): api → Kong, backstage →
 # Backstage, app → Mission Control, auth → Logto (the 4th public host). DNS → node IP
@@ -191,7 +192,8 @@ spec:
 # observability plane is a regulated data store (ADR-IC-007 §P4): access is gated by Grafana's
 # own login (anonymous OFF) + Logto SSO + §P6 RBAC, and — like the auth-admin console — the host
 # is meant to sit behind a Cloudflare Access identity gate (bd zla1.10.6). Only the UI port (3000)
-# is fronted; the appliance's OTLP ports (4317/4318) stay unexposed (ADR-IC-007 §P1, CI-asserted).
+# is fronted; the appliance's OTLP ports (4317/4318) are never fronted on an Ingress (ADR-IC-007 §P1;
+# they are on the ClusterIP Service, walled to the Collector by NetworkPolicy — §P1 amendment 2026-07-09).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

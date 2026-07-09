@@ -30,7 +30,7 @@ application/engine service images (they connect to this stack).
 | redpanda-console | Deployment | 8080 | dev convenience |
 | kong | Deployment | 8000, 8001 | [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |
 | openbao | Deployment | 8200 | [ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) |
-| grafana-lgtm | Deployment | **3000 only** | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
+| grafana-lgtm | Deployment | **3000** (base); staging adds 3200 (Tempo query) + OTLP 4317/4318 (collector-only NetworkPolicy) | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
 | backstage (catalogue portal) | Deployment | 7007 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml` from the baked image; in-memory SQLite (no Postgres), rebuilt from the baked `/catalog` on boot (bd babelstone-zla1.6.6) |
@@ -174,10 +174,16 @@ resolves the `secretKeyRef` wiring.
 
 ## Observability boundary (ADR-IC-007 §P1)
 
-Only the **OTel Collector** exposes OTLP (`4317`/`4318`). The Grafana LGTM
-Service exposes **only the Grafana UI (3000)** — its own OTLP ports are *not*
-published; telemetry reaches it via the Collector fan-out (`grafana-lgtm:4317`),
-cluster-internally. CI asserts the grafana-lgtm Service never exposes 4317/4318.
+The **OTel Collector** is the single OTLP entry point — no service exports
+direct-to-backend. In the **base** the Grafana LGTM Service exposes only the
+Grafana UI (3000); its OTLP intake is unpublished, and CI asserts the base
+grafana-lgtm Service never exposes 4317/4318. Overlays that carry a
+collector-only NetworkPolicy **republish** 4317/4318 on that Service so the
+Collector's fan-out hop (`grafana-lgtm:4317`) lands — the `allow-grafana-lgtm-ingress`
+policy admits those ports from the `otel-collector` pod only, so the Collector
+stays the sole path (ADR-IC-007 §P1 amendment 2026-07-09). Staging does this via
+`grafana-otlp-svc.patch.yaml`, and a positive staging CI assertion guards the
+republish-plus-policy pairing. OTLP is never fronted on an Ingress.
 
 ## HA overlay — production-shaped topology (P.7)
 

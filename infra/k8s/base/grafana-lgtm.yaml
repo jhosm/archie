@@ -1,10 +1,13 @@
 # Grafana LGTM — all-in-one observability backend, Loki + Grafana + Tempo +
 # Prometheus (ADR-IC-007).
 #
-# ADR-IC-007 §P1 (single OTLP entry point): the LGTM appliance's own OTLP ports
-# (4317/4318) are NOT exposed. Only the OTel Collector ingests OTLP; it fans out
-# to this backend cluster-internally. The Service here exposes ONLY the Grafana
-# UI (3000). CI asserts 4317/4318 are absent from this Service.
+# ADR-IC-007 §P1 (single OTLP entry point): in the BASE the appliance's own OTLP
+# ports (4317/4318) are NOT exposed on this Service — the base carries no
+# NetworkPolicy, so omitting the ports is what keeps the Collector the sole path.
+# CI asserts 4317/4318 are absent from the BASE Service. Overlays that DO carry a
+# collector-only NetworkPolicy republish 4317/4318 here so the Collector's fan-out
+# hop lands (grafana-lgtm:4317) — the staging overlay does this via
+# grafana-otlp-svc.patch.yaml; see the ADR-IC-007 §P1 amendment 2026-07-09.
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,7 +19,8 @@ spec:
   selector:
     app.kubernetes.io/name: grafana-lgtm
   ports:
-    # Grafana UI only. Do NOT add OTLP (4317/4318) here — ADR-IC-007 §P1.
+    # Grafana UI only in the base — do NOT add OTLP (4317/4318) here; overlays with a
+    # collector-only NetworkPolicy republish them via a patch (ADR-IC-007 §P1 amendment).
     - name: grafana-ui
       port: 3000
       targetPort: 3000
@@ -64,7 +68,8 @@ spec:
           ports:
             # Only the Grafana UI port is declared. The container also listens
             # on OTLP internally, reachable only via the Collector fan-out
-            # (grafana-lgtm:4317), never published on the Service (ADR-IC-007 §P1).
+            # (grafana-lgtm:4317); not published on the BASE Service (ADR-IC-007 §P1) —
+            # overlays with a collector-only NetworkPolicy republish it (see the Service comment).
             - name: grafana-ui
               containerPort: 3000
           volumeMounts:
