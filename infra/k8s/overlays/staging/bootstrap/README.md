@@ -54,6 +54,25 @@ This directory is **deliberately not referenced** by
 
 ## Apply order (Phase 2 — needs the live cluster + DNS)
 
+**Primary path:** run [`scripts/staging-bootstrap.sh`](../../../../../scripts/staging-bootstrap.sh)
+(bd babelstone-zla1.12.23) — a fail-closed, idempotent, re-runnable orchestration of the
+**data-independent** glue of the list below (steps 1–4 here, plus the namespace, the
+Cloudflare DNS-01 token Secret, and minting the CD kubeconfig). It preflights every required
+tool, a reachable cluster, and the operator-provisioned `babelstone-dev-secrets` before it
+mutates anything, and it deliberately stops short of the account-gated steps (DNS records,
+Logto client secrets, the firewall, the overlay deploy). Dry-run it with `--check-only` (no
+live cluster required — CI-safe): it prints the ordered plan and mutates nothing.
+
+```bash
+scripts/staging-bootstrap.sh --check-only    # preflight + print the plan, no mutation
+scripts/staging-bootstrap.sh                 # full data-independent bootstrap
+scripts/staging-bootstrap.sh --set-cd-secret # also set the KUBECONFIG_B64 env secret via gh
+```
+
+The manual command list below is the **documented fallback** (and the source of truth the
+script automates). A fuller runbook posture-correction is tracked separately as bd
+babelstone-zla1.12.22 — the overlap is intentional.
+
 ```bash
 # 1. Install cert-manager (with its CRDs) — Helm is the upstream-recommended path.
 helm repo add jetstack https://charts.jetstack.io && helm repo update
