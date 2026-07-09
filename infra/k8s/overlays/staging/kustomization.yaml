@@ -75,6 +75,27 @@ resources:
   # Enforced by k3s's embedded NetworkPolicy controller — nothing to install.
   - network-policies.yaml
 
+# Third-party image digest pins for the images the apps/ layer and THIS overlay add on top of
+# base (bd babelstone-2t16.31.1; ADR-PC-007 §A3). A base `images:` transformer reaches only
+# base's own resources, so postgres — declared afresh by apps/ (engine, orchestrator, the
+# event-store migration Job) and by this overlay (logto, logto-jobs, backup-cronjobs, the
+# mission-control read-only-role Job) — is re-pinned here to the SAME digest base uses (the entry
+# also idempotently re-pins base's copy in the staging render). svhd/logto was a floating
+# `:latest` on the IAM substrate — the most acute app-image drift — now frozen to a digest (the
+# `:latest` tag is kept only as a legibility/provenance label; the digest is what actually pulls).
+# Reproducibility / supply-chain, NOT cosign-verified (ADR-PC-007 §A2 covers the signed
+# first-party images). Bumped deliberately by the scheduled cd-thirdparty-digest-audit workflow.
+# NOT pinned here — bitnami/kubectl:1.31 in volume-snapshot-cronjob.yaml: that tag was withdrawn
+# in Bitnami's 2025 catalog sunset and needs a maintained replacement first (bd babelstone-2t16.31.3).
+# Digests resolved 2026-07-09 via `mise exec -- crane digest`.
+images:
+  - name: postgres
+    newTag: 18-alpine
+    digest: sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+  - name: svhd/logto
+    newTag: latest
+    digest: sha256:7f79547e3d1fe569a3ecae757968a7cfc579687aa8164eec35113c0adc983c5b
+
 # Single-replica everywhere — a single node; the HA topology (overlays/ha) would
 # not schedule here. Pinned explicitly (base already ships single-replica) to
 # make the single-node intent the documented seam, not an inherited default.

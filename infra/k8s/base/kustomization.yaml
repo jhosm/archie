@@ -50,6 +50,53 @@ resources:
   - backstage.yaml
   - core-acl-stub.yaml
 
+# Third-party image digest pins (bd babelstone-2t16.31.1; ADR-PC-007 §A3). Every
+# third-party (non-first-party) image this base renders is pinned to an immutable sha256
+# digest, so a redeploy pulls the EXACT bytes we validated — a reproducibility / supply-chain
+# control, NOT cosign-verified: we do not sign these images, so there is no identity to verify
+# against (contrast the ghcr.io/jhosm/babelstone-* first-party images, which cd-pin-images.sh
+# resolves → cosign-verifies → pins, ADR-PC-007 §A2). Both newTag and digest are set so the
+# rendered ref stays legible: `name:tag@sha256:…`.
+#
+# SCOPE OF A TRANSFORMER: a kustomize `images:` entry rewrites only the resources in the
+# kustomization that declares it — a base entry does NOT reach images the overlays add
+# (verified empirically). postgres and openbao therefore recur in the apps/staging/ha
+# kustomizations, which re-pin their own copies to the same digest. CI renders base, ha and
+# staging independently (ci.yml infra job), so each render target carries its own coverage.
+#
+# MAINTENANCE: bumped deliberately by the scheduled `.github/workflows/cd-thirdparty-digest-audit.yml`
+# job (re-resolves each tag with crane, opens a drift PR), never floated. Dependabot's docker
+# updater parses Dockerfiles only and cannot see these transformer digests (ADR-IC-014 amendment).
+# Digests resolved 2026-07-09 via `mise exec -- crane digest`.
+images:
+  - name: postgres
+    newTag: 18-alpine
+    digest: sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+  - name: kong
+    newTag: 3.9.1
+    digest: sha256:76c14b93e989f7f4418039f7f9789ca32564016211c86ac1a18022f4788e7b9c
+  - name: registry
+    newTag: 3.1.1
+    digest: sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33
+  - name: wiremock/wiremock
+    newTag: 3.9.1
+    digest: sha256:8fe02bc3f9b63deb1454d41750dbaf081adf4b3e8c74fd8e31f790bee5647b88
+  - name: docker.redpanda.com/redpandadata/redpanda
+    newTag: v24.3.1
+    digest: sha256:f2f8bb89f1a0747cc6f86440cb3a0916e981e136e1d72392bab179f73492fb0f
+  - name: docker.redpanda.com/redpandadata/console
+    newTag: v2.8.0
+    digest: sha256:69e209d2549cf84ff9a468a11c6da7d76d94d17ab77fd02cc6f5cd99ec23f43b
+  - name: grafana/otel-lgtm
+    newTag: 0.28.0
+    digest: sha256:10f48eb2f8670134df542177bb19536c55421b089e43f9dfc2a27d4c078204d8
+  - name: otel/opentelemetry-collector-contrib
+    newTag: 0.153.0
+    digest: sha256:93aad750175cbf1a973ae1c5886c3371f4d800f61be25cdd26870b8441ffe9fa
+  - name: openbao/openbao
+    newTag: 2.5.4
+    digest: sha256:436eaf9778cad75507ff70ea26ace30dcbe15606e619ac3823495663d7f7c115
+
 configMapGenerator:
   # POSTGRES_DB / POSTGRES_USER for the Postgres StatefulSet (mirrors compose).
   - name: postgres-config

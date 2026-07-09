@@ -14,8 +14,21 @@ metadata:
   labels:
     app.kubernetes.io/name: k3s-upgrade
 spec:
-  # Follow the k3s `stable` channel; the controller resolves the latest stable release from it.
-  channel: https://update.k3s.io/v1-release/channels/stable
+  # DELIBERATE, DIGEST-PINNED control-plane upgrades (bd babelstone-2t16.31.1; ADR-PC-007 §A3).
+  # WAS `channel: https://update.k3s.io/v1-release/channels/stable` + an UNTAGGED
+  # `image: rancher/k3s-upgrade` — an unpinned image that swaps the k3s control-plane BINARY in
+  # place on the (single) node: the most acute floating-image hazard in the estate. A digest pin
+  # is fundamentally incompatible with a floating channel: system-upgrade-controller resolves the
+  # channel into `.status.latestVersion` and, when `upgrade.image` carries NO tag, fills the tag
+  # from it — so a channel keeps advancing the target while a pinned image installs a fixed
+  # version, and the controller would re-run the upgrade forever (latestVersion never matches the
+  # installed one). Pinning therefore means a DELIBERATE `version:` in place of `channel:`, which
+  # is the correct supply-chain posture for an in-place control-plane swap anyway (an operator
+  # bumps it on purpose, off-hours — not whenever `stable` advances). SUC honours an explicit
+  # tag+digest on `upgrade.image` verbatim (it only FILLS A MISSING tag), so the node gets exactly
+  # the bytes below. To move k3s forward, bump `version` and the image `tag@digest` together.
+  # (2026-07-09 the `stable` channel resolved to v1.36.2+k3s1; digest via `mise exec -- crane digest`.)
+  version: v1.36.2+k3s1
   # One node at a time; drain it for the in-place k3s binary swap (single-node = brief downtime).
   concurrency: 1
   cordon: true
@@ -26,4 +39,4 @@ spec:
       - key: node-role.kubernetes.io/control-plane
         operator: Exists
   upgrade:
-    image: rancher/k3s-upgrade
+    image: rancher/k3s-upgrade:v1.36.2-k3s1@sha256:471084010ecf1bc6e4b9544529400bf47c8da3d268e2f67fa239dacd735c0083

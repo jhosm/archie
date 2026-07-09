@@ -1,0 +1,114 @@
+name: CD — third-party image digest audit
+
+# Keep the third-party image digest pins fresh (bd babelstone-2t16.31.1; ADR-PC-007 §A3,
+# ADR-IC-014 amendment 2026-07-09).
+#
+# In plain English: the Kubernetes manifests pin every third-party image (postgres, kong,
+# redpanda, logto, the k3s control-plane upgrader, …) to an immutable sha256 digest so a redeploy
+# pulls the exact bytes we validated. Those digests go stale as upstream rebuilds a rolling tag
+# (postgres:18-alpine, svhd/logto:latest, …). This scheduled job is the DELIBERATE bump lever: it
+# re-resolves each pinned tag with crane and, on drift, opens a PR proposing the new digests — so a
+# maintainer reviews the change instead of the pins rotting silently. It NEVER pushes to main.
+#
+# Why hand-rolled, not Dependabot/Renovate: Dependabot's docker updater parses Dockerfiles only and
+# cannot see a kustomize `images:` transformer digest or a Plan's `image:` (exactly what we pin);
+# Renovate could, but ADR-IC-014 chose Dependabot and rejected Renovate on operational-simplicity
+# grounds. This ~thin workflow + scripts/cd-thirdparty-digest-audit.py keep that posture (no new
+# bot) while covering the niche Dependabot structurally cannot. The scanning-tool trio of ADR-IC-014
+# is untouched.
+
+on:
+  schedule:
+    # Weekly, Monday 06:17 UTC — same weekly cadence as the Dependabot ecosystems, offset minute so
+    # it does not collide with other crons.
+    - cron: '17 6 * * 1'
+  workflow_dispatch: {}
+
+# Least privilege: read the repo + write a bump BRANCH and open a PR. No packages/registry write,
+# no cluster credentials — this only re-resolves public image digests and proposes an edit.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # One audit at a time; a newer run supersedes an in-flight one (they converge on the same branch).
+  group: cd-thirdparty-digest-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit + propose third-party digest bumps
+    runs-on: ubuntu-latest
+    # Never run on a fork's schedule (a fork has no reason to open bump PRs against itself).
+    if: ${{ github.repository == 'jhosm/babelstone' }}
+    env:
+      BUMP_BRANCH: automated/cd-thirdparty-digest-bump
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: jdx/mise-action@v4   # pins crane + python from mise.toml
+        with:
+          version: "2026.6.6"      # same TEMP pin as ci.yml/cd.yml (broken mise latest release)
+
+      # Best-effort Docker Hub auth: GitHub-hosted runners share egress IPs, so anonymous Docker Hub
+      # pulls are aggressively rate-limited (HTTP 429). If the two DOCKERHUB_* secrets exist, log
+      # crane in to raise the limit; if they are unset the audit still runs anonymously (it degrades
+      # to skipping any ref it cannot resolve, logged as a warning — never a false "in sync").
+      - name: Docker Hub auth for crane (optional, raises the pull-rate limit)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "$DOCKERHUB_TOKEN" | mise exec -- crane auth login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+            echo "crane authenticated to Docker Hub."
+          else
+            echo "DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not set — resolving anonymously (best-effort)."
+          fi
+
+      # Rewrite any drifted digest in place. --write exits non-zero only on a HARD error
+      # (an unresolved ref or a cross-file inconsistency), not on ordinary drift — drift is the
+      # whole point of the run, so we branch on `git diff` below, not on this exit code.
+      - name: Re-resolve pins + rewrite drifted digests
+        run: mise exec -- python3 scripts/cd-thirdparty-digest-audit.py --write || true
+
+      - name: Open / update a digest-bump PR if anything changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No third-party digest drift — nothing to propose."
+            exit 0
+          fi
+          echo "Digest drift detected:"; git --no-pager diff --stat
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BUMP_BRANCH"
+          git add -A
+          git commit -m "chore(cd): bump third-party image digest pins to current tags
+
+          Automated by .github/workflows/cd-thirdparty-digest-audit.yml — re-resolved the pinned
+          third-party image tags with crane and refreshed the drifted sha256 digests. Reproducibility
+          pins only (NOT cosign-verified); ADR-PC-007 §A3 / ADR-IC-014.
+
+          Co-Authored-By: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          # Force-with-lease so a re-run updates the same branch (and its open PR) instead of
+          # stacking duplicates.
+          git push --force-with-lease origin "$BUMP_BRANCH"
+
+          # The PR body (a committed template, so it is reviewable and carries no heredoc-in-YAML
+          # fragility) supplies the CI-required sections so the drift gate passes when it runs.
+          # Caveat: a PR opened with the default GITHUB_TOKEN does not itself trigger the
+          # pull_request CI workflows; a maintainer re-triggers them by pushing to the branch or
+          # reopening the PR. Documented rather than wiring a PAT — a digest bump is low-risk and
+          # human-reviewed.
+          if [ -z "$(gh pr list --head "$BUMP_BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base main --head "$BUMP_BRANCH" \
+              --title "chore(cd): bump third-party image digest pins" \
+              --body-file .github/cd-thirdparty-digest-audit-pr-body.md
+          else
+            echo "A bump PR for $BUMP_BRANCH is already open — updated it via force-push."
+          fi
