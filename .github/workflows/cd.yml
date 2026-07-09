@@ -215,9 +215,22 @@ jobs:
       - name: Install kubectl + cosign
         uses: sigstore/cosign-installer@v3
       # 4a — forward-only migrations applied to the live DBs BEFORE the new images serve.
-      #      Each series points at its own logical DB; the environment supplies the libpq env
-      #      (PGHOST/PGUSER/PGPASSWORD/PGDATABASE) or a --psql conn from an environment secret.
+      #      SKIPPED for staging: staging migrates entirely IN-CLUSTER, each series against its
+      #      OWN database, so a runner-side apply is both unreachable and structurally wrong there:
+      #        • engine event-store → the `event-store-migrate` Job (infra/k8s/apps/), sentinel-gated
+      #          so the engine initContainer waits on it (the engine does NOT self-migrate the store).
+      #        • orchestrator saga-substrate → the orchestrator app self-migrates on boot, against its
+      #          OWN `babelstone_orchestrator` DB (a separate DB from the engine's `babelstone`).
+      #        • term_deposit read-model → the engine app self-applies it on boot.
+      #      cd-migrate.sh targets a SINGLE connection/DB and the GH runner cannot reach the
+      #      cluster-internal Postgres, so running it against staging would fail (unreachable) and,
+      #      even tunnelled, could not span the two DBs. The static forward-only guarantee is NOT
+      #      lost: the `migration-gate` job still runs cd-migrate.sh --gate-only hermetically, and a
+      #      CI assertion keeps the in-cluster event-store-sql ConfigMap in lockstep with the on-disk
+      #      Sql/ dir. Kept for non-staging overlays whose DB the runner reaches directly.
+      #      (bd babelstone-zla1.12.16; the in-cluster machinery is bd babelstone-zla1.5.1.)
       - name: Apply forward-only migrations to the environment DBs
+        if: ${{ github.event.inputs.overlay != 'staging' }}
         env:
           PGHOST: ${{ secrets.PGHOST }}
           PGUSER: ${{ secrets.PGUSER }}
