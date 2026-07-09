@@ -33,10 +33,14 @@ This directory is **deliberately not referenced** by
   by the mcp-server Deployment) **and** Kong's **client** cert (`mcp-kong-client-tls`),
   both chaining to the one CA. Distinct from the public Let's Encrypt edge above —
   this is internal east-west mTLS, never public.
-- [`volume-snapshot-class.yaml`](./volume-snapshot-class.yaml) — the
-  `VolumeSnapshotClass` (`hcloud-volumes`, driver `csi.hetzner.cloud`) the
-  volume-snapshot CronJob references (bd babelstone-zla1.7). Needs the **external CSI
-  snapshot controller + CRDs** installed (NOT bundled with k3s).
+- [`volume-snapshot-class.yaml`](./volume-snapshot-class.yaml) — **DEAD** (retained pending
+  removal in bd babelstone-zla1.12.21). It defined a `VolumeSnapshotClass` (`hcloud-volumes`,
+  driver `csi.hetzner.cloud`) for the block-level volume-snapshot CronJob (bd babelstone-zla1.7),
+  but the Hetzner CSI is now **dropped** (bd babelstone-zla1.12.20 — staging is on the k3s
+  node-local `local-path` provisioner, no CSI, no block snapshots). Its `VolumeSnapshotClass`
+  CRD is therefore not installed, so this file must NOT be `kubectl apply`ed (both the apply-order
+  step 3 loop and staging-bootstrap.sh skip it). Do not delete it here — that is
+  bd babelstone-zla1.12.21's job.
 - [`k3s-upgrade-plan.yaml`](./k3s-upgrade-plan.yaml) — the system-upgrade-controller
   `Plan` tracking the k3s `stable` channel (bd babelstone-zla1.7). Needs Rancher's
   **system-upgrade-controller** installed (it creates the `system-upgrade` namespace +
@@ -73,34 +77,54 @@ The manual command list below is the **documented fallback** (and the source of 
 script automates). A fuller runbook posture-correction is tracked separately as bd
 babelstone-zla1.12.22 — the overlap is intentional.
 
+Third-party controllers are installed at a **pinned version, never floating `latest`**, so a
+bring-up is reproducible and an upstream release can't silently change what lands on the box
+(the same supply-chain ethos as the digest-pinned first-party images, PR #531). The versions
+below MUST stay **identical** to [`scripts/staging-bootstrap.sh`](../../../../../scripts/staging-bootstrap.sh)
+— the script and this list are one contract. The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed, BEFORE a live provision.
+To verify/bump: cert-manager `helm search repo jetstack/cert-manager --versions`; Traefik
+`helm search repo traefik/traefik --versions`; system-upgrade-controller the
+[releases page](https://github.com/rancher/system-upgrade-controller/releases). Pinned:
+cert-manager `v1.16.2`, Traefik chart `33.2.1`, system-upgrade-controller `v0.14.2`.
+
 ```bash
 # 1. Install cert-manager (with its CRDs) — Helm is the upstream-recommended path.
+#    PINNED to v1.16.2 (never `latest`) — keep in lockstep with staging-bootstrap.sh.
 helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm install cert-manager jetstack/cert-manager \
+helm install cert-manager jetstack/cert-manager --version v1.16.2 \
   --namespace cert-manager --create-namespace --set crds.enabled=true
 
 # 1a. Install the Traefik ingress controller (bd babelstone-zla1.14). hetzner-k3s disables
 #     the bundled Traefik + servicelb, so this is what provides the `traefik` IngressClass and
 #     binds the node's :80/:443 (hostPort). Without it every https://*.babelstone.dev is dead.
+#     PINNED to chart 33.2.1 (Traefik proxy v3.x) — keep in lockstep with staging-bootstrap.sh.
 helm repo add traefik https://traefik.github.io/charts && helm repo update
-helm install traefik traefik/traefik \
+helm install traefik traefik/traefik --version 33.2.1 \
   --namespace traefik --create-namespace \
   -f infra/k8s/overlays/staging/bootstrap/helm/traefik-values.yaml
 
-# 1b. Install the controllers the zla1.7 ops bootstrap depends on:
-#   - the external CSI snapshot controller + its CRDs (VolumeSnapshot/Class/Content) —
-#     NOT bundled with k3s; install the upstream kubernetes-csi/external-snapshotter manifests.
-#   - Rancher's system-upgrade-controller (creates the `system-upgrade` ns + SA the Plan uses).
-kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/latest/download/system-upgrade-controller.yaml
+# 1b. Install Rancher's system-upgrade-controller (creates the `system-upgrade` ns + SA the
+#     k3s upgrade Plan uses). PINNED to the v0.14.2 release tag (releases/download/<TAG>/…),
+#     NOT releases/latest/download/… — keep in lockstep with staging-bootstrap.sh.
+#     (The external CSI snapshot controller is no longer installed — the Hetzner CSI is dropped;
+#     bd babelstone-zla1.12.20.)
+kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/v0.14.2/system-upgrade-controller.yaml
 
 # 2. Create the namespace (idempotent) — the namespaced bootstrap objects (mcp-mtls certs,
 #    the cd-deployer RBAC) land in it, and the CD ServiceAccount may only CONVERGE the
 #    namespace, not create it (RBAC `create` cannot be name-restricted).
 kubectl create namespace babelstone-staging --dry-run=client -o yaml | kubectl apply -f -
 
-# 3. Apply the cluster-scoped bootstrap (this directory): issuers, VolumeSnapshotClass,
-#    k3s Plan, and the cd-deployer deploy RBAC.
-kubectl apply -f infra/k8s/overlays/staging/bootstrap/
+# 3. Apply the cluster-scoped bootstrap (this directory): issuers, the k3s Plan, and the
+#    cd-deployer deploy RBAC. NOTE: a blanket `kubectl apply -f bootstrap/` now FAILS on
+#    volume-snapshot-class.yaml — with the Hetzner CSI dropped (bd babelstone-zla1.12.20) its
+#    VolumeSnapshotClass CRD is not installed. Apply the files individually, skipping it —
+#    or just run staging-bootstrap.sh, which already excludes it:
+for f in infra/k8s/overlays/staging/bootstrap/*.yaml; do
+  case "$(basename "$f")" in volume-snapshot-class.yaml) continue ;; esac
+  kubectl apply -f "$f"
+done
+# (volume-snapshot-class.yaml is dead pending removal — bd babelstone-zla1.12.21.)
 
 # 4. Mint the least-privilege deploy kubeconfig (identity: the cd-deployer SA) and store it
 #    as the KUBECONFIG_B64 environment secret — NOT the cluster-admin kubeconfig.

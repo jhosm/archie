@@ -51,8 +51,28 @@ BOOTSTRAP_DIR="$REPO_ROOT/infra/k8s/overlays/staging/bootstrap"
 TRAEFIK_VALUES="$BOOTSTRAP_DIR/helm/traefik-values.yaml"
 CD_KUBECONFIG_SCRIPT="$REPO_ROOT/scripts/cd-kubeconfig.sh"
 SECRET_PREFLIGHT_SCRIPT="$REPO_ROOT/scripts/cd-secret-preflight.sh"
-# Same source URL bootstrap/README.md step 1b uses — keep them identical.
-SUC_MANIFEST_URL="https://github.com/rancher/system-upgrade-controller/releases/latest/download/system-upgrade-controller.yaml"
+
+# ── PINNED third-party versions (supply-chain: never install "latest") ───────────────────
+# The three cluster controllers below are installed at a PINNED version, never floating
+# `latest`, so a bring-up is reproducible and an upstream release can't silently change what
+# lands on the box (same ethos as the digest-pinned first-party images, PR #531). Keep these
+# IDENTICAL to bootstrap/README.md's "Apply order" — the two sources are one contract.
+# The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s
+# server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a
+# chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT
+# proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed,
+# BEFORE a live provision.
+# Verify / bump:
+#   cert-manager  → `helm search repo jetstack/cert-manager --versions` (after `helm repo update`)
+#   Traefik chart → `helm search repo traefik/traefik --versions`
+#   sys-upgrade-c → https://github.com/rancher/system-upgrade-controller/releases (pick a tag)
+CERT_MANAGER_VERSION="v1.16.2"      # jetstack/cert-manager Helm chart (== app version)
+TRAEFIK_CHART_VERSION="33.2.1"      # traefik/traefik Helm chart (ships Traefik proxy v3.x)
+SUC_VERSION="v0.14.2"               # rancher/system-upgrade-controller release tag
+
+# Same source URL bootstrap/README.md step 1b uses — keep them identical. Pinned to
+# ${SUC_VERSION} (releases/download/<TAG>/…), NOT releases/latest/download/….
+SUC_MANIFEST_URL="https://github.com/rancher/system-upgrade-controller/releases/download/${SUC_VERSION}/system-upgrade-controller.yaml"
 
 APP_NAMESPACE="babelstone-staging"
 CERT_MANAGER_NAMESPACE="cert-manager"
@@ -126,9 +146,9 @@ echo
 # ── the ordered plan (printed in every mode; the only side-effecting output in --check-only) ─
 cat <<PLAN
 Ordered Phase-2 bootstrap plan (data-independent glue automated by this script):
-  1. helm upgrade --install cert-manager jetstack/cert-manager -n ${CERT_MANAGER_NAMESPACE} (CRDs on); wait for rollout
-  2. helm upgrade --install traefik traefik/traefik -n traefik (ingress controller); wait for rollout
-  3. kubectl apply -f ${SUC_MANIFEST_URL}
+  1. helm upgrade --install cert-manager jetstack/cert-manager --version ${CERT_MANAGER_VERSION} -n ${CERT_MANAGER_NAMESPACE} (CRDs on); wait for rollout
+  2. helm upgrade --install traefik traefik/traefik --version ${TRAEFIK_CHART_VERSION} -n traefik (ingress controller); wait for rollout
+  3. kubectl apply -f ${SUC_MANIFEST_URL}   (system-upgrade-controller ${SUC_VERSION})
   4. kubectl create namespace ${APP_NAMESPACE} (idempotent)
   5. kubectl apply the cert-manager/${CLOUDFLARE_SECRET} Secret from \$CLOUDFLARE_API_TOKEN (DNS-01 solver)
   6. kubectl apply the cluster-scoped bootstrap ${BOOTSTRAP_DIR}/*.yaml (except volume-snapshot-class.yaml)
@@ -146,6 +166,7 @@ step "1. cert-manager (helm upgrade --install)"
 helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
 helm repo update jetstack >/dev/null
 helm upgrade --install cert-manager jetstack/cert-manager \
+  --version "$CERT_MANAGER_VERSION" \
   --namespace "$CERT_MANAGER_NAMESPACE" --create-namespace --set crds.enabled=true
 kubectl -n "$CERT_MANAGER_NAMESPACE" rollout status deploy/cert-manager --timeout=300s
 kubectl -n "$CERT_MANAGER_NAMESPACE" rollout status deploy/cert-manager-webhook --timeout=300s
@@ -156,12 +177,14 @@ step "2. Traefik ingress controller (helm upgrade --install)"
 helm repo add traefik https://traefik.github.io/charts >/dev/null 2>&1 || true
 helm repo update traefik >/dev/null
 helm upgrade --install traefik traefik/traefik \
+  --version "$TRAEFIK_CHART_VERSION" \
   --namespace traefik --create-namespace \
   -f "$TRAEFIK_VALUES"
 kubectl -n traefik rollout status deploy/traefik --timeout=300s
 
 # ── STEP 3 · system-upgrade-controller (same source URL as bootstrap/README.md step 1b) ──
-step "3. Rancher system-upgrade-controller (kubectl apply)"
+# Pinned to ${SUC_VERSION} (releases/download/<TAG>/…, never releases/latest/download/…).
+step "3. Rancher system-upgrade-controller ${SUC_VERSION} (kubectl apply)"
 kubectl apply -f "$SUC_MANIFEST_URL"
 
 # ── STEP 4 · the app namespace (idempotent) ──────────────────────────────────────────────
