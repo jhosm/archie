@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# infra/hetzner-k3s/firewall-web.sh — open inbound TCP 80/443 on the staging box's
-# Hetzner Cloud Firewall, scoped to Cloudflare's published edge ranges (bd babelstone-zla1.14).
+# infra/hetzner-k3s/firewall-web.sh — REMOVE the inbound TCP 80/443 web rules from the
+# staging box's Hetzner Cloud Firewall now that the Cloudflare Tunnel closes the edge
+# (bd babelstone-zla1.12.14; ADR-IC-006). Superseding the earlier bd zla1.14 behaviour,
+# which ADDED those two Cloudflare-scoped web rules.
 #
-# In plain English: the public URLs were dead partly because the Hetzner firewall blocked
-# :80/:443. hetzner-k3s SYNTHESISES that firewall from cluster.yaml's `networking.allowed_networks`,
-# which can only express the `ssh` and `api` lists — there is no knob for the web ports there.
-# So the web rule has to be added out-of-band, and this script is the firewall-as-code that does
-# it: it fetches Cloudflare's current IP ranges and adds two inbound rules (80 and 443) scoped to
-# them, so ONLY the Cloudflare proxy can reach the origin — direct internet scans of the node IP
-# are refused, matching the estate's minimise-public-surface posture (ADR-IC-006).
+# In plain English: this script used to OPEN inbound :80/:443 (scoped to Cloudflare's
+# ranges) so the Cloudflare proxy could reach the origin. But scoping to "all Cloudflare
+# IPs" is exactly the origin-bypass hole: an attacker who finds the origin IP can point
+# their OWN Cloudflare zone at it with a spoofed Host header and reach the origin from a
+# Cloudflare IP, sidestepping the babelstone.dev edge. We now run a Cloudflare TUNNEL
+# (cloudflared, in bootstrap/cloudflare-tunnel.yaml): the connector dials OUTBOUND to
+# Cloudflare, so there is NO inbound origin web port at all. This script therefore now
+# DELETES the two web rules — with nothing left inbound to spoof, the hole is closed for
+# every public host (app/api/backstage/auth/auth-admin/grafana), matching the estate's
+# minimise-public-surface posture (ADR-IC-006).
 #
-# Why scope to Cloudflare and not 0.0.0.0/0: the four A records sit behind the Cloudflare proxy
-# (orange-cloud), so all legitimate :80/:443 traffic arrives FROM Cloudflare. Locking the origin
-# to Cloudflare's ranges hides it from the open internet. The trade-off — the SAME one already
-# documented for the GitHub Actions ranges on the k8s API in cluster.yaml — is that Cloudflare's
-# list ROTATES: re-run this at each provision, and after Cloudflare publishes range changes, or a
-# stale rule silently drops traffic. See "Refreshing" below.
+# ORDERING (critical): the Cloudflare Tunnel MUST be UP before you remove the web ports,
+# or the public edge goes dark between the two steps. Apply the tunnel first
+# (bootstrap/cloudflare-tunnel.yaml — see bootstrap/README.md "Apply order"), confirm the
+# connector is registered and the babelstone.dev CNAMEs resolve THROUGH the tunnel, and
+# ONLY THEN run this with --apply. Removal is applied by RE-PROVISIONING / an operator run
+# (account-gated, human step) — it needs the read/write Hetzner token.
 #
-# This does NOT touch the ssh/api rules hetzner-k3s manages from cluster.yaml — it only ADDS the
-# two web rules to the existing firewall (non-destructive).
+# This does NOT touch the ssh(22)/api(6443) rules hetzner-k3s manages from cluster.yaml —
+# it only DELETES the two "cloudflare-web-*" web rules from the existing firewall.
 #
 # Required:
 #   HCLOUD_TOKEN   read/write Hetzner Cloud API token (same token used to provision; never commit)
@@ -28,23 +33,23 @@
 #
 # Usage:
 #   export HCLOUD_TOKEN=...
-#   ./firewall-web.sh              # DRY RUN — prints the hcloud commands it WOULD run
-#   ./firewall-web.sh --apply      # actually add the two rules
+#   ./firewall-web.sh              # DRY RUN — prints the delete commands it WOULD run
+#   ./firewall-web.sh --apply      # actually delete the two web rules
 #
-# Refreshing rotated ranges: remove the two prior "cloudflare-web-*" rules first (Hetzner
-# console → Firewalls, or `hcloud firewall delete-rule`), then re-run with --apply. Re-running
-# without removing the old rules just appends duplicates.
+# Note: hcloud has no single "delete-rule by port" verb; the operator removes the two
+# "cloudflare-web-*" rules in the Hetzner console (Firewalls → babelstone-staging) or with
+# `hcloud firewall replace-rules` from a rule set that omits them. This script prints the
+# exact rules to remove and the verify command; it does not rewrite the full rule set
+# blindly (that would risk clobbering the ssh/api rules it must not touch).
 set -euo pipefail
 
 FIREWALL_NAME="${FIREWALL_NAME:-babelstone-staging}"
-CF_V4_URL="https://www.cloudflare.com/ips-v4"
-CF_V6_URL="https://www.cloudflare.com/ips-v6"
 APPLY=false
 
 case "${1:-}" in
   "") ;;
   --apply) APPLY=true ;;
-  -h|--help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "ERROR: unknown argument: $1 (only --apply is supported)" >&2; exit 2 ;;
 esac
 
@@ -53,44 +58,37 @@ fail() { echo "FIREWALL-WEB FAIL: $*" >&2; exit 1; }
 # ── preflight ────────────────────────────────────────────────────────────────────────
 [ -n "${HCLOUD_TOKEN:-}" ] || fail "HCLOUD_TOKEN is unset — export the read/write Hetzner Cloud API token (never commit it)"
 command -v hcloud >/dev/null || fail "hcloud CLI not found on PATH — install it (brew install hcloud)"
-command -v curl   >/dev/null || fail "curl not found on PATH"
 
-# ── fetch Cloudflare's current edge ranges ─────────────────────────────────────────────
-echo "fetching Cloudflare IP ranges ($CF_V4_URL, $CF_V6_URL) …" >&2
-CF_V4="$(curl -fsS "$CF_V4_URL")" || fail "could not fetch $CF_V4_URL"
-CF_V6="$(curl -fsS "$CF_V6_URL")" || fail "could not fetch $CF_V6_URL"
+# ── ordering guard ─────────────────────────────────────────────────────────────────────
+# The tunnel MUST be up before the ports come down. We can't verify the connector from
+# here (it lives in-cluster, on the account-gated box), so make the operator confirm it.
+if $APPLY; then
+  echo "REMINDER: the Cloudflare Tunnel (cloudflared) MUST already be UP and serving the" >&2
+  echo "public hosts before removing the inbound web ports, or the edge goes dark." >&2
+  echo "Confirm: kubectl -n babelstone-staging rollout status deploy/cloudflared" >&2
+  echo "     and the babelstone.dev CNAMEs resolve through the tunnel." >&2
+fi
 
-SOURCE_ARGS=()
-while IFS= read -r cidr; do
-  cidr="$(printf '%s' "$cidr" | tr -d '[:space:]')"
-  [ -n "$cidr" ] || continue
-  SOURCE_ARGS+=(--source-ips "$cidr")
-done <<< "$CF_V4"$'\n'"$CF_V6"
-
-[ "${#SOURCE_ARGS[@]}" -gt 0 ] || fail "parsed an EMPTY Cloudflare range list — refusing to add a rule with no sources"
-echo "→ ${#SOURCE_ARGS[@]} source ranges (v4+v6) from Cloudflare" >&2
-
-# ── add one inbound rule per web port, scoped to those ranges ───────────────────────────
-add_rule() {
-  local port="$1" desc="$2"
-  local cmd=(hcloud firewall add-rule "$FIREWALL_NAME"
-    --direction in --protocol tcp --port "$port"
-    --description "$desc" "${SOURCE_ARGS[@]}")
-  if $APPLY; then
-    echo "+ ${cmd[*]}" >&2
-    "${cmd[@]}"
-  else
-    echo "${cmd[*]}"
-  fi
+# ── the two web rules to remove (the inverse of the earlier bd zla1.14 add) ─────────────
+# Identified by their descriptions from when this script added them:
+#   "cloudflare-web-http"  — inbound TCP 80
+#   "cloudflare-web-https" — inbound TCP 443
+remove_rule() {
+  local port="$1" match="$2"
+  echo "remove inbound TCP $port  (firewall rule matching description '$match')"
 }
 
-add_rule 80  "cloudflare-web-http (bd zla1.14 — HTTP→HTTPS redirect at Traefik)"
-add_rule 443 "cloudflare-web-https (bd zla1.14 — public TLS edge)"
+echo "the following inbound web rules must be REMOVED from firewall '$FIREWALL_NAME':" >&2
+remove_rule 80  "cloudflare-web-http"
+remove_rule 443 "cloudflare-web-https"
 
 if $APPLY; then
-  echo "done: added inbound TCP 80 + 443 (Cloudflare-scoped) to firewall '$FIREWALL_NAME'." >&2
-  echo "verify: hcloud firewall describe '$FIREWALL_NAME'" >&2
+  echo >&2
+  echo "Removing them (Hetzner console → Firewalls → '$FIREWALL_NAME', delete the two" >&2
+  echo "'cloudflare-web-*' rules; or 'hcloud firewall replace-rules' with a set omitting" >&2
+  echo "them — keeping the ssh/api rules intact)." >&2
+  echo "verify: hcloud firewall describe '$FIREWALL_NAME'  (no inbound tcp/80 or tcp/443 remain)" >&2
 else
   echo >&2
-  echo "DRY RUN — nothing changed. Re-run with --apply to add the two rules above." >&2
+  echo "DRY RUN — nothing changed. Ensure the tunnel is UP, then re-run with --apply." >&2
 fi

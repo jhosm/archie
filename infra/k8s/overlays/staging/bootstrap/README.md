@@ -23,6 +23,15 @@ This directory is **deliberately not referenced** by
   It lives in the `helm/` subfolder — not the top level — precisely so the
   `kubectl apply -f bootstrap/` step below (non-recursive) never tries to `kubectl apply` a
   Helm values file; it is consumed by `helm install -f` (see apply order), never `kubectl`.
+- [`cloudflare-tunnel.yaml`](./cloudflare-tunnel.yaml) — the **Cloudflare Tunnel**
+  (cloudflared `Deployment` + its ingress-rule `ConfigMap` + a placeholder token `Secret`)
+  that closes the origin-bypass residual (bd babelstone-zla1.12.14; ADR-IC-006). The
+  connector dials **outbound** to Cloudflare, so the inbound `:80`/`:443` origin ports can be
+  removed entirely (step 7) — there is nothing left to spoof with a forged `Host`. Its
+  ConfigMap maps the six public hosts (app/api/backstage/auth/auth-admin/grafana) to the same
+  in-cluster Services [`../ingress.yaml`](../ingress.yaml) fronts; keep the two in lockstep.
+  The real connector token is injected out-of-band (`kubectl create secret`, step 6) and
+  **never committed** — the committed Secret carries an empty placeholder value.
 - [`clusterissuer-letsencrypt.yaml`](./clusterissuer-letsencrypt.yaml) — the
   Let's Encrypt `ClusterIssuer` the overlay's Ingress references by name
   (`cert-manager.io/cluster-issuer: letsencrypt-babelstone`). cert-manager's
@@ -56,7 +65,8 @@ This directory is **deliberately not referenced** by
 Cloudflare DNS-01 token Secret, and minting the CD kubeconfig). It preflights every required
 tool, a reachable cluster, and the operator-provisioned `babelstone-dev-secrets` before it
 mutates anything, and it deliberately stops short of the account-gated steps (DNS records,
-Logto client secrets, the firewall, the overlay deploy). Dry-run it with `--check-only` (no
+Logto client secrets, the Cloudflare Tunnel, the firewall, the overlay deploy). Dry-run it
+with `--check-only` (no
 live cluster required — CI-safe): it prints the ordered plan and mutates nothing.
 
 ```bash
@@ -136,11 +146,16 @@ helm install vault-csi-provider hashicorp/vault --version 0.34.0 \
 kubectl create namespace babelstone-staging --dry-run=client -o yaml | kubectl apply -f -
 
 # 3. Apply the cluster-scoped bootstrap (this directory): issuers, the k3s Plan, and the
-#    cd-deployer deploy RBAC. Every file here is now `kubectl apply`-safe (the dead
+#    cd-deployer deploy RBAC. Every file here is `kubectl apply`-safe (the dead
 #    volume-snapshot-class.yaml — a VolumeSnapshotClass whose CRD is not installed since the
 #    Hetzner CSI was dropped, bd babelstone-zla1.12.20 — was removed in bd babelstone-zla1.12.24,
-#    so a blanket apply no longer fails). staging-bootstrap.sh runs the same loop:
+#    so a blanket apply no longer fails). cloudflare-tunnel.yaml is SKIPPED here: it is
+#    account-gated (it needs the REAL Cloudflare connector token) and is applied deliberately
+#    in step 6, not as part of this data-independent glue — applying it now would only plant
+#    the empty-placeholder token Secret (crashlooping cloudflared) and collide with step 6.
+#    staging-bootstrap.sh runs the same loop with the same exclusion:
 for f in infra/k8s/overlays/staging/bootstrap/*.yaml; do
+  [ "$(basename "$f")" = cloudflare-tunnel.yaml ] && continue   # account-gated — see step 6
   kubectl apply -f "$f"
 done
 
@@ -153,27 +168,49 @@ rm -f /tmp/cd-deployer.kubeconfig
 # 5. Apply the overlay itself (cd.yml does this on promote, using the cd-deployer identity).
 kubectl apply -k infra/k8s/overlays/staging
 
-# 6. Open inbound TCP 80/443 on the Hetzner firewall (bd babelstone-zla1.14). cluster.yaml's
-#    allowed_networks can only express ssh/api, so the web ports are added out-of-band, scoped
-#    to Cloudflare's ranges (only the proxy reaches the origin). DRY-RUN first, then --apply:
-export HCLOUD_TOKEN=...                       # same token used to provision
-infra/hetzner-k3s/firewall-web.sh             # prints the rules it WOULD add
-infra/hetzner-k3s/firewall-web.sh --apply     # adds inbound TCP 80 + 443 (Cloudflare-scoped)
+# 6. Install the Cloudflare Tunnel (cloudflared) — closes the origin bypass (bd
+#    babelstone-zla1.12.14). Apply the connector + its ingress-rule ConfigMap + the placeholder
+#    token Secret (the ConfigMap maps the six public hosts to the in-cluster Services — mirrors
+#    ../ingress.yaml). cloudflared crashloops on the empty placeholder token until the real one
+#    is set next — that is the intended loud, safe failure:
+kubectl apply -f infra/k8s/overlays/staging/bootstrap/cloudflare-tunnel.yaml
+#    Overwrite the placeholder with the REAL connector token the Cloudflare Zero Trust dashboard
+#    shows for the tunnel (account-gated — NEVER commit it). `apply` (not `create`), so it
+#    OVERWRITES the placeholder Secret idempotently and re-running is safe:
+kubectl -n babelstone-staging create secret generic cloudflare-tunnel-token \
+  --from-literal=token='<PASTE-CONNECTOR-TOKEN>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+#    Restart cloudflared so it picks up the real token, then wait for it to dial OUTBOUND to
+#    Cloudflare (no inbound origin port needed):
+kubectl -n babelstone-staging rollout restart deploy/cloudflared
+kubectl -n babelstone-staging rollout status deploy/cloudflared
+#    Point each babelstone.dev CNAME at the tunnel (<tunnel-id>.cfargotunnel.com, proxied) and
+#    confirm all six hosts resolve THROUGH the tunnel before step 7.
 
-# 7. In the Cloudflare dashboard, set SSL/TLS mode to "Full (strict)" for babelstone.dev — the
-#    origin now presents a valid Let's Encrypt cert, so the proxy re-encrypts end-to-end.
+# 7. Remove the inbound TCP 80/443 web rules from the Hetzner firewall — the Tunnel makes them
+#    unnecessary, and leaving them open (scoped to ALL Cloudflare IPs) is the origin-bypass hole
+#    (bd babelstone-zla1.12.14). ORDER MATTERS: the tunnel from step 6 must be UP first, or the
+#    edge goes dark. DRY-RUN first, then --apply:
+export HCLOUD_TOKEN=...                       # same token used to provision
+infra/hetzner-k3s/firewall-web.sh             # prints the rules it WOULD remove
+infra/hetzner-k3s/firewall-web.sh --apply     # removes inbound TCP 80 + 443 (after tunnel UP)
+
+# 8. In the Cloudflare dashboard, keep SSL/TLS mode at "Full (strict)" for babelstone.dev — the
+#    tunnel re-originates to in-cluster Services over Cloudflare's authenticated connector, and
+#    any remaining direct-origin path still presents a valid Let's Encrypt cert.
 ```
 
-Prereqs: DNS A records `api.babelstone.dev`, `backstage.babelstone.dev`,
-`app.babelstone.dev`, and `auth.babelstone.dev` (the four Ingress hosts) resolve (proxied
-is fine), and a `cloudflare-api-token` Secret (scoped `Zone.DNS:Edit` for `babelstone.dev`)
-exists in the `cert-manager` namespace for the DNS-01 ACME challenge. Certs are issued via
-DNS-01, so the A records may stay behind the Cloudflare proxy. **The Hetzner firewall must
-also allow inbound 80/443** — hetzner-k3s synthesises the firewall from `cluster.yaml`'s
-`allowed_networks`, which only models `ssh`/`api`, so those web ports are provisioned
-out-of-band by [`firewall-web.sh`](../../../../hetzner-k3s/firewall-web.sh) (step 6 above;
-Cloudflare-scoped, and the list *rotates* — re-run after Cloudflare publishes range changes).
-The full provision/restore/upgrade runbook is Phase 6 (bd babelstone-zla1.7).
+Prereqs: DNS CNAMEs for the six public hosts (`app`/`api`/`backstage`/`auth`/`auth-admin`/
+`grafana`.`babelstone.dev`) point at the tunnel (`<tunnel-id>.cfargotunnel.com`, proxied),
+and a `cloudflare-api-token` Secret (scoped `Zone.DNS:Edit` for `babelstone.dev`) exists in
+the `cert-manager` namespace for the DNS-01 ACME challenge. Certs are issued via DNS-01, so
+the records may stay behind the Cloudflare proxy. **The edge now runs on a Cloudflare Tunnel
+(cloudflared, [`cloudflare-tunnel.yaml`](./cloudflare-tunnel.yaml), step 6 above): the
+connector dials OUTBOUND to Cloudflare, so there is NO inbound origin web port** — step 7
+REMOVES the inbound 80/443 firewall rules that the earlier edge relied on, closing the
+origin-bypass residual (bd babelstone-zla1.12.14; every public host, not just one). The
+tunnel MUST be up before the ports come down (step ordering). The full provision/restore/
+upgrade runbook is Phase 6 (bd babelstone-zla1.7).
 
 **Kong↔mcp-server mTLS swap (after `mcp-mtls.yaml` is applied).** The committed
 `infra/kong/kong.yml` carries only POC placeholder certs for the mcp-server upstream
