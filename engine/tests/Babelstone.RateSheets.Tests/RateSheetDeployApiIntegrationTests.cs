@@ -97,6 +97,38 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task One_shot_deploy_mode_deploys_every_sheet_in_a_directory_idempotently()
+    {
+        // The staging rate-sheet-deploy Job (bd babelstone-zla1.21) runs RateSheets.Api in one-shot
+        // mode over a DIRECTORY of baked JSON sheets — deploying EVERY committed sheet (any version or
+        // family) through the SAME validated handler, then exiting. Bake two distinct sheets in a
+        // family subdir and drive OneShotDeploy against the host's DI, as Program does.
+        var dir = Directory.CreateTempSubdirectory("rs-oneshot-").FullName;
+        var family = Directory.CreateDirectory(Path.Combine(dir, "term_deposit")).FullName;
+        // same family, DIFFERENT version id + effective_from — so both persist without tripping the
+        // UNIQUE(product_family, effective_from) constraint (a later effective_from is a new version).
+        var sheetA = RateSheetTestData.ValidRequest(versionId: "one-shot-a");
+        var sheetB = RateSheetTestData.ValidRequest(
+            versionId: "one-shot-b", effectiveFrom: RateSheetTestData.DefaultEffectiveFrom.AddDays(30));
+        await File.WriteAllTextAsync(Path.Combine(family, "a.json"), JsonSerializer.Serialize(sheetA, SnakeCase));
+        await File.WriteAllTextAsync(Path.Combine(family, "b.json"), JsonSerializer.Serialize(sheetB, SnakeCase));
+        try
+        {
+            // exit 0 deploying BOTH, and again on the idempotent re-run the Job re-executes each apply
+            Assert.Equal(0, await OneShotDeploy.RunAsync(_factory.Services, dir, "one-shot-test"));
+            Assert.Equal(0, await OneShotDeploy.RunAsync(_factory.Services, dir, "one-shot-test"));
+
+            // both are genuinely stored: an HTTP re-post of each is the idempotent 200
+            Assert.Equal(HttpStatusCode.OK, (await Post(sheetA)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await Post(sheetB)).StatusCode);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Re_posting_a_different_body_under_the_same_version_id_is_409()
     {
         var versionId = "conflict";

@@ -74,6 +74,18 @@ amd64-only and cosign-signs it by digest, exactly as `build-engine-staging` does
 zla1.5.10); `notification.yaml` sets `Engine__PacksDir=/app/packs` to point the host's disk
 walk at the baked pack.
 
+A third derived image, [`rate-sheet-deploy/Dockerfile`](./rate-sheet-deploy/Dockerfile) (bd
+zla1.21), bakes the pack **and** every committed rate sheet: a `js-yaml` stage serialises each
+`rate-sheets/**/*.yaml` → JSON 1:1 (preserving the family layout), then `FROM` the base
+`ghcr.io/jhosm/babelstone-ratesheets-api` image (a new matrix leg) + `COPY packs/pt.2026.1` +
+the JSON tree. The dependent `build-rate-sheet-deploy` job builds + cosign-signs it the identical
+way. Its purpose differs from the two above: it is not a long-running host but a **one-shot
+deploy** — the staging `rate-sheet-deploy` Job runs `RateSheets.Api` in `DeployOnStartup` mode
+over that directory, provisioning **all** the sheets into the `rate_sheets` table through the
+validated ADR-PC-008 seam (or deposits 422), then exits. It deploys every sheet, so adding a new
+version or a new family's sheet is just committing its YAML. Idempotent, so it re-runs harmlessly
+on each apply.
+
 ### Secret seam
 
 The DB password is the one secret on this path: `POSTGRES_PASSWORD` from base's

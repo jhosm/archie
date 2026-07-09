@@ -213,6 +213,9 @@ spec:
                   # and its role-provisioning Job (bd babelstone-zla1.17.3).
                   - mission-control
                   - mission-control-db-readonly
+                  # The rate-sheet-deploy Job (its wait-for-table init + the RateSheets.Api one-shot
+                  # both dial postgres:5432 — bd babelstone-zla1.21).
+                  - rate-sheet-deploy
       ports:
         - protocol: TCP
           port: 5432

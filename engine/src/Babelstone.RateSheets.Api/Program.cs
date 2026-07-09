@@ -90,12 +90,27 @@ builder.Services.AddSingleton<IProductConfigSource, EmptyProductConfigSource>();
 
 var app = builder.Build();
 
+// One-shot deploy mode (bd babelstone-zla1.21): when RateSheets:DeployOnStartup names a JSON
+// rate-sheet file — or a DIRECTORY of them — deploy each once through the SAME validated handler and
+// exit. This is how the staging rate-sheet-deploy Job provisions ALL committed sheets on bring-up
+// (adding a version/family is just committing its YAML). No HTTP listener starts in this mode; the
+// process exit code is the Job's success signal (0 = every sheet deployed / idempotent no-op).
+var deployOnStartup = builder.Configuration["RateSheets:DeployOnStartup"];
+if (!string.IsNullOrWhiteSpace(deployOnStartup))
+{
+    return await OneShotDeploy.RunAsync(
+        app.Services,
+        deployOnStartup,
+        builder.Configuration["RateSheets:DeployActor"] ?? "staging-bring-up");
+}
+
 // Turns any unhandled exception escaping a handler into a ProblemDetails response.
 app.UseExceptionHandler();
 
 app.MapPost("/v1/rate-sheets", DeployRateSheetEndpoint.HandleAsync);
 
 app.Run();
+return 0;
 
 // Exposed for WebApplicationFactory<Program> in the integration tests.
 public partial class Program;

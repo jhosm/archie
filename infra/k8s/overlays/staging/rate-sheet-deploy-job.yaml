@@ -1,0 +1,103 @@
+# Provision the committed rate sheets on staging bring-up (bd babelstone-zla1.21). Without a row in
+# the rate_sheets table every POST /v1/deposits returns 422 ("no rate sheet effective"). Rate sheets
+# are treasury-owned data deployed SEPARATELY from code through the validated seam (ADR-PC-008 §P2):
+# this Job runs RateSheets.Api in one-shot mode over the baked directory of js-yaml-serialised sheets
+# (RateSheets:DeployOnStartup), validating each sheet's TANs against the baked pack's bounds before
+# storing — never a raw INSERT. It deploys EVERY committed sheet, so adding a version or a new
+# family's sheet needs no manifest change. Idempotent: an unchanged re-deploy is a 200 no-op (exit 0);
+# a body change under an existing version id is a 409 (exit 1) so the Job fails and the drift is
+# visible. ttl-recreated so the next `kubectl apply` re-runs it, exactly like logto-db-init.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rate-sheet-deploy
+  labels:
+    app.kubernetes.io/name: rate-sheet-deploy
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rate-sheet-deploy
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Order after the event-store migration: rate_sheets is created by migration 0004. Wait for the
+      # table (not just the server) so a first-apply race can't 422 the deploy — mirrors the
+      # wait-for-migration inits the app hosts use.
+      initContainers:
+        - name: wait-for-rate-sheets-table
+          image: postgres:18-alpine
+          securityContext:
+            runAsUser: 70          # 'postgres' user in postgres:18-alpine
+            runAsGroup: 70
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "waiting for postgres + the rate_sheets table …"
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do sleep 2; done
+              until [ "$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -tAc \
+                    "SELECT to_regclass('public.rate_sheets') IS NOT NULL")" = t ]; do
+                echo "  rate_sheets not migrated yet — waiting …"; sleep 3
+              done
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+      containers:
+        - name: rate-sheet-deploy
+          image: ghcr.io/jhosm/babelstone-rate-sheet-deploy:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # Password first, so the $(POSTGRES_PASSWORD) interpolation below resolves.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            - name: ConnectionStrings__RateSheets
+              value: Host=postgres;Port=5432;Database=babelstone;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # One-shot mode: deploy EVERY baked, js-yaml-serialised sheet under this directory, each
+            # validated against the baked pack, then exit. So a new sheet (version or family) needs no
+            # manifest change — just commit its YAML. See infra/k8s/apps/rate-sheet-deploy/Dockerfile.
+            - name: RateSheets__DeployOnStartup
+              value: /app/rate-sheets
+            - name: RateSheets__DeployActor
+              value: staging-bring-up
+            - name: RateSheets__PacksDir
+              value: /app/packs
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            # Telemetry to the Collector only (ADR-IC-007 §P1), never direct-to-backend.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc

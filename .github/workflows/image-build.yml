@@ -51,7 +51,9 @@ on:
       - 'Directory.Packages.props' # central package versions the .NET image restores against
       - 'infra/k8s/apps/engine/**' # the pack-baked engine-staging derived image (zla1.5.1)
       - 'infra/k8s/apps/notification/**' # the pack-baked notification-staging derived image (zla1.5.10)
-      - 'packs/**'                 # engine-staging + notification-staging bake pt.2026.1 — a pack change rebuilds them
+      - 'infra/k8s/apps/rate-sheet-deploy/**' # the pack + sheet-baked rate-sheet-deploy image (zla1.21)
+      - 'packs/**'                 # engine-staging + notification-staging + rate-sheet-deploy bake pt.2026.1 — a pack change rebuilds them
+      - 'rate-sheets/**'           # the rate-sheet-deploy image bakes the committed term_deposit sheet (zla1.21)
       - '.github/workflows/image-build.yml'
   pull_request:
     paths: *image_paths
@@ -130,6 +132,14 @@ jobs:
           # shared matrix steps below.
           - service: backstage
             dockerfile: backstage/Dockerfile
+            context: .
+          # RateSheets.Api deploy host (bd babelstone-zla1.21): a .NET web host (normally POST
+          # /v1/rate-sheets; in the staging Job it runs one-shot deploy-and-exit). Like the other .NET
+          # legs it builds with the REPO ROOT as context (restore/publish reach the whole solution).
+          # Publishes ghcr.io/jhosm/babelstone-ratesheets-api; the rate-sheet-deploy derived image
+          # (build-rate-sheet-deploy below) bakes the pack + committed sheet onto it.
+          - service: ratesheets-api
+            dockerfile: engine/src/Babelstone.RateSheets.Api/Dockerfile
             context: .
     # Surface this leg's pushed digest to the fan-in `digests` job (and, downstream, to the
     # Q.5 cosign step). Empty on a PR run (build-only, nothing pushed).
@@ -413,6 +423,73 @@ jobs:
         # notification image, which the `build` matrix already SBOM'd + scanned + signed; the only
         # added bytes are the static pt.2026.1 YAML pack (no new package layers). Signing IS
         # required so cd.yml's cosign-verify-by-digest can promote this image.
+        env:
+          IMAGE_REF: ${{ steps.imgref.outputs.ref }}
+          COSIGN_YES: "true"
+        run: cosign sign "$IMAGE_REF"
+
+  build-rate-sheet-deploy:
+    # The pack + sheet-baked rate-sheet-deploy image for the staging cluster (bd babelstone-zla1.21):
+    # a serialise stage turns the committed rate-sheet YAML into JSON 1:1, then FROM the base
+    # ratesheets-api image the matrix above just pushed + COPY pt.2026.1 and the JSON, so the staging
+    # rate-sheet-deploy Job's one-shot deploy validates the sheet against the pack bounds and stores
+    # it. Runs AFTER `build` (it FROMs babelstone-ratesheets-api); PUSH-TO-MAIN ONLY (the FROM needs
+    # the pushed base — a fork PR has no GHCR creds). The twin of build-engine-staging /
+    # build-notification-staging; the manifest that references it is kustomize+kubeconform-gated on PR.
+    name: build rate-sheet-deploy (pack + sheet-baked)
+    needs: build
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # keyless cosign signing (so cd.yml can verify this image by digest)
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive image tags + labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/jhosm/babelstone-rate-sheet-deploy
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=long
+      - name: Build + push (amd64)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/k8s/apps/rate-sheet-deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          build-args: |
+            BASE_IMAGE=ghcr.io/jhosm/babelstone-ratesheets-api:latest
+          cache-from: type=gha,scope=image-rate-sheet-deploy
+          cache-to: type=gha,scope=image-rate-sheet-deploy,mode=max
+      - name: Resolve pushed image reference (by digest)
+        id: imgref
+        env:
+          IMAGE: ghcr.io/jhosm/babelstone-rate-sheet-deploy
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign the pushed image (keyless OIDC, by digest)
+        # SBOM/scan omitted: a thin serialise + FROM+COPY over the base ratesheets-api image the
+        # `build` matrix already SBOM'd + scanned + signed; the only added bytes are the static
+        # pt.2026.1 pack + the js-yaml-serialised sheet JSON. Signing IS required so cd.yml's
+        # cosign-verify-by-digest can promote this image.
         env:
           IMAGE_REF: ${{ steps.imgref.outputs.ref }}
           COSIGN_YES: "true"

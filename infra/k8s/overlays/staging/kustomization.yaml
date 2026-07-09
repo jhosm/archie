@@ -52,6 +52,10 @@ resources:
   # The read-only Postgres role Mission Control's Outbox·Inbox lens (/pg) connects as — an idempotent
   # provisioning Job (SELECT-only role, ttl-recreated each deploy; bd babelstone-zla1.17.3).
   - mission-control-db-readonly-job.yaml
+  # Provision the term_deposit rate sheet on bring-up (bd babelstone-zla1.21) — a one-shot,
+  # ttl-recreated Job that deploys the committed sheet through the validated RateSheets.Api seam, so
+  # deposits stop 422-ing ("no rate sheet effective"). Ordered after the event-store migration.
+  - rate-sheet-deploy-job.yaml
   # Logto — the OAuth 2.1 / OIDC Authorization Server (ADR-IC-021, bd babelstone-zla1.10.2):
   # the staging box's token issuer (login + SCA + the MCP-agent authority). Staging-specific,
   # public-facing (auth.babelstone.dev, the 4th host in ingress.yaml above), so it lives in the
