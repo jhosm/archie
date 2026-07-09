@@ -1,7 +1,7 @@
 ---
 # hetzner-k3s cluster config — the always-on staging / demo box (Phase 1).
 #
-# One CAX41 ARM node running single-node k3s in Hetzner Helsinki (hel1), on babelstone.dev.
+# One CPX42 x86 node running single-node k3s in Hetzner Helsinki (hel1), on babelstone.dev.
 # Consumed via ./provision.sh (the fail-closed preflight + render wrapper — bd
 # babelstone-zla1.12.6), which substitutes the SSH allow-list sentinel below and runs
 # `hetzner-k3s create --config cluster.rendered.yaml` to CREATE the cluster that the

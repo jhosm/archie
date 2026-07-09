@@ -272,7 +272,7 @@ real credentials; M.2 replaces it with OpenBao-backed provisioning.
 ## staging overlay — the always-on public demo box (bd babelstone-zla1)
 
 The **`overlays/staging`** overlay is the single, always-on, **public** demo /
-staging environment: one CAX41 ARM node running single-node k3s in Hetzner
+staging environment: one CPX42 x86 node running single-node k3s in Hetzner
 Helsinki, on the domain `babelstone.dev`. It diverges from **`base`** — the *same*
 seam the `ha` overlay does — but in the **staging** direction, not the HA one. It
 runs one copy of everything (HA would not fit a single node — do **not** promote
@@ -382,13 +382,15 @@ referenced** by the kustomization, and is applied once at cluster bootstrap
 (bd babelstone-ub9s), out of scope here.
 
 **Resource sizing — no OOM mid-demo.** `resources.patch.yaml` adds per-service
-CPU/memory requests + limits sized for the single 16 vCPU / 32 GB node (a
+CPU/memory requests + limits sized for the single CPX42 x86 node — 8 vCPU / 16 GB (a
 multi-document strategic-merge patch — one document per workload container, each
 adding only its `resources:` block). Every container declares a **memory limit**
 (a runaway pod is capped, not allowed to take the node down — the locked
-staging-env priority), with the sum of limits (≈18 GiB) kept comfortably under
-node-allocatable (≈28 GiB after the k3s system reserve) and requests (≈4.6 GiB)
-low enough that the whole stack schedules on one node. The per-service budget
+staging-env priority). Requests (≈5.9 GiB) sit under node-allocatable (≈15.6 GiB
+after the k3s system reserve), so the whole stack schedules on one node; the sum
+of limits (≈17 GiB) is a mild, safe overcommit of that allocatable — realistic
+concurrent usage is ≈7 GiB and no single limit exceeds 3 GiB, so a lone runaway
+can't OOM the node. The per-service budget
 table is in the patch file's header. CI asserts every staging workload container
 carries a memory limit, so the sizing stays an invariant rather than a one-off
 (the `base` and `ha` renderings are intentionally unsized — `base` is a laptop

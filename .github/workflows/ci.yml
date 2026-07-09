@@ -999,7 +999,7 @@ jobs:
             || fail "ADR-PC-005 §P1 violation: standby missing zone anti-affinity (off-site not expressed)"
           echo "HA assertions passed (ADR-IC-001 3-node Redpanda; ADR-PC-005 §P1 synchronous off-site warm standby)"
       - name: Assert resource limits in the staging overlay (bd babelstone-zla1.4)
-        # The staging box is one fixed 16 vCPU / 32 GB node, and the locked
+        # The staging box is one fixed CPX42 x86 node — 8 vCPU / 16 GB — and the locked
         # staging-env priority is "no OOM mid-demo". Every workload container in the
         # staging render MUST therefore declare a memory limit (a runaway pod is
         # capped, not allowed to take the node down). Each base pod is single-

@@ -2,7 +2,7 @@
 #
 # Plain English: this is the single, public, always-on box. It takes the same
 # `base` backing-infra stack, runs ONE copy of everything
-# (a single 32GB ARM node — HA would not fit), pins DURABLE Hetzner CSI block
+# (a single CPX42 x86 node, 8 vCPU / 16 GB — HA would not fit), pins DURABLE Hetzner CSI block
 # storage so data survives a node rebuild and is snapshot-able, and puts a public
 # HTTPS front door (Traefik Ingress + cert-manager/Let's Encrypt TLS) in front of
 # the Kong edge and the Backstage portal.
@@ -157,8 +157,8 @@ patches:
       version: v1
       kind: StatefulSet
       name: registry
-  # Per-service CPU/memory requests + limits sized for the single 16 vCPU / 32 GB
-  # node (bd babelstone-zla1.4). A multi-document strategic-merge patch — one doc
+  # Per-service CPU/memory requests + limits sized for the single CPX42 x86 node
+  # (8 vCPU / 16 GB, bd babelstone-zla1.4). A multi-document strategic-merge patch — one doc
   # per workload container, each adding only its `resources:` block. The locked
   # priority is no OOM mid-demo: every container carries a memory limit, with the
   # sum of limits kept under node-allocatable. See resources.patch.yaml for the

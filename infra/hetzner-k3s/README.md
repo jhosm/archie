@@ -2,7 +2,7 @@
 
 Plain English: this is the one declarative file that turns the empty Hetzner account
 into a running single-node Kubernetes cluster. You run one command, `hetzner-k3s`
-creates a CAX41 ARM server in Helsinki, installs single-node k3s on it, and writes you a
+creates a CPX42 x86 server in Helsinki, installs single-node k3s on it, and writes you a
 kubeconfig. The Hetzner cloud-controller and CSI driver are deliberately turned OFF (see
 "Posture notes" below), so **no** Hetzner API token is ever stored in the cluster; stateful
 storage uses the k3s built-in node-local `local-path` provisioner instead. Everything else
@@ -18,7 +18,7 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
 ## Contents
 
 - [`cluster.yaml`](./cluster.yaml) — the [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s)
-  cluster config (v2.6.0+ format): 1× CAX41 ARM, Hetzner Helsinki (`hel1`), single-node k3s,
+  cluster config (v2.6.0+ format): 1× CPX42 x86, Hetzner Helsinki (`hel1`), single-node k3s,
   embedded etcd, with the Hetzner CCM and CSI driver **disabled** and the k3s built-in
   `local-path` storage class enabled (so no Hetzner API token is stored in the cluster — see
   "Posture notes"). The **provision-time** Hetzner API token is **not** in this file — it is

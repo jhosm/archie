@@ -27,38 +27,30 @@ RUN dotnet publish engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj
 # dev/CI toolchain pinned in mise.toml (oras 1.3.2, cosign 3.1.1) so the in-container tools are the
 # same the host integration tests + CI exercise. Bump in lockstep with mise.toml.
 #
-# TARGETARCH is set automatically by buildx (amd64 / arm64); the image-build.yml matrix builds a
-# multi-arch manifest (linux/amd64 + linux/arm64, bd babelstone-zla1.8), so these per-arch checksums
-# select the right binary for whichever leg buildx is emulating rather than silently grabbing the
-# wrong arch.
+# The image-build.yml matrix builds linux/amd64 ONLY (staging is a Hetzner CPX42 x86 node; the
+# arm64 leg was dropped — bd babelstone-zla1.13), so oras/cosign are fetched for amd64 against a
+# fixed per-tool SHA256. If a multi-arch build is ever re-added, reintroduce a TARGETARCH switch
+# selecting a per-arch checksum + `linux_<arch>` release asset (the arm64 leg image-build.yml would
+# restore alongside it).
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS oci-tools
-ARG TARGETARCH
 ARG ORAS_VERSION=1.3.2
 ARG COSIGN_VERSION=3.1.1
-# Per-arch SHA256s of the upstream release assets (oras_<v>_linux_<arch>.tar.gz; cosign-linux-<arch>).
-ARG ORAS_SHA256_amd64=9229ccc6d17bb282039ad4a69abb16dcb887a5bce567c075d731d9b3c7ad8eaf
-ARG ORAS_SHA256_arm64=8db4a223bd6034deff198e791ea7cb3af0840df25b7e9f370e2f1f3fd20d389b
-ARG COSIGN_SHA256_amd64=ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc
-ARG COSIGN_SHA256_arm64=2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11
+# SHA256s of the upstream amd64 release assets (oras_<v>_linux_amd64.tar.gz; cosign-linux-amd64).
+ARG ORAS_SHA256=9229ccc6d17bb282039ad4a69abb16dcb887a5bce567c075d731d9b3c7ad8eaf
+ARG COSIGN_SHA256=ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc
 WORKDIR /tools
 RUN set -eux; \
-    arch="${TARGETARCH:-amd64}"; \
-    case "$arch" in \
-      amd64) oras_sha="$ORAS_SHA256_amd64"; cosign_sha="$COSIGN_SHA256_amd64" ;; \
-      arm64) oras_sha="$ORAS_SHA256_arm64"; cosign_sha="$COSIGN_SHA256_arm64" ;; \
-      *) echo "unsupported TARGETARCH=$arch (expected amd64 or arm64)" >&2; exit 1 ;; \
-    esac; \
     # oras: tarball → checksum-verify → extract just the `oras` binary.
     curl -fsSL -o oras.tar.gz \
-      "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_${arch}.tar.gz"; \
-    echo "${oras_sha}  oras.tar.gz" | sha256sum -c -; \
+      "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"; \
+    echo "${ORAS_SHA256}  oras.tar.gz" | sha256sum -c -; \
     tar -xzf oras.tar.gz oras; \
     # cosign: single static binary → checksum-verify → mark executable.
     curl -fsSL -o cosign \
-      "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${arch}"; \
-    echo "${cosign_sha}  cosign" | sha256sum -c -; \
+      "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"; \
+    echo "${COSIGN_SHA256}  cosign" | sha256sum -c -; \
     chmod +x oras cosign; \
-    # Smoke-test that the verified binaries actually run on this arch before they ship.
+    # Smoke-test that the verified binaries actually run before they ship.
     ./oras version; \
     ./cosign version
 

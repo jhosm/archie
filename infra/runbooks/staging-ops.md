@@ -5,7 +5,7 @@ redeploy it, get it back after a failure, keep it patched, and know when it's do
 single-node staging environment (`overlays/staging`), not the HA topology; the heavier DR drill
 for the production-shaped topology is [`dr-recovery-drill.md`](./dr-recovery-drill.md).
 
-Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. Stateful data is on
+Scope: one Hetzner CPX42 running single-node k3s, domain `babelstone.dev`. Stateful data is on
 `hcloud-volumes` CSI block storage (durable across a node rebuild).
 
 ---
@@ -80,7 +80,7 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
 ### 1.1 Phase 1 — provision the cluster (`hetzner-k3s`)
 
 Step 1 above is one `hetzner-k3s` command. The cluster config lives at
-[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (1× CAX41 ARM, Helsinki `hel1`,
+[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (1× CPX42 x86, Helsinki `hel1`,
 single-node k3s); the full walk-through + prereqs are in
 [`../hetzner-k3s/README.md`](../hetzner-k3s/README.md). In short:
 
