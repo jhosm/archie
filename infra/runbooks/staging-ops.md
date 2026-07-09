@@ -6,28 +6,47 @@ single-node staging environment (`overlays/staging`), not the HA topology; the h
 for the production-shaped topology is [`dr-recovery-drill.md`](./dr-recovery-drill.md).
 
 Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. Stateful data is on
-`hcloud-volumes` CSI block storage (durable across a node rebuild).
+the k3s built-in **`local-path`** provisioner (node-local storage — bd babelstone-zla1.12.20).
+It survives a **pod restart** but **NOT node loss**: there is no block-storage / cloud snapshot
+layer, because DR is deliberately **out of scope on staging** (the production-shaped DR drill is
+[`dr-recovery-drill.md`](./dr-recovery-drill.md)).
 
 ---
 
 ## 1. Provision / first bring-up (Phases 0–2, account-gated)
 
-1. Provision the node + k3s with the Hetzner CCM + CSI (Phase 1, `hetzner-k3s`) — see **§1.1** below.
+1. Provision the node + k3s (Phase 1, `hetzner-k3s`) — see **§1.1** below. The Hetzner **CCM and
+   CSI are DISABLED** via `cluster.yaml` `addons` (bd babelstone-zla1.12.20); the k3s built-in
+   `local-path` provisioner is the storage class. hetzner-k3s still plants an all-powerful Hetzner
+   API token as the kube-system `hcloud` Secret on every create regardless of the addon toggles,
+   so `provision.sh` **scrubs that orphaned Secret post-create** (no in-cluster Hetzner token remains).
 2. Point DNS A records `app`, `api`, `backstage`, `auth`.`babelstone.dev` at the node IP
-   (the four Ingress hosts: Mission Control, Kong, Backstage, and the Logto OIDC issuer).
-3. Install the cluster add-ons (all under [`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)):
+   (the four Ingress hosts: Mission Control, Kong, Backstage, and the Logto OIDC issuer). With the
+   CCM off, `kubectl get nodes -o wide` shows **EXTERNAL-IP `<none>`** — that is **expected, not a
+   fault** (nothing populates the node's external address without the cloud controller). Read the
+   real server IP from Hetzner instead: `hcloud server ip <name>` — **not** the node object. A
+   delete+create re-provision lands a **NEW Hetzner server IP**, so the A records must be
+   re-pointed to it each time (again from `hcloud server ip <name>`).
+3. Install the cluster add-ons (all under [`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)).
+   **Automated path:** run [`scripts/staging-bootstrap.sh`](../../scripts/staging-bootstrap.sh)
+   (bd babelstone-zla1.12.23) — it does steps 3 and 4 here (the data-independent glue) fail-closed
+   and idempotently, at **pinned** third-party versions (never `latest`). `--check-only` dry-runs it
+   with no live cluster. The add-ons it installs:
    - **Traefik** (Helm, `bootstrap/helm/traefik-values.yaml`) — the ingress controller
      providing the `traefik` IngressClass, binding the node's :80/:443 (hostPort). hetzner-k3s
      disables the bundled Traefik + servicelb, so without this every `https://*.babelstone.dev`
      is dead (bd babelstone-zla1.14). See `bootstrap/README.md` step 1a.
    - **cert-manager** (Helm) — see `bootstrap/README.md`.
-   - the **external CSI snapshot controller + CRDs** (NOT bundled with k3s) — required by the
-     `VolumeSnapshotClass` and the volume-snapshot CronJob.
    - Rancher **system-upgrade-controller** (creates the `system-upgrade` namespace + SA the
      k3s upgrade Plan uses).
-4. `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` (the issuers, the
-   `VolumeSnapshotClass`, the k3s upgrade `Plan`). The `helm/` subfolder is skipped by the
-   non-recursive glob — those are Helm values, applied in step 3, not `kubectl apply`.
+   (The **external CSI snapshot controller** is no longer installed — the Hetzner CSI is dropped;
+   bd babelstone-zla1.12.20 — so there is no `VolumeSnapshotClass` to back.)
+4. `kubectl apply` the cluster-scoped bootstrap (the issuers and the k3s upgrade `Plan`). A blanket
+   `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` now **fails** on
+   `volume-snapshot-class.yaml` (its CRD is gone with the CSI) — apply the files **individually,
+   skipping that one**, or just run `staging-bootstrap.sh` (step 3 above), which already excludes it.
+   The `helm/` subfolder is skipped by the non-recursive glob — those are Helm values, applied in
+   step 3, not `kubectl apply`.
    Then **open inbound 80/443 on the Hetzner firewall and set Cloudflare TLS** (bd babelstone-zla1.14):
    `infra/hetzner-k3s/firewall-web.sh --apply` (Cloudflare-scoped; dry-runs without `--apply`),
    then set the Cloudflare SSL/TLS mode to **Full (strict)**. `cluster.yaml` can't express these
@@ -90,7 +109,8 @@ export HCLOUD_TOKEN=<read/write Hetzner Cloud API token>   # never commit; takes
 export SSH_ALLOWED_CIDR=<your operator IP>/32              # REQUIRED — provision.sh refuses REPLACE_ME / 0.0.0.0/0 / non-/32
 # pin a valid `hetzner-k3s releases` version in cluster.yaml, then:
 ./provision.sh    # fail-closed SSH-allow-list preflight → renders cluster.rendered.yaml → `hetzner-k3s create`
-                  # (creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig — bd babelstone-zla1.12.6)
+                  # (creates the node + k3s, CCM/CSI DISABLED via addons + local-path enabled; then
+                  #  SCRUBS the orphaned kube-system/hcloud token Secret; writes ./kubeconfig — bd babelstone-zla1.12.6/.20)
 ```
 
 The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**, and
@@ -99,9 +119,12 @@ The generated `./kubeconfig` is a cluster-admin credential — **gitignored, nev
 kubeconfig instead (bd babelstone-zla1.12.1) — apply
 `infra/k8s/overlays/staging/bootstrap/cd-deploy-rbac.yaml` at Phase 2, then mint it with
 `scripts/cd-kubeconfig.sh` (walk-through in `bootstrap/README.md`; `cd.yml` probes and refuses a
-cluster-admin credential at apply time). The Hetzner CCM + CSI driver come up automatically, so
-`hcloud-volumes` resolves for the durable-storage patch at Phase 3. Then continue with step 2
-(DNS) → step 3 (`bootstrap/`, Phase 2) above.
+cluster-admin credential at apply time). The Hetzner CCM + CSI are **disabled** (bd babelstone-zla1.12.20):
+the k3s built-in **`local-path`** provisioner is the storage class the staging overlay's stateful
+claims bind (`storageClassName: local-path`) — node-local, no cloud API call, no `hcloud-volumes`.
+Because hetzner-k3s plants the kube-system `hcloud` token Secret on every create regardless of the
+addon toggles, `provision.sh` scrubs it post-create, so no Hetzner API token remains in the cluster.
+Then continue with step 2 (DNS) → step 3 (`bootstrap/`, Phase 2) above.
 
 ## 2. Redeploy / promote a new build
 
@@ -141,10 +164,14 @@ Backstage is NOT backed up: it uses in-memory SQLite (no Postgres) and rebuilds 
 from the baked `/catalog` tree on every boot (bd babelstone-zla1.6.6), so there is nothing to
 restore — a fresh pod is already fully populated.
 
-**B. Block-level — CSI VolumeSnapshots** (the `volume-snapshot` CronJob). List them
-(`kubectl get volumesnapshot`), then provision a new PVC `dataSource:` that VolumeSnapshot and
-re-point the StatefulSet/Deployment. Faster for a whole-volume rollback (incl. Redpanda state),
-but same-cluster only — the logical dumps are the off-box copy.
+**B. Block-level — CSI VolumeSnapshots** (the `volume-snapshot` CronJob). **RETIRED on staging /
+production-topology-only** — the Hetzner CSI is dropped and staging now runs on the node-local
+`local-path` provisioner (bd babelstone-zla1.12.20), which has no `VolumeSnapshot` support, so this
+path does not apply here. On the production-shaped topology (which keeps the CSI) it still holds:
+list the snapshots (`kubectl get volumesnapshot`), then provision a new PVC `dataSource:` that
+VolumeSnapshot and re-point the StatefulSet/Deployment — faster for a whole-volume rollback (incl.
+Redpanda state), but same-cluster only. **On staging, path A (the logical pg_dumpall) is the only
+restore path**, and it is off-box.
 
 ## 4. Upgrade (k3s)
 
@@ -159,11 +186,17 @@ the node is back `Ready`.
 | Job | Schedule (UTC) | What | Where |
 |---|---|---|---|
 | `db-logical-backup` | 01:30 daily | `pg_dumpall` (engine + orchestrator DBs) | Hetzner Object Storage (S3) |
-| `volume-snapshot` | 02:30 daily | CSI `VolumeSnapshot` of postgres / redpanda PVCs | in-cluster (CSI) |
+| ~~`volume-snapshot`~~ | ~~02:30 daily~~ | ~~CSI `VolumeSnapshot` of postgres / redpanda PVCs~~ | **RETIRED (production-topology-only)** |
+
+The `volume-snapshot` CronJob is **retired on staging** — it needs the Hetzner CSI, which is dropped
+(bd babelstone-zla1.12.20); staging is on the node-local `local-path` provisioner. Only the logical
+`db-logical-backup` runs here; the block-snapshot row applies solely to the production-shaped
+topology that keeps the CSI.
 
 Check: `kubectl get cronjob,job` and the job logs. **Retention/pruning is manual for v1** — prune
-old S3 objects (lifecycle policy on the bucket) and old `VolumeSnapshot`s (`kubectl delete
-volumesnapshot -l babelstone.io/dr-role=volume-snapshot --field-selector ...`) periodically.
+old S3 objects (lifecycle policy on the bucket) periodically. (On the production topology, also prune
+old `VolumeSnapshot`s: `kubectl delete volumesnapshot -l babelstone.io/dr-role=volume-snapshot
+--field-selector ...` — not applicable on staging, no CSI.)
 
 ## 6. Uptime / alerting
 
