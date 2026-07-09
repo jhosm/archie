@@ -28,9 +28,12 @@ has one for the deposit position.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
+
+from .internal_mtls import build_client_ssl_context
 
 # The gateway-attested caller header the MCP server forwards to the orchestrator (ADR-IC-010 §P3 /
 # ADR-IC-006 §P4 — the orchestrator edge binds its per-process ownership check to this same header).
@@ -51,7 +54,17 @@ class OrchestratorClient:
 
     def __init__(self, base_url: str, client: httpx.AsyncClient | None = None) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client = client or httpx.AsyncClient(timeout=30.0)
+        # Caller-side internal mTLS on the outbound orchestrator hop (bd babelstone-zla1.12.10; ADR-IC-006
+        # §P5 Boundary 2 / ADR-IC-016 plane (i)) — the same posture as EngineClient. Only the DEFAULT
+        # client pins the internal CA + presents the client cert, gated on BABELSTONE_INTERNAL_CA_CERTS;
+        # with it unset the client dials plain HTTP. An INJECTED client (tests) is respected verbatim.
+        if client is not None:
+            self._client = client
+        else:
+            ssl_context = build_client_ssl_context(os.environ)
+            self._client = httpx.AsyncClient(
+                timeout=30.0, verify=ssl_context if ssl_context is not None else True
+            )
 
     async def constitute(
         self, request: dict[str, Any], client_id: str | None = None

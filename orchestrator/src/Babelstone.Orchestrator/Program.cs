@@ -306,6 +306,22 @@ builder.Services.AddSingleton(new SagaCommandDispatcherOptions
 builder.Services.AddSingleton<ICommandRouter>(sp =>
     new CompositeCommandRouter(sp.GetServices<ISagaCommandRouter>()));
 builder.Services.AddHttpClient();
+
+// Caller-side internal mTLS on the dispatcher's outbound HTTP hop (bd babelstone-zla1.12.10; ADR-IC-006
+// §P5 Boundary 2 / ADR-IC-016 plane (i)). The dispatcher POSTs to the engine via the DEFAULT
+// IHttpClientFactory client (SagaCommandDispatchDrainer.CreateClient()). Once the engine's Kestrel host
+// is flipped to HTTPS-with-a-REQUIRED-client-cert (the gated overlays/staging/internal-mtls.patch.yaml),
+// that hop must PRESENT a client cert signed by the shared internal CA and PIN the engine's server cert
+// to that same CA — otherwise the RequireCertificate handshake rejects it. ConfigureHttpClientDefaults
+// applies the mTLS primary handler to EVERY factory client (there is only the default one), so no named
+// client is needed and SagaCommandDispatchDrainer stays untouched. It is OFF unless InternalMtls:CaCertPath
+// is configured (staging mounts the client cert + CA and sets it), so the demo/local/test hosts keep their
+// plain-HTTP default byte-for-byte. Wiring only — the orchestrator stays extraction-ready (ADR-PC-019 §P2).
+if (InternalMtls.IsConfigured(builder.Configuration))
+{
+    builder.Services.ConfigureHttpClientDefaults(http =>
+        http.ConfigurePrimaryHttpMessageHandler(() => InternalMtls.BuildHandler(builder.Configuration)));
+}
 // The SagaAdvanceHandler (registered above for the consume loop) is ALSO injected into the dispatcher
 // for the command-outcome → result-event bridge (bd babelstone-t7o3.8): at a terminal delivery outcome
 // the dispatcher maps (command_type, outcome) → a result event and self-advances the saga IN-PROCESS,

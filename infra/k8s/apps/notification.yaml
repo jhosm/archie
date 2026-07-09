@@ -32,14 +32,29 @@ spec:
           image: ghcr.io/jhosm/babelstone-notification-staging:latest
           env:
             # The only hard-required runtime config (the host throws if the engine URL is unset).
+            # Internal mTLS on the engine-read hop — see the InternalMtls__* keys below.
             - name: Engine__BaseUrl
-              value: http://engine:8080
+              value: https://engine:8080
             # Regulatory pack — the host loads pt.2026.1 off disk at startup (ADR-PC-007 §P4),
             # baked into this derived image at /app/packs (see the header + infra/k8s/apps/notification/Dockerfile).
             - name: Engine__PacksDir
               value: /app/packs
             - name: Engine__PackVersion
               value: pt.2026.1
+            # ── Caller-side internal mTLS on the engine-read hop (bd babelstone-zla1.12.10; ADR-IC-006
+            # §P5 Boundary 2 / ADR-IC-016 plane (i)) ──────────────────────────────────────────────
+            # The worker READS deposit facts from https://engine:8080 presenting THIS client cert
+            # (signed by the shared internal CA, mcp-mtls-ca) and pinning the engine's server cert to
+            # that same CA (InternalMtls.cs). Client material is the babelstone-notification-client-tls
+            # Secret cert-manager issues (overlays/staging/bootstrap/internal-mtls.yaml), mounted at
+            # /certs below. Inert until the cert is mounted AND the engine server is flipped to HTTPS by
+            # enabling internal-mtls.patch.yaml — a deliberately separate rollout step (that patch's header).
+            - name: InternalMtls__CaCertPath
+              value: /certs/ca.crt
+            - name: InternalMtls__ClientCertPath
+              value: /certs/tls.crt
+            - name: InternalMtls__ClientKeyPath
+              value: /certs/tls.key
             # Fail-fast without a deployment environment (ADR-IC-007 §P1 non-blank requirement).
             - name: DOTNET_ENVIRONMENT
               value: Production
@@ -47,6 +62,12 @@ spec:
               value: http://otel-collector:4317
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: grpc
+          volumeMounts:
+            # The notification worker's CLIENT cert for the engine-read hop (tls.crt/tls.key) + the
+            # internal CA (ca.crt) it pins the engine's server cert to (babelstone-notification-client-tls).
+            - name: notification-client-tls
+              mountPath: /certs
+              readOnly: true
           # No port → no httpGet/tcpSocket probe is meaningful; rely on the restart policy. On a
           # transient engine-read failure the worker backs off (exponential, 5-min ceiling) and
           # keeps running rather than crashing, so a liveness probe would only cause false restarts.
@@ -57,3 +78,9 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+      volumes:
+        # The notification worker's internal-mTLS CLIENT cert (bd babelstone-zla1.12.10). Standard
+        # cert-manager keys (tls.crt/tls.key/ca.crt) the InternalMtls__*Path env point at directly.
+        - name: notification-client-tls
+          secret:
+            secretName: babelstone-notification-client-tls

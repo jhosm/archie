@@ -50,10 +50,26 @@ spec:
             - name: DEPLOYMENT_ENVIRONMENT
               value: Production
             # Outbound tool targets — the code defaults are localhost:8080/8090, WRONG in-cluster.
+            # https on both (internal mTLS — see the BABELSTONE_INTERNAL_* keys below).
             - name: BABELSTONE_ENGINE_URL
-              value: http://engine:8080
+              value: https://engine:8080
             - name: BABELSTONE_ORCHESTRATOR_URL
-              value: http://orchestrator:8080
+              value: https://orchestrator:8080
+            # ── Caller-side internal mTLS on the engine + orchestrator tool hops (bd
+            # babelstone-zla1.12.10; ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)) ────────────
+            # The httpx tool clients dial https://engine:8080 / https://orchestrator:8080 presenting a
+            # client cert signed by the shared internal CA and pinning the server cert to that CA
+            # (internal_mtls.py). SEPARATE from the SERVER mTLS above (MCP_TLS_*, which is Kong→mcp-server
+            # inbound): this is mcp-server→engine/orchestrator OUTBOUND. The CA is the SAME chain, so we
+            # reuse the /certs/ca.crt already mounted; the CLIENT cert is the babelstone-mcp-server-client-tls
+            # Secret mounted at /client-certs below. Inert until the engine/orchestrator servers are flipped
+            # to HTTPS by enabling internal-mtls.patch.yaml — a deliberately separate rollout step.
+            - name: BABELSTONE_INTERNAL_CA_CERTS
+              value: /certs/ca.crt
+            - name: BABELSTONE_INTERNAL_CLIENT_CERT
+              value: /client-certs/tls.crt
+            - name: BABELSTONE_INTERNAL_CLIENT_KEY
+              value: /client-certs/tls.key
             # The deployed MCP aud + advertised authorization server. LOCK-STEP with kong.yml's /mcp
             # pre-function MCP_SERVER_URI: the committed kong.yml keeps the POC value (so CI + the
             # offline mcp-contract-test harness still pass), and scripts/deck-sync.sh rewrites BOTH the
@@ -86,6 +102,13 @@ spec:
           volumeMounts:
             - name: mcp-tls
               mountPath: /certs
+              readOnly: true
+            # The mcp-server's OUTBOUND client cert for the engine/orchestrator tool hops (bd
+            # babelstone-zla1.12.10) — a SEPARATE mount from /certs (the inbound Kong→mcp-server server
+            # cert) so the two never clobber. Standard cert-manager keys tls.crt/tls.key the
+            # BABELSTONE_INTERNAL_CLIENT_* env point at; the CA is reused from /certs/ca.crt (same chain).
+            - name: mcp-server-client-tls
+              mountPath: /client-certs
               readOnly: true
           # mTLS requires a client cert, so a plain httpGet probe would fail the handshake; a TCP
           # socket probe confirms uvicorn is bound without needing to present a cert.
@@ -123,3 +146,8 @@ spec:
                 path: mcp-server.key
               - key: ca.crt
                 path: ca.crt
+        # The mcp-server's OUTBOUND internal-mTLS CLIENT cert (bd babelstone-zla1.12.10). Standard
+        # cert-manager keys (tls.crt/tls.key), mounted at /client-certs above.
+        - name: mcp-server-client-tls
+          secret:
+            secretName: babelstone-mcp-server-client-tls
