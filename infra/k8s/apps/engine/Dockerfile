@@ -17,3 +17,10 @@ FROM ${BASE_IMAGE}
 # Engine__PackRegistry=disk + Engine__PacksDir=/app/packs (set on the Deployment) load the
 # pack from here. World-readable; the engine runs as the non-root UID baked into the base.
 COPY packs/pt.2026.1 /app/packs/pt.2026.1
+
+# The term_deposit family reads its per-variant product-config YAMLs from disk too
+# (Babelstone.RateSheets.YamlProductConfigStore). Like the pack tree, these are source data
+# absent from the published base image (`COPY --from=build /app .` ships only build output),
+# so bake them in and point the Deployment at them via Engine__ProductConfigsDir=/app/product-configs.
+# Without this the first constitute 500s: FindProductConfigsDir walks up from /app and finds nothing.
+COPY product-configs /app/product-configs
