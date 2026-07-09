@@ -293,16 +293,24 @@ jobs:
         env:
           KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: ./scripts/cd-secret-preflight.sh --live -n babelstone-staging
-      # 4c2 — pin first-party images to their cosign-verified digests (ADR-PC-007 §A2,
-      #       bd babelstone-2t16.30). For every ghcr.io/jhosm/babelstone-* image the overlay
-      #       renders, resolve its tag to the immutable manifest digest (crane), cosign-verify
-      #       THAT name@sha256 against the image-build.yml signing identity, then `kustomize edit
-      #       set image` the overlay to it — so 4d applies the exact bytes verify-images checks,
-      #       closing the verify/deploy TOCTOU. Fail-closed: an unresolvable/unverifiable image
-      #       aborts the promotion. Runs for BOTH overlays (staging renders 6 first-party, ha 1).
-      - name: Pin first-party images by digest (resolve + cosign-verify, then pin the overlay)
+      # 4c2 — pin first-party images to their cosign-verified digests (ADR-PC-007 §A2 + §A4,
+      #       bd babelstone-2t16.30 / babelstone-2t16.31.2). For every ghcr.io/jhosm/babelstone-*
+      #       image the overlay renders, cd-pin-images.sh resolves an immutable digest, cosign-verifies
+      #       THAT name@sha256 against the image-build.yml signing identity, then `kustomize edit set
+      #       image` the overlay to it — so 4d applies the exact bytes verify-images checks, closing the
+      #       verify/deploy TOCTOU. WHICH build it pins is set by PROMOTE_GIT_REF (§A4): the PROMOTED
+      #       COMMIT's own sha-<commit> build, so a promotion deploys the build of the exact commit
+      #       being promoted rather than "whatever :latest is now". Because image builds are
+      #       path-scoped, a commit may not have rebuilt every image, so on a miss the script walks the
+      #       commit's git ancestors newest-first and pins the newest ancestor build (loudly logged) —
+      #       never silently :latest; the walk needs the history this job checks out at fetch-depth:0
+      #       (step top). PROMOTE_STRICT=1 would fail instead of walking. Fail-closed: an
+      #       unresolvable/unverifiable image aborts the promotion. Runs for BOTH overlays (the
+      #       first-party set is discovered from the render).
+      - name: Pin first-party images by digest — commit-pinned resolve + cosign-verify, then pin
         env:
           OVERLAY: ${{ github.event.inputs.overlay }}
+          PROMOTE_GIT_REF: ${{ github.sha }}   # §A4: pin to the build of the exact promoted commit
         run: ./scripts/cd-pin-images.sh --pin "infra/k8s/overlays/$OVERLAY"
       # 4d — apply the rendered overlay to the cluster with the scoped deploy identity.
       - name: kubectl apply the rendered overlay
