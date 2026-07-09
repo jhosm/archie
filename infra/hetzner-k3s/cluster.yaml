@@ -101,10 +101,28 @@ masters_pool:
 # No worker_node_pools and no autoscaling on a single-node cluster.
 
 addons:
-  # The Hetzner CSI driver (default-on) is load-bearing: the staging overlay pins
-  # storageClassName: hcloud-volumes on its stateful claims, which only binds once this is up.
-  # (The Hetzner Cloud Controller Manager is always installed by hetzner-k3s regardless.)
+  # ── No Hetzner API token lives in this cluster — by design (bd babelstone-zla1.12.20) ──
+  # Both Hetzner cloud integrations that need an in-cluster API credential are turned OFF,
+  # so hetzner-k3s never plants the all-powerful HCLOUD token as a kube-system Secret. That
+  # takes the token's cost-abuse blast radius to zero and SUPERSEDES the spend-cap containment
+  # of bd babelstone-zla1.12.2 — removing the token beats capping what a leaked one can spend.
+  #   • cloud_controller_manager — its only job here was wiring a cloud LoadBalancer. This box
+  #     has NO `type: LoadBalancer` Service: ingress rides a Cloudflare Tunnel (bd
+  #     babelstone-zla1.12.14), so the CCM buys us nothing. (Confirmed supported as an addon
+  #     toggle in the pinned hetzner-k3s v2.6.0 — it is NOT "always installed regardless".)
+  #   • csi_driver — its only benefit was durable/snapshot-able hcloud-volumes, which is the DR
+  #     feature staging has scoped OUT (bd babelstone-zla1.12.20). Stateful storage moves to the
+  #     k3s-built-in local-path provisioner (node-local, no cloud API call) enabled below.
+  # The provision-time HCLOUD_TOKEN (env var, never committed) is still needed for hetzner-k3s
+  # to CREATE the cluster; with these addons off it is simply not persisted in-cluster.
+  cloud_controller_manager:
+    enabled: false
   csi_driver:
+    enabled: false
+  # k3s-built-in node-local persistence (default-off in hetzner-k3s). This backs the staging
+  # overlay's stateful claims (storageClassName: local-path) with NO cloud API token — data
+  # survives a pod restart but NOT node loss, consistent with DR being out of scope on staging.
+  local_path_storage_class:
     enabled: true
   cluster_autoscaler:
     enabled: false         # no autoscaled pools on a single node (defaults true)
@@ -173,8 +191,10 @@ additional_pre_k3s_commands:
     AUDIT_POLICY
   # (2) etcd SECRETS-AT-REST ENCRYPTION (CIS secrets section): k3s defaults to storing
   #     Secrets base64-only in etcd, so anyone with disk/snapshot access (Hetzner rescue
-  #     boot, a stolen image, a CSI snapshot) reads the Hetzner token, kubeconfigs, the
-  #     OpenBao token and backup keys in clear. `secrets-encryption: true` makes k3s
+  #     boot, a stolen image) reads kubeconfigs, the OpenBao token and backup keys in clear.
+  #     (No in-cluster Hetzner API token to leak — the CCM/CSI addons that would plant one are
+  #     off above; this hardening still matters for every OTHER Secret.) `secrets-encryption:
+  #     true` makes k3s
   #     generate an AES key and AES-CBC-encrypt Secrets at rest. Written as a k3s config
   #     DROP-IN (config.yaml.d) rather than /etc/rancher/k3s/config.yaml so nothing
   #     hetzner-k3s itself renders is clobbered. Verify after provision:

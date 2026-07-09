@@ -19,7 +19,9 @@
 # list is gated.
 #
 # Required env:
-#   HCLOUD_TOKEN       read/write Hetzner Cloud API token (consumed by hetzner-k3s itself)
+#   HCLOUD_TOKEN       read/write Hetzner Cloud API token (consumed by hetzner-k3s itself to
+#                      CREATE the cluster). With the CCM + CSI addons off in cluster.yaml
+#                      (bd babelstone-zla1.12.20) it is NOT persisted as a kube-system Secret.
 #   SSH_ALLOWED_CIDR   the operator / jump-host IPv4 /32 allowed to SSH — e.g. 203.0.113.7/32
 #                      (comma-separate a small list: "203.0.113.7/32,198.51.100.2/32")
 #

@@ -2,8 +2,10 @@
 
 Plain English: this is the one declarative file that turns the empty Hetzner account
 into a running single-node Kubernetes cluster. You run one command, `hetzner-k3s`
-creates a CAX41 ARM server in Helsinki, installs single-node k3s on it with the Hetzner
-cloud-controller + CSI driver, and writes you a kubeconfig. Everything else
+creates a CAX41 ARM server in Helsinki, installs single-node k3s on it, and writes you a
+kubeconfig. The Hetzner cloud-controller and CSI driver are deliberately turned OFF (see
+"Posture notes" below), so **no** Hetzner API token is ever stored in the cluster; stateful
+storage uses the k3s built-in node-local `local-path` provisioner instead. Everything else
 (`infra/k8s/overlays/staging`) then deploys *into* that cluster. This is **Phase 1** of the
 staging bring-up (bd babelstone-zla1.2); it sits one layer below the Kustomize manifests —
 it *creates* the cluster they assume already exists.
@@ -17,8 +19,10 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
 
 - [`cluster.yaml`](./cluster.yaml) — the [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s)
   cluster config (v2.6.0+ format): 1× CAX41 ARM, Hetzner Helsinki (`hel1`), single-node k3s,
-  embedded etcd, the Hetzner CSI driver enabled. The Hetzner API token is **not** in this file —
-  it is supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below). The SSH
+  embedded etcd, with the Hetzner CCM and CSI driver **disabled** and the k3s built-in
+  `local-path` storage class enabled (so no Hetzner API token is stored in the cluster — see
+  "Posture notes"). The **provision-time** Hetzner API token is **not** in this file — it is
+  supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below). The SSH
   allow-list is likewise **not** a real value in this file: it is the `REPLACE_ME/32` sentinel
   that `provision.sh` substitutes (deliberately invalid, so a direct `create` against the
   committed file cannot succeed).
@@ -68,7 +72,8 @@ hetzner-k3s releases | tail        # list supported releases; set cluster.yaml's
 # 5. Verify:
 export KUBECONFIG="$PWD/kubeconfig"
 kubectl get nodes              # the one node should reach Ready
-kubectl get pods -A           # Hetzner CCM + CSI driver come up automatically
+kubectl get pods -A           # NO Hetzner CCM / CSI pods (both addons disabled — Posture notes)
+kubectl get secret -n kube-system 2>/dev/null | grep -i hcloud   # expect NO hits: no in-cluster Hetzner token
 ```
 
 The generated `./kubeconfig` is a **cluster-admin credential** — it is gitignored and must never
@@ -118,6 +123,25 @@ the source of truth either way.
 
 ## Posture notes (recorded drift)
 
+- **No Hetzner API token lives in the cluster.** The Hetzner Cloud Controller Manager (CCM)
+  and CSI driver are both disabled in [`cluster.yaml`](./cluster.yaml)'s `addons` section
+  (`cloud_controller_manager.enabled: false`, `csi_driver.enabled: false`; confirmed supported
+  as addon toggles in the pinned hetzner-k3s v2.6.0). Those were the only in-cluster consumers
+  of a Hetzner Cloud API credential, so hetzner-k3s no longer plants the all-powerful
+  `HCLOUD_TOKEN` as a kube-system Secret at all. We lose nothing by dropping them: ingress rides
+  a Cloudflare Tunnel (bd babelstone-zla1.12.14) with **no** `type: LoadBalancer` Service, so the
+  CCM's cloud-LB function is unused; and the CSI's only benefit — durable/snapshot-able
+  `hcloud-volumes` — is the DR feature staging has scoped out. Stateful storage now uses the
+  k3s built-in **local-path** provisioner (node-local; `addons.local_path_storage_class.enabled:
+  true`), which needs no cloud API call. **This SUPERSEDES the spend-cap containment posture of
+  bd babelstone-zla1.12.2** — eliminating the token beats bounding what a leaked one can spend,
+  taking its cost-abuse blast radius to zero. The **provision-time** `HCLOUD_TOKEN` (env var,
+  never committed) is still required for hetzner-k3s to *create* the cluster, but with these
+  addons off it is no longer persisted in-cluster. (Honours [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+  minimise-attack-surface — removes a standing in-cluster cloud credential; and
+  [ADR-PC-005](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md),
+  whose production HA/warm-standby posture is untouched — node-local storage deepens the
+  already-recorded single-node staging deviation, it does not reverse a production decision.)
 - **Single node is non-HA by choice.** One copy of every stateful service — notably a
   single-replica Postgres event store with no warm standby, plus a single-member k3s control
   plane — is the deliberate degraded posture for a demo box, versus the HA source-of-truth
