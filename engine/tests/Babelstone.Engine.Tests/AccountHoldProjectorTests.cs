@@ -578,6 +578,15 @@ public sealed class AccountHoldProjectorTests
             return Task.FromResult(holds);
         }
 
+        public Task<long> GetWindowedAuthorizationHoldCentsAsync(
+            string accountRef, DateOnly fromInclusive, DateOnly toInclusive, CancellationToken ct = default) =>
+            // Mirrors the real store's all-states AUTHORIZATION Σ over the value-date window (ADR-PC-037 §D5):
+            // a captured/expired hold still counts (it was authorized in the window); legal holds are excluded.
+            Task.FromResult(_rows.Values
+                .Where(r => r.AccountRef == accountRef && r.Kind == "AUTHORIZATION"
+                            && r.ValueDate is { } vd && vd >= fromInclusive && vd <= toInclusive)
+                .Sum(r => r.AmountCents));
+
         public Task TruncateAsync(CancellationToken ct = default)
         {
             _rows.Clear();

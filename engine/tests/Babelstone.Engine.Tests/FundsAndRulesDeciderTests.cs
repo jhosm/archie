@@ -66,6 +66,82 @@ public sealed class FundsAndRulesDeciderTests
         Assert.Equal(AuthorizationDeclineReason.PerTransactionLimitExceeded, declined.Reason);
     }
 
+    // Velocity (ADR-PC-037 §D5): the pack's rolling daily/monthly debit caps. The window totals are
+    // projection-derived inputs the shell supplies; the attempt PUSHES the window (windowedTotal + amount).
+    [Fact]
+    public void Declines_over_the_daily_velocity_cap_counting_the_windowed_total_plus_this_attempt()
+    {
+        // Daily cap 10 000; 9 000 already authorized in the window; a 2 000 debit takes the total to
+        // 11 000 — a rule breach evaluated before the funds check, even with ample balance.
+        var rules = new AuthorizationRules(DailyVelocityLimitCents: 10_000);
+
+        var decision = FundsAndRulesDecider.Decide(
+            Request(2_000), availableBalanceCents: 1_000_000, rules, activeFreeze: null,
+            windowedDailyDebitCents: 9_000, windowedMonthlyDebitCents: 0);
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.DailyVelocityLimitExceeded, declined.Reason);
+    }
+
+    [Fact]
+    public void Declines_over_the_monthly_velocity_cap_even_with_a_clear_day()
+    {
+        // Monthly cap 100 000; 99 000 spent this month; a 2 000 debit overflows it, while the daily total
+        // (0) is well clear — the monthly gate refuses on its own.
+        var rules = new AuthorizationRules(MonthlyVelocityLimitCents: 100_000);
+
+        var decision = FundsAndRulesDecider.Decide(
+            Request(2_000), availableBalanceCents: 1_000_000, rules, activeFreeze: null,
+            windowedDailyDebitCents: 0, windowedMonthlyDebitCents: 99_000);
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.MonthlyVelocityLimitExceeded, declined.Reason);
+    }
+
+    [Fact]
+    public void Authorizes_at_the_exact_velocity_boundary_the_cap_is_inclusive()
+    {
+        // 9 000 authorized + a 1 000 debit = exactly the 10 000 daily cap → authorized (only a total ABOVE
+        // the cap is refused, mirroring the per-transaction and overdraft boundaries).
+        var rules = new AuthorizationRules(DailyVelocityLimitCents: 10_000, MonthlyVelocityLimitCents: 100_000);
+
+        var decision = FundsAndRulesDecider.Decide(
+            Request(1_000), availableBalanceCents: 1_000_000, rules, activeFreeze: null,
+            windowedDailyDebitCents: 9_000, windowedMonthlyDebitCents: 9_000);
+
+        Assert.IsType<AuthorizationDecision.Authorized>(decision);
+    }
+
+    [Fact]
+    public void The_per_transaction_gate_precedes_the_velocity_gate()
+    {
+        // A debit that breaches BOTH the per-transaction ceiling and the daily velocity cap declines with
+        // PerTransactionLimitExceeded — per-transaction is evaluated first (a stable gate order).
+        var rules = new AuthorizationRules(PerTransactionLimitCents: 1_000, DailyVelocityLimitCents: 10_000);
+
+        var decision = FundsAndRulesDecider.Decide(
+            Request(20_000), availableBalanceCents: 1_000_000, rules, activeFreeze: null,
+            windowedDailyDebitCents: 9_999, windowedMonthlyDebitCents: 0);
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.PerTransactionLimitExceeded, declined.Reason);
+    }
+
+    [Fact]
+    public void The_velocity_gate_precedes_the_funds_gate()
+    {
+        // A debit within the balance but over the daily velocity cap declines with the velocity reason, not
+        // InsufficientAvailableBalance — velocity is a stage-4 rule breach evaluated before the funds check.
+        var rules = new AuthorizationRules(DailyVelocityLimitCents: 10_000);
+
+        var decision = FundsAndRulesDecider.Decide(
+            Request(2_000), availableBalanceCents: 1_000_000, rules, activeFreeze: null,
+            windowedDailyDebitCents: 9_500, windowedMonthlyDebitCents: 0);
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.DailyVelocityLimitExceeded, declined.Reason);
+    }
+
     private static AccountFreeze Freeze(
         string reason = "SANCTIONS_MATCH", string actor = "compliance-svc") =>
         new("freeze-1", Guid.NewGuid(), reason, actor, FreezeExpiresAt: null, FreezeState.Active);

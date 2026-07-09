@@ -132,9 +132,11 @@ public sealed class CurrentAccountProductConfigStore
             // Absent arranged_overdraft_limit ⇒ 0 (no overdraft headroom) — the shape of a ca_pt_basic
             // account that omits the field. Present-but-zero is the same degenerate.
             ArrangedOverdraftLimitCents: yaml.ArrangedOverdraftLimit ?? 0,
-            // Absent per_transaction_max_cents ⇒ null (no ceiling). Daily/monthly velocity is bound in the
-            // YAML shape but not surfaced onto the rules (the velocity scope-out on CurrentAccountProductConfig).
-            PerTransactionLimitCents: yaml.TransactionLimits?.PerTransactionMaxCents);
+            // Absent cap ⇒ null (unconstrained): the per-transaction ceiling and the rolling daily/monthly
+            // velocity caps all flow from transaction_limits onto the stage-4 rules (ADR-PC-037 §D5).
+            PerTransactionLimitCents: yaml.TransactionLimits?.PerTransactionMaxCents,
+            DailyVelocityLimitCents: yaml.TransactionLimits?.DailyVelocityCents,
+            MonthlyVelocityLimitCents: yaml.TransactionLimits?.MonthlyVelocityCents);
     }
 
     // Walk up from the running binary to the repo's product-configs/current-account/ tree — the same
@@ -164,9 +166,8 @@ public sealed class CurrentAccountProductConfigStore
         public TransactionLimitsYaml? TransactionLimits { get; set; }
     }
 
-    // The transaction_limits sub-block. Every cap is a nullable long-cents — absent ⇒ null. Only
-    // PerTransactionMaxCents is surfaced onto the rules; the velocity fields are bound so a config that
-    // declares them parses cleanly (the scoped-out grammar).
+    // The transaction_limits sub-block. Every cap is a nullable long-cents — absent ⇒ null. All three
+    // (the per-transaction ceiling + the daily/monthly velocity caps) surface onto the stage-4 rules (ADR-PC-037 §D5).
     private sealed class TransactionLimitsYaml
     {
         public long? PerTransactionMaxCents { get; set; }

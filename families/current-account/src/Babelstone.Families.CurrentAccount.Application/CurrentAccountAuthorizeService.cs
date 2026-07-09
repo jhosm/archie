@@ -82,6 +82,8 @@ public sealed class CurrentAccountAuthorizeService(
         var availableBalanceCents = await balances.GetAvailableBalanceCentsAsync(accountRef, ct);
         var activeFreeze = await freezes.GetActiveFreezeAsync(command.AccountId, ct);
         var rules = ResolveRules(position);
+        var (windowedDailyDebitCents, windowedMonthlyDebitCents) =
+            await ReadVelocityWindowsAsync(accountRef, command.ValueDate, rules, ct);
 
         // The hold's lifecycle key, deterministic per authorization (ADR-PC-033): derived from the command
         // id so a replay would earmark the SAME hold at most once even if the command-dedup guard were
@@ -91,7 +93,8 @@ public sealed class CurrentAccountAuthorizeService(
             command.AccountId, accountRef, holdId, new Money(command.AmountCents), command.ValueDate);
 
         var @event = CurrentAccountAuthorizeDecider.Decide(
-            position, request, availableBalanceCents, rules, activeFreeze);
+            position, request, availableBalanceCents, rules, activeFreeze,
+            windowedDailyDebitCents, windowedMonthlyDebitCents);
 
         var commitSequence = await runtime.AppendAsync(
             command.AccountId, hydrated.Version, [@event],
@@ -146,10 +149,32 @@ public sealed class CurrentAccountAuthorizeService(
     // an over-cap debit (LIMIT_EXCEEDED). A product code the store holds no config for resolves to the
     // zero-overdraft degenerate (no headroom, no ceiling — a debit past the balance is a plain
     // INSUFFICIENT_AVAILABLE_BALANCE), the conservative gate rather than refusing a live account over a
-    // config gap. Velocity (daily/monthly) is declared in the config but not enforced here yet — it needs a
-    // windowed-spend projection (a documented follow-up).
+    // config gap. The daily/monthly velocity caps ride the same resolved rules (VELOCITY_LIMIT_PACK_BOUNDED);
+    // the windowed debit totals they are measured against are read by ReadVelocityWindowsAsync below.
     private AuthorizationRules ResolveRules(AccountPosition position) =>
         productConfigs.Resolve(position.ProductCode)?.ToAuthorizationRules() ?? CurrentAccountProductConfig.None;
+
+    // Read the rolling debit totals the pure decider measures a velocity cap against (ADR-PC-037 §D5), one
+    // per configured window — a projection-derived read over the account's authorization holds (ADR-PC-023),
+    // NOT a clock read: the window bounds come from the attempt's value-date. Both windows anchor on
+    // value_date (the debit's economic date): the daily window is that single day; the monthly window is the
+    // first of its month through it. A window whose cap is unset skips the read (a zero total leaves the
+    // gate transparent), so a ca_pt_basic account with no velocity caps costs no extra query. Runs after the
+    // drain (read-your-writes), so a just-folded prior earmark counts; this attempt's own hold is not yet placed.
+    private async Task<(long Daily, long Monthly)> ReadVelocityWindowsAsync(
+        string accountRef, DateOnly valueDate, AuthorizationRules rules, CancellationToken ct)
+    {
+        var daily = rules.DailyVelocityLimitCents is null
+            ? 0L
+            : await balances.GetWindowedAuthorizationHoldCentsAsync(accountRef, valueDate, valueDate, ct);
+
+        var monthly = rules.MonthlyVelocityLimitCents is null
+            ? 0L
+            : await balances.GetWindowedAuthorizationHoldCentsAsync(
+                accountRef, new DateOnly(valueDate.Year, valueDate.Month, 1), valueDate, ct);
+
+        return (daily, monthly);
+    }
 
     private static Type EventClrType(string eventType) => eventType switch
     {

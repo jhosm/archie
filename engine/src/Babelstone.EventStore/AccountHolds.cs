@@ -174,6 +174,18 @@ public interface IAccountHoldStore
     Task<IReadOnlyList<AccountHoldRow>> GetActiveLegalHoldsWithExpiryAtOrBeforeAsync(
         DateOnly expiryHorizon, CancellationToken ct = default);
 
+    /// <summary>
+    /// The account's windowed AUTHORIZATION-hold total (ADR-PC-037 §D5 velocity limits): Σ amount_cents
+    /// of this account's authorization holds whose <c>value_date</c> falls in
+    /// [<paramref name="fromInclusive"/>, <paramref name="toInclusive"/>], across EVERY state (ACTIVE,
+    /// CAPTURED, EXPIRED) — the rolling debit sum a velocity cap is measured against. A captured hold is
+    /// settled spend and an expired one still consumed velocity when it was authorized, so both count;
+    /// only LEGAL holds (a separate lifecycle) are excluded. The window bounds are INPUTS the shell
+    /// supplies (ADR-PC-023), never a clock read, so the sum stays replay-deterministic.
+    /// </summary>
+    Task<long> GetWindowedAuthorizationHoldCentsAsync(
+        string accountRef, DateOnly fromInclusive, DateOnly toInclusive, CancellationToken ct = default);
+
     /// <summary>Truncate the whole hold set for a clean rebuild (truncate-then-refold, ADR-PC-033).</summary>
     Task TruncateAsync(CancellationToken ct = default);
 }
@@ -436,6 +448,34 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("expiry_horizon", expiryHorizon);
         return await ReadRowsAsync(command, ct);
+    }
+
+    public async Task<long> GetWindowedAuthorizationHoldCentsAsync(
+        string accountRef, DateOnly fromInclusive, DateOnly toInclusive, CancellationToken ct = default)
+    {
+        // Σ over EVERY state (ACTIVE / CAPTURED / EXPIRED), AUTHORIZATION only: a velocity cap counts what
+        // was AUTHORIZED in the window, not only what is still earmarked (ADR-PC-037 §D5) — so amount_cents
+        // (the authorized figure), never captured_amount_cents. COALESCE/::bigint mirror
+        // GetActiveHoldCentsAsync. The account_holds_active_idx (0020) is PARTIAL over ACTIVE rows, so this
+        // all-states read is an account_ref scan; a dedicated (account_ref, value_date) WHERE
+        // kind = 'AUTHORIZATION' index is a hot-path perf follow-up (ADR-PC-011 load proof), deferred while
+        // pre-production.
+        const string sql = """
+            SELECT COALESCE(SUM(amount_cents), 0)::bigint
+            FROM account_holds
+            WHERE account_ref = @account_ref
+              AND kind = 'AUTHORIZATION'
+              AND value_date >= @from_inclusive AND value_date <= @to_inclusive;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("account_ref", accountRef);
+        command.Parameters.AddWithValue("from_inclusive", fromInclusive);
+        command.Parameters.AddWithValue("to_inclusive", toInclusive);
+        // Hard unbox: COALESCE guarantees non-null and ::bigint guarantees Int64 (see GetActiveHoldCentsAsync).
+        return (long)(await command.ExecuteScalarAsync(ct))!;
     }
 
     public async Task TruncateAsync(CancellationToken ct = default)

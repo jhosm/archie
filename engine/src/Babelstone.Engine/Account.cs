@@ -194,6 +194,19 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
         return rows.Select(ToHold).ToList();
     }
 
+    /// <summary>
+    /// The projection-derived windowed authorization-spend read (ADR-PC-023 / ADR-PC-037 §D5): the sum,
+    /// in integer cents, of this account's AUTHORIZATION-hold amounts whose value date falls in
+    /// [<paramref name="fromInclusive"/>, <paramref name="toInclusive"/>] — the rolling debit total a
+    /// velocity cap is measured against, counting a hold in every state (a captured hold is settled spend,
+    /// an expired one still consumed velocity when authorized). The window bounds are INPUTS the command
+    /// shell supplies from the attempt's value-date — never a clock read here — so the read stays
+    /// replay-deterministic and the authorize decision remains a pure function of its inputs.
+    /// </summary>
+    public Task<long> GetWindowedAuthorizationHoldCentsAsync(
+        string accountRef, DateOnly fromInclusive, DateOnly toInclusive, CancellationToken ct = default)
+        => holds.GetWindowedAuthorizationHoldCentsAsync(accountRef, fromInclusive, toInclusive, ct);
+
     // Rows out of the store are ACTIVE by query; the closed-set parse is still total (fail-loud on
     // a state/kind outside the migration CHECK set rather than a silent default). Kind maps the
     // storage-primitive string to the spine enum: AUTHORIZATION -> Authorization, LEGAL -> Legal

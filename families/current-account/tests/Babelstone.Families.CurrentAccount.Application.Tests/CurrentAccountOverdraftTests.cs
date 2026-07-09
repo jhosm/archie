@@ -74,7 +74,9 @@ public sealed class CurrentAccountOverdraftTests
         Assert.Equal(50_000, config!.ArrangedOverdraftLimitCents); // EUR 500 arranged overdraft
         Assert.Equal(500_000, config.PerTransactionLimitCents); // EUR 5 000 per-transaction cap
 
-        Assert.Equal(new AuthorizationRules(50_000, 500_000), config.ToAuthorizationRules());
+        // The full stage-4 rule set now carries the velocity caps too (VELOCITY_LIMIT_PACK_BOUNDED, CA-2).
+        Assert.Equal(
+            new AuthorizationRules(50_000, 500_000, 1_000_000, 10_000_000), config.ToAuthorizationRules());
     }
 
     [Fact]
