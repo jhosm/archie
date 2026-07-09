@@ -1,0 +1,23 @@
+# Expose the appliance's Prometheus (9090) + Loki (3100) QUERY APIs on the grafana-lgtm Service
+# so Mission Control's Metrics + Logs lenses fetch real series/lines (bd babelstone-zla1.17.2).
+# The otel-lgtm image already runs Prometheus on :9090 and Loki on :3100 internally; this publishes
+# them the same way grafana-tempo-svc.patch.yaml publishes the Tempo query API (3200) — strategic-merge
+# by port name, ADDED alongside 3000/3200/4317/4318, none touched.
+#
+# These are READ query APIs (GET /api/v1/query…, GET /loki/api/v1/query_range…), not OTLP ingest —
+# ADR-IC-007 §P1's single-entry WRITE boundary is unaffected (the Collector remains the only writer).
+# serve.py's /prom and /loki arms are read-only (GET), and /loki applies a structural-field allowlist
+# that strips PII-named fields before the browser. Reachable only from mission-control: the
+# allow-grafana-lgtm-ingress NetworkPolicy admits 9090/3100 from that pod alone (never the edge).
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-lgtm
+spec:
+  ports:
+    - name: prom-query
+      port: 9090
+      targetPort: 9090
+    - name: loki-query
+      port: 3100
+      targetPort: 3100

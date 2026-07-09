@@ -209,6 +209,10 @@ spec:
                   - logto-db-alteration
                   - logto-key-rotation
                   - db-logical-backup
+                  # Mission Control's Outbox·Inbox /pg lens (read-only, connects as babelstone_readonly)
+                  # and its role-provisioning Job (bd babelstone-zla1.17.3).
+                  - mission-control
+                  - mission-control-db-readonly
       ports:
         - protocol: TCP
           port: 5432
@@ -311,7 +315,8 @@ spec:
 ---
 # 11 · Grafana LGTM — OTLP (4317/4318) from the Collector ONLY (the §P1 boundary:
 # services must not ship telemetry direct-to-backend, and now the network agrees),
-# the Tempo query API (3200) from Mission Control's Telemetry tab proxy, and — since
+# the Tempo/Prometheus/Loki query APIs (3200/9090/3100) from Mission Control's
+# Telemetry, Metrics and Logs lens proxies, and — since
 # bd zla1.10.1/zla1.10.6 — the Grafana UI (3000) from the public edge (Traefik) so
 # operators reach it at grafana.babelstone.dev (gated by Grafana's own login + Logto
 # SSO + a Cloudflare Access identity gate, bd zla1.10.6). The OTLP ports stay
@@ -341,8 +346,15 @@ spec:
             matchLabels:
               app.kubernetes.io/name: mission-control
       ports:
+        # Tempo query (3200, Telemetry tab), Prometheus query (9090, Metrics lens) and Loki query
+        # (3100, Logs lens) — the read query APIs serve.py proxies (/tempo, /prom, /loki). Read-only;
+        # never the OTLP write ports (those stay Collector-only above). bd babelstone-zla1.17.2.
         - protocol: TCP
           port: 3200
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 3100
     - from:
         - namespaceSelector:
             matchLabels:

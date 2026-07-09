@@ -203,6 +203,14 @@ def _is_loopback(host):
 # read-only window is never reachable off-box by accident.
 PG_ENABLE = (os.environ.get("MC_PG_ENABLE", "").lower() in ("1", "true", "yes")) or _is_loopback(MC_BIND)
 
+# Extra DSN hosts the /pg/* window may reach BEYOND loopback — an EXPLICIT operator opt-in for the
+# in-cluster deployment (staging sets MC_PG_ALLOW_HOSTS=postgres). Empty by default, so the laptop
+# posture stays strictly 127.0.0.1-only. The compensating controls that make a named in-cluster host
+# safe are: a dedicated read-only DB role (SELECT-only, no DML/DDL), the mission-control→postgres
+# NetworkPolicy, the OIDC gate in front of every route, and the SELECT-only allowlist + PII column
+# firewall below (bd babelstone-zla1.17.3).
+PG_ALLOW_HOSTS = {h.strip() for h in os.environ.get("MC_PG_ALLOW_HOSTS", "").split(",") if h.strip()}
+
 # ── Mission Control authentication (bd babelstone-zla1.10.8.1 / .2) ───────────────────────────
 # MC_AUTH_MODE selects the front-door posture: 'dev' (no gate — the historical behaviour) or
 # 'oidc' (an interactive OpenID-Connect login in front of EVERY route). The whole auth surface is
@@ -425,14 +433,17 @@ def _dsn_host(dsn):
 
 
 def _assert_local_dsn(dsn):
-    """Refuse any DSN that is not loopback. A unix-socket DSN (host begins with '/') or an empty
-    host (default local socket) is local; everything else is rejected — the /pg/* window must
-    never reach off-box."""
+    """Refuse any DSN whose host is neither loopback nor an EXPLICITLY allowlisted host. A unix-socket
+    DSN (host begins with '/') or an empty host (default local socket) is local; 127.0.0.1/::1/localhost
+    are local; a host named in MC_PG_ALLOW_HOSTS is an explicit operator opt-in (the in-cluster
+    deployment sets it to the postgres Service). Everything else is rejected — the default posture is
+    that the /pg/* window never reaches off-box, and reaching a named host is an opt-in guarded by the
+    read-only role + NetworkPolicy + OIDC gate."""
     host = _dsn_host(dsn)
     if host == "" or host.startswith("/"):
         return  # local unix socket / default
-    if host not in ("127.0.0.1", "::1", "localhost"):
-        raise PgError(403, "non-local DSN refused (%r) — /pg/* is dev-only and 127.0.0.1-only" % host)
+    if host not in ("127.0.0.1", "::1", "localhost") and host not in PG_ALLOW_HOSTS:
+        raise PgError(403, "non-local DSN refused (%r) — /pg/* is 127.0.0.1-only unless the host is named in MC_PG_ALLOW_HOSTS" % host)
 
 
 def _pg_columns(db, table, columns):
@@ -1564,11 +1575,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return super().do_HEAD()
 
     def _refuse_mutation(self):
-        """The GET-only arms (the OCI /registry window; Prometheus /prom): reads are the whole
-        point — a mutating verb through these arms is refused before any relay."""
+        """The read-only proxy arms (the OCI /registry window; the Prometheus /prom, Loki /loki and
+        Tempo /tempo query APIs; the Schema-Registry /sr metadata lookups): reads are the whole point,
+        so a mutating verb through these arms is refused before any relay. This crucially keeps Loki's
+        POST /loki/api/v1/push (log ingestion — same 3100 port as the query API) off the BFF, so the
+        OTel Collector stays the single telemetry WRITE entry point (ADR-IC-007 §P1); likewise it keeps
+        schema REGISTRATION off /sr (ADR-IC-002 §P3: registration is a CI gate, never a runtime op).
+        /pandaproxy is deliberately NOT here — its Kafka-REST consumer-group dance needs POST/DELETE."""
         path = self.path.split("?", 1)[0]
-        if path.startswith("/registry/") or path.startswith("/prom/"):
-            self.send_error(405, "read-only arm — GET only")
+        if path.startswith(("/registry/", "/prom/", "/loki/", "/tempo/", "/sr/")):
+            self.send_error(405, "read-only arm: GET only")  # ASCII reason phrase (latin-1 status line)
             return True
         return False
 

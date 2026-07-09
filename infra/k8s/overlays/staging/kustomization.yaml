@@ -49,6 +49,9 @@ resources:
   # rather than in the apps/ product-service layer (bd babelstone-zla1.5.5). Its public
   # Ingress (app.babelstone.dev) is in ingress.yaml above.
   - mission-control.yaml
+  # The read-only Postgres role Mission Control's Outbox·Inbox lens (/pg) connects as — an idempotent
+  # provisioning Job (SELECT-only role, ttl-recreated each deploy; bd babelstone-zla1.17.3).
+  - mission-control-db-readonly-job.yaml
   # Logto — the OAuth 2.1 / OIDC Authorization Server (ADR-IC-021, bd babelstone-zla1.10.2):
   # the staging box's token issuer (login + SCA + the MCP-agent authority). Staging-specific,
   # public-facing (auth.babelstone.dev, the 4th host in ingress.yaml above), so it lives in the
@@ -144,6 +147,10 @@ patches:
   # (bd babelstone-zla1.16). §P1 is preserved at the network layer: allow-grafana-lgtm-ingress
   # admits 4317/4318 from the otel-collector ONLY. See the ADR-IC-007 §P1 amendment 2026-07-09.
   - path: grafana-otlp-svc.patch.yaml
+  # Publish the Prometheus (9090) + Loki (3100) QUERY APIs on the grafana-lgtm Service so Mission
+  # Control's Metrics + Logs lenses read real series/lines (bd babelstone-zla1.17.2) — read query
+  # APIs (not OTLP ingest), admitted from mission-control ONLY by allow-grafana-lgtm-ingress.
+  - path: grafana-query-svc.patch.yaml
   # Mount the Critical-SLI Prometheus rules into the grafana-lgtm appliance so its
   # bundled Prometheus loads alert-rules.yaml via rule_files (bd babelstone-zla1.9;
   # ADR-IC-004 §P4 / ADR-PC-005 §S2). Deployment-only patch — subPath-mounts the

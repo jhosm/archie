@@ -266,6 +266,43 @@ def test_is_public_bind_classification():
     assert serve._is_public_bind("") is False
 
 
+# ── /pg DSN host guard: loopback-only by default, explicit opt-in via MC_PG_ALLOW_HOSTS (zla1.17.3) ──
+def test_assert_local_dsn_default_refuses_named_host(monkeypatch):
+    pytest.importorskip("psycopg")  # _dsn_host parses the DSN via psycopg
+    monkeypatch.setattr(serve, "PG_ALLOW_HOSTS", set())
+    # loopback / unix-socket / default host are always local
+    for ok in ("postgresql://u:p@127.0.0.1:5432/db", "postgresql://u:p@localhost/db",
+               "postgresql://u:p@[::1]/db", "postgresql:///db"):
+        serve._assert_local_dsn(ok)
+    # a named in-cluster host is refused when the allowlist is empty (the laptop default)
+    with pytest.raises(serve.PgError) as ei:
+        serve._assert_local_dsn("postgresql://u:p@postgres:5432/db")
+    assert ei.value.status == 403
+
+
+def test_assert_local_dsn_honours_explicit_allowlist(monkeypatch):
+    pytest.importorskip("psycopg")
+    monkeypatch.setattr(serve, "PG_ALLOW_HOSTS", {"postgres"})
+    serve._assert_local_dsn("postgresql://u:p@postgres:5432/db")   # named host now allowed
+    serve._assert_local_dsn("postgresql://u:p@127.0.0.1:5432/db")  # loopback still allowed
+    with pytest.raises(serve.PgError):
+        serve._assert_local_dsn("postgresql://u:p@other-host:5432/db")  # a DIFFERENT host still refused
+
+
+def test_read_only_arms_refuse_mutation():
+    # ADR-IC-007 §P1 (bd zla1.17.2): the read-only query proxies refuse a mutating verb BEFORE
+    # relaying — crucially keeping Loki's POST /loki/api/v1/push ingestion off the BFF so the OTel
+    # Collector stays the single telemetry write path. /pandaproxy is exempt (its Kafka-REST
+    # consumer-group dance legitimately needs POST/DELETE).
+    with run_mc() as port:
+        for arm in ("/loki/api/v1/push", "/prom/api/v1/write", "/tempo/x", "/sr/subjects", "/registry/x"):
+            status, _h, _b = http_req(port, arm, method="POST")
+            assert status == 405, "%s POST should be refused (got %d)" % (arm, status)
+        # /pandaproxy must pass the guard (it then 502s to a dead upstream, but is NOT 405)
+        status, _h, _b = http_req(port, "/pandaproxy/consumers/g", method="POST")
+        assert status != 405, "/pandaproxy POST must not be refused by the read-only guard (got %d)" % status
+
+
 # ── oidc mode: fail-closed on missing / unreachable config ────────────────────────────────────
 def test_oidc_missing_config_fails_closed():
     serve.OIDC_ISSUER = ""

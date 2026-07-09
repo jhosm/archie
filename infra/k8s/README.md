@@ -30,7 +30,7 @@ application/engine service images (they connect to this stack).
 | redpanda-console | Deployment | 8080 | dev convenience |
 | kong | Deployment | 8000, 8001 | [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |
 | openbao | Deployment | 8200 | [ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) |
-| grafana-lgtm | Deployment | **3000** (base); staging adds 3200 (Tempo query) + OTLP 4317/4318 (collector-only NetworkPolicy) | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
+| grafana-lgtm | Deployment | **3000** (base); staging adds 3200/9090/3100 (Tempo/Prometheus/Loki query APIs, mission-control-only) + OTLP 4317/4318 (collector-only NetworkPolicy) | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
 | backstage (catalogue portal) | Deployment | 7007 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml` from the baked image; in-memory SQLite (no Postgres), rebuilt from the baked `/catalog` on boot (bd babelstone-zla1.6.6) |
@@ -184,6 +184,13 @@ policy admits those ports from the `otel-collector` pod only, so the Collector
 stays the sole path (ADR-IC-007 §P1 amendment 2026-07-09). Staging does this via
 `grafana-otlp-svc.patch.yaml`, and a positive staging CI assertion guards the
 republish-plus-policy pairing. OTLP is never fronted on an Ingress.
+
+Separately, the appliance's **read** query APIs — Tempo (3200), Prometheus (9090)
+and Loki (3100) — are published on the staging Service (`grafana-query-svc.patch.yaml`)
+for Mission Control's Telemetry/Metrics/Logs lenses, admitted by the same policy from
+the `mission-control` pod **only**. These are read query ports, not OTLP ingest, so the
+single-write-entry-point boundary is unaffected; `serve.py` refuses a mutating verb on
+`/tempo`, `/prom`, `/loki` and `/sr` (keeping Loki's `POST …/push` off the BFF).
 
 ## HA overlay — production-shaped topology (P.7)
 
