@@ -68,3 +68,125 @@ spec:
     name: mcp-mtls-ca
     kind: Issuer
     group: cert-manager.io
+---
+# ── CLIENT-AUTH certs for the in-cluster engine/orchestrator CALLERS (bd
+# babelstone-zla1.12.10 — the client-trust remainder the two SERVER certs above
+# and internal-mtls.patch.yaml's header call out; ADR-IC-006 §P5 Boundary 2 /
+# ADR-IC-016 plane (i)) ────────────────────────────────────────────────────────
+#
+# Plain English: the two Certificates above give the engine and orchestrator
+# SERVER certs so they can REQUIRE a client cert. But requiring one is only half
+# the trust: the four in-cluster callers that dial those hosts — the orchestrator
+# saga dispatcher, the notification engine-read worker, the mcp-server tool edge,
+# and Mission Control's proxy — must each PRESENT a client cert signed by the
+# SAME internal CA, or the RequireCertificate handshake rejects them the moment
+# internal-mtls.patch.yaml is enabled. These Certificates mint that client
+# material off the SAME mcp-mtls-ca chain (one CA underwrites everything — the
+# load-bearing §P5 constraint), each into its own Secret the caller's Deployment
+# mounts at /certs. They carry the `client auth` EKU only (they never serve), so
+# a caller cert can never be mistaken for a server cert on the same CA.
+#
+# Minting these certs does NOT enable anything on its own — they only matter once
+# a caller presents them. But note the caller half is NOT inert on staging: the
+# app manifests (this same bd issue) set the outbound URLs to https and mount
+# these Secrets UNCONDITIONALLY, so the moment those manifests are applied the
+# four callers dial https and present a client cert. If internal-mtls.patch.yaml
+# is still commented out at that instant, the engine/orchestrator are still plain
+# HTTP and those hops BREAK. So on staging the caller half and the server flip are
+# NOT independent steps — they, plus the deck-sync, land TOGETHER in one
+# maintenance window (that patch's ROLLOUT ORDER steps 3–4). The certs sit unused
+# only on the CA-env-UNSET hosts (demo/local/tests), which never set these envs.
+#
+#   CA Issuer (mcp-mtls-ca) ─┬─► orchestrator CLIENT cert  (dispatcher → engine + settlement)
+#                            ├─► notification  CLIENT cert  (engine-read hop)
+#                            ├─► mcp-server    CLIENT cert  (engine + orchestrator tool hops)
+#                            └─► mission-control CLIENT cert (serve.py proxy → engine + orchestrator)
+---
+# The orchestrator's CLIENT cert — presented by the saga command dispatcher when
+# it POSTs to https://engine:8080 (and, once the settlement target is TLS, the
+# ACL). CN is a caller identity, not a Service name (this cert never serves).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: orchestrator-client-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-orchestrator-client-tls
+  commonName: orchestrator-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h      # 90 days
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+# The notification worker's CLIENT cert — presented on the engine-read hop
+# (Engine:BaseUrl → https://engine:8080, ADR-PC-027 canonical read surface).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: notification-client-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-notification-client-tls
+  commonName: notification-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+# The mcp-server's CLIENT cert — presented by its httpx engine + orchestrator
+# tool clients (BABELSTONE_ENGINE_URL / BABELSTONE_ORCHESTRATOR_URL →
+# https://…:8080). SEPARATE from the mcp-server SERVER cert in mcp-mtls.yaml:
+# that one authenticates mcp-server TO Kong (server auth); this one authenticates
+# mcp-server AS a caller to the engine/orchestrator (client auth).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-server-client-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-mcp-server-client-tls
+  commonName: mcp-server-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+# Mission Control's CLIENT cert — presented by serve.py's reverse proxy when it
+# relays the browser's /v1/* → https://engine:8080 and /api/v1/* →
+# https://orchestrator:8080 (the demo BFF hop).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mission-control-client-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-mission-control-client-tls
+  commonName: mission-control-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io

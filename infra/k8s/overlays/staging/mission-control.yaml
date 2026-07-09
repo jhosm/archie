@@ -57,10 +57,31 @@ spec:
             # MC_PORT=9000 already come from the image ENV.)
             - name: MC_PORT
               value: "9000"
+            # https on both internal hops (internal mTLS — see the MC_INTERNAL_* keys below).
             - name: ENGINE_URL
-              value: http://engine:8080
+              value: https://engine:8080
             - name: ORCHESTRATOR_URL
-              value: http://orchestrator:8080
+              value: https://orchestrator:8080
+            # ── Caller-side internal mTLS on the engine + orchestrator proxy hops (bd
+            # babelstone-zla1.12.10; ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)) ────────────
+            # serve.py's /v1/* and /api/v1/* arms present THIS client cert (signed by the shared
+            # internal CA, mcp-mtls-ca) and pin the engine/orchestrator server cert to that same CA on
+            # the two internal hops only (_build_internal_mtls_context in serve.py); every other proxy
+            # arm keeps stock TLS. Client material is the babelstone-mission-control-client-tls Secret
+            # cert-manager issues (overlays/staging/bootstrap/internal-mtls.yaml), mounted at /certs
+            # below. On STAGING these env keys are set unconditionally, so once this manifest is applied
+            # serve.py's two internal proxy arms dial https and present a client cert — if the
+            # engine/orchestrator servers are still plain HTTP, those two hops break. So the callers, the
+            # internal-mtls.patch.yaml server flip, and the deck-sync must land TOGETHER in one maintenance
+            # window (that patch's ROLLOUT ORDER steps 3–4). (These keys are only truly inert on the
+            # CA-env-UNSET hosts — the demo, the local stack, tests — where serve.py leaves the two arms
+            # at their plain-HTTP default.)
+            - name: MC_INTERNAL_CA_CERTS
+              value: /certs/ca.crt
+            - name: MC_INTERNAL_CLIENT_CERT
+              value: /certs/tls.crt
+            - name: MC_INTERNAL_CLIENT_KEY
+              value: /certs/tls.key
             # Grafana Tempo's query API (Telemetry tab). Needs the 3200 port on the grafana-lgtm
             # Service (added by grafana-tempo-svc.patch.yaml); degrades to an illustrative
             # waterfall if Tempo isn't reachable.
@@ -170,6 +191,13 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 6
+          volumeMounts:
+            # Mission Control's CLIENT cert for the engine/orchestrator proxy hops (tls.crt/tls.key) +
+            # the internal CA (ca.crt) it pins their server certs to (babelstone-mission-control-client-tls,
+            # bd babelstone-zla1.12.10).
+            - name: mission-control-client-tls
+              mountPath: /certs
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -177,3 +205,9 @@ spec:
             limits:
               cpu: 250m
               memory: 128Mi
+      volumes:
+        # Mission Control's internal-mTLS CLIENT cert (bd babelstone-zla1.12.10). Standard cert-manager
+        # keys (tls.crt/tls.key/ca.crt) the MC_INTERNAL_* env point at directly.
+        - name: mission-control-client-tls
+          secret:
+            secretName: babelstone-mission-control-client-tls

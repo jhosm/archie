@@ -132,6 +132,7 @@ Options (env vars):
 """
 import os
 import sys
+import ssl
 import http.server
 import socketserver
 import urllib.request
@@ -169,6 +170,49 @@ REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/
 PROM_URL = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# ── Caller-side internal mTLS on the engine + orchestrator proxy hops ─────────────────────────
+# (bd babelstone-zla1.12.10; ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)). This BFF proxies the
+# browser's /v1/* → the engine and /api/v1/* → the orchestrator. Once those two hosts are flipped to
+# HTTPS-with-a-REQUIRED-client-cert (the gated overlays/staging/internal-mtls.patch.yaml), the proxy
+# must present a client cert signed by the shared internal CA and pin the server cert to that same CA
+# on THOSE two hops — or the handshake is rejected. It is OFF unless MC_INTERNAL_CA_CERTS is set (the
+# ENGINE_URL/ORCHESTRATOR_URL env already carry https://…:8080 in staging), so the laptop dev default
+# (plain http upstreams) is byte-for-byte unchanged and only the two internal hops use the context —
+# every OTHER arm (Tempo/Loki/Prometheus/pandaproxy/registry) keeps urllib's default TLS handling. On
+# staging the CA env is set UNCONDITIONALLY, so these two arms are https + client-cert the moment the
+# manifest is applied — which is why the callers, the server patch, and the deck-sync land TOGETHER in
+# one maintenance window (internal-mtls.patch.yaml ROLLOUT ORDER steps 3–4); applying the caller half
+# while the engine/orchestrator are still plain HTTP would break those hops.
+#   MC_INTERNAL_CA_CERTS   — the internal CA PEM the engine/orchestrator server cert must chain to.
+#   MC_INTERNAL_CLIENT_CERT / MC_INTERNAL_CLIENT_KEY — the proxy's own PEM client cert + key
+#                            (the cert-manager Secret's tls.crt / tls.key), presented on the handshake.
+MC_INTERNAL_CA_CERTS = os.environ.get("MC_INTERNAL_CA_CERTS", "").strip()
+MC_INTERNAL_CLIENT_CERT = os.environ.get("MC_INTERNAL_CLIENT_CERT", "").strip()
+MC_INTERNAL_CLIENT_KEY = os.environ.get("MC_INTERNAL_CLIENT_KEY", "").strip()
+
+
+def _build_internal_mtls_context():
+    """The SSL context for the engine + orchestrator proxy hops, or None when not configured.
+
+    Returns None unless MC_INTERNAL_CA_CERTS is set (the plain-http laptop default). When set, the
+    context verifies the peer's SERVER cert against that CA ONLY (the system trust store is not
+    consulted) and, when the client cert+key pair is set, presents the proxy's own client cert for the
+    peer's RequireCertificate check (mutual TLS). Fail-loud on an unreadable file — a mis-mounted Secret
+    must not silently degrade to no-verify."""
+    if not MC_INTERNAL_CA_CERTS:
+        return None
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=MC_INTERNAL_CA_CERTS)
+    if MC_INTERNAL_CLIENT_CERT and MC_INTERNAL_CLIENT_KEY:
+        context.load_cert_chain(certfile=MC_INTERNAL_CLIENT_CERT, keyfile=MC_INTERNAL_CLIENT_KEY)
+    return context
+
+
+# Built once at import (the cert material does not change over the process lifetime). The two internal
+# hops pass it to urlopen; every other hop passes None (urllib's default handling).
+_INTERNAL_MTLS_CONTEXT = _build_internal_mtls_context()
+# The exact base URLs that ride the internal-mTLS context — the two in-cluster hops this BFF secures.
+_INTERNAL_MTLS_BASE_URLS = frozenset({ENGINE_URL, ORCHESTRATOR_URL})
 
 # Sentinel returned by _route() when the /api/v1/* arm is asked to attest a caller id in oidc
 # mode but no authenticated session/sub is resolvable. It is DISTINCT from None (static file) and
@@ -1425,8 +1469,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         is_stream = self.path.endswith("/stream")
         timeout = None if is_stream else 30
 
+        # Caller-side internal mTLS (bd babelstone-zla1.12.10): the engine + orchestrator hops present
+        # the proxy's client cert + pin the internal CA when configured; every other hop passes None
+        # (urllib's default TLS). A plain-http base_url with a context is harmless (urllib ignores an
+        # https-only context on an http URL), but scoping it to the two internal base URLs keeps the
+        # intent explicit and leaves the observability/registry arms on stock handling.
+        ssl_context = (
+            _INTERNAL_MTLS_CONTEXT if base_url in _INTERNAL_MTLS_BASE_URLS else None
+        )
+
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout)
+            resp = urllib.request.urlopen(req, timeout=timeout, context=ssl_context)
         except urllib.error.HTTPError as e:
             # the backends' 4xx/5xx are meaningful (409, 422, 400, 403) — pass them through verbatim
             self._write_relay(e.code, e.headers, e.read())

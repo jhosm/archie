@@ -114,15 +114,43 @@ spec:
             # Event bus — INTERNAL Redpanda listener (consume loops + the domain topic).
             - name: Kafka__BootstrapServers
               value: redpanda:9092
-            # The dispatcher's HTTP legs: ActivateDeposit → engine, settlement → the ACL stub.
+            # The dispatcher's HTTP legs: ActivateDeposit → engine (internal mTLS, see below),
+            # settlement → the ACL stub (still plain HTTP — the ACL stub is not part of the gated
+            # internal-mtls.patch.yaml, which flips only the engine + orchestrator SERVER hosts).
             - name: Engine__BaseUrl
-              value: http://engine:8080
+              value: https://engine:8080
             - name: Settlement__BaseUrl
               value: http://core-acl-stub:8080
+            # ── Caller-side internal mTLS on the engine hop (bd babelstone-zla1.12.10; ADR-IC-006 §P5
+            # Boundary 2 / ADR-IC-016 plane (i)) ──────────────────────────────────────────────────
+            # The dispatcher POSTs to https://engine:8080 presenting THIS client cert (signed by the
+            # shared internal CA, mcp-mtls-ca) and pinning the engine's server cert to that same CA
+            # (InternalMtls.cs). The client material is the babelstone-orchestrator-client-tls Secret
+            # cert-manager issues (overlays/staging/bootstrap/internal-mtls.yaml), mounted at /certs
+            # below; ca.crt is the same CA the engine's server cert chains to. On STAGING these env keys
+            # are set unconditionally, so the moment this manifest is applied the dispatcher dials https
+            # and presents a client cert — if the engine server is still plain HTTP, that hop breaks. So
+            # the callers, the internal-mtls.patch.yaml server flip, and the deck-sync must land TOGETHER
+            # in one maintenance window (that patch's ROLLOUT ORDER steps 3–4). (These keys are only truly
+            # inert on the CA-env-UNSET hosts — the demo, the local stack, tests — where InternalMtls.cs
+            # leaves the HttpClient handler at its plain-HTTP default.)
+            - name: InternalMtls__CaCertPath
+              value: /certs/ca.crt
+            - name: InternalMtls__ClientCertPath
+              value: /certs/tls.crt
+            - name: InternalMtls__ClientKeyPath
+              value: /certs/tls.key
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://otel-collector:4317
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: grpc
+          volumeMounts:
+            # The orchestrator's CLIENT cert for the engine hop (tls.crt/tls.key) + the internal CA
+            # (ca.crt) it pins the engine's server cert to. Issued into babelstone-orchestrator-client-tls
+            # by cert-manager (overlays/staging/bootstrap/internal-mtls.yaml).
+            - name: orchestrator-client-tls
+              mountPath: /certs
+              readOnly: true
           # No /health or /ready route; probe the TCP socket (a bound 8080 = Kestrel is up).
           readinessProbe:
             tcpSocket:
@@ -145,3 +173,10 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
+      volumes:
+        # The orchestrator's internal-mTLS CLIENT cert (bd babelstone-zla1.12.10). The cert-manager
+        # Secret carries the standard keys tls.crt/tls.key/ca.crt, which the InternalMtls__*Path env
+        # above point the caller at directly (no key remap needed).
+        - name: orchestrator-client-tls
+          secret:
+            secretName: babelstone-orchestrator-client-tls

@@ -71,6 +71,28 @@ var engineBaseUrl =
 // module context — keeping deposit-shaped types out of both this host and the family-agnostic core
 // (ADR-IC-019 §D1).
 
+// Caller-side internal mTLS on the engine-read hop (bd babelstone-zla1.12.10; ADR-IC-006 §P5 Boundary 2 /
+// ADR-IC-016 plane (i)). The engine-read client is family-owned (the term-deposit module registers
+// AddHttpClient<DepositReadClient>), so the host cannot name it — but the TRUST decision on that hop is a
+// host/deployment concern, so it is wired here at the §A2 composition root via ConfigureHttpClientDefaults,
+// which applies the mTLS primary handler to EVERY factory client the family modules register. Once the
+// engine's Kestrel host is flipped to HTTPS-with-a-REQUIRED-client-cert (the gated
+// overlays/staging/internal-mtls.patch.yaml), this hop PRESENTS the notification worker's client cert and
+// PINS the engine's server cert to the shared internal CA (not the container's system store — the patch
+// header's "known remainder", fix (b)). OFF unless InternalMtls:CaCertPath is configured (staging mounts
+// the client cert + CA), so the demo/local/test hosts keep their plain-HTTP default byte-for-byte. On
+// staging the CA env is set UNCONDITIONALLY, so this read hop is https + client-cert the moment the
+// manifest is applied — which is why the callers, the server patch, and the deck-sync land TOGETHER in one
+// maintenance window (internal-mtls.patch.yaml ROLLOUT ORDER steps 3–4); applying the caller half while the
+// engine is still plain HTTP would break it. This must register BEFORE the module loop below, so the
+// default handler is in place when the family module's typed client is added. Wiring only — the host holds
+// no engine kernel reference (ADR-PC-019 §P2).
+if (InternalMtls.IsConfigured(builder.Configuration))
+{
+    builder.Services.ConfigureHttpClientDefaults(http =>
+        http.ConfigurePrimaryHttpMessageHandler(() => InternalMtls.BuildHandler(builder.Configuration)));
+}
+
 // The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so the
 // downstream scheduler owns the clock). TimeProvider.System in production; a test substitutes a
 // FakeTimeProvider so the loop can be driven with no real wall-clock wait.
