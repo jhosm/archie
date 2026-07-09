@@ -215,10 +215,11 @@ spec:
 ---
 # 8 · Redpanda — Kafka (9092) + Schema Registry (8081) from the bus clients
 # only. The orchestrator is included on 8081 defensively (its Avro consume
-# loops resolve schemas even though no env names the SR today). The host
-# listeners (19092/18081), the admin API (9644), and internal RPC (33145) get
-# NO allow: nothing in-cluster uses them (single broker; console reads
-# 9092/8081 only).
+# loops resolve schemas even though no env names the SR today). Mission Control's
+# Topic·Avro lens reads the HTTP Proxy (pandaproxy 8082) + Schema Registry (8081)
+# via serve.py — a SEPARATE least-privilege rule below, so it never gets 9092. The
+# host listeners (19092/18081), the admin API (9644), and internal RPC (33145) get
+# NO allow: nothing in-cluster uses them (single broker; console reads 9092/8081 only).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -242,6 +243,17 @@ spec:
       ports:
         - protocol: TCP
           port: 9092
+        - protocol: TCP
+          port: 8081
+    # Mission Control's Topic·Avro lens: pandaproxy (Kafka REST, 8082) + Schema Registry
+    # (8081) ONLY — never 9092. serve.py proxies /pandaproxy/* and /sr/* here (bd babelstone-zla1.17).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mission-control
+      ports:
+        - protocol: TCP
+          port: 8082
         - protocol: TCP
           port: 8081
 ---

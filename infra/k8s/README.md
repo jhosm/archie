@@ -26,7 +26,7 @@ application/engine service images (they connect to this stack).
 | Service | Kind | Port(s) (in-cluster) | ADR |
 |---|---|---|---|
 | postgres | StatefulSet + PVC | 5432 | [ADR-PC-001](../../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md) |
-| redpanda | StatefulSet + PVC | 9092, 19092, 8081, 18081, 9644 | [ADR-IC-001](../../docs/product-management/integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) |
+| redpanda | StatefulSet + PVC | 9092, 19092, 8081, 18081, 8082, 18082, 9644 | [ADR-IC-001](../../docs/product-management/integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) |
 | redpanda-console | Deployment | 8080 | dev convenience |
 | kong | Deployment | 8000, 8001 | [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |
 | openbao | Deployment | 8200 | [ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) |

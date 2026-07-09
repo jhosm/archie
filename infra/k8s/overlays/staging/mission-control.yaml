@@ -66,6 +66,15 @@ spec:
             # waterfall if Tempo isn't reachable.
             - name: TEMPO_URL
               value: http://grafana-lgtm:3200
+            # Topic·Avro lens (bd zla1.17): the REAL records off the Redpanda topic. serve.py's
+            # /pandaproxy/* arm drives the Kafka-REST consumer dance against the HTTP Proxy, and
+            # /sr/* resolves the Avro schema badge. Both are in-cluster listeners on the redpanda
+            # Service (pandaproxy 8082 + schema-reg 8081); the mission-control→redpanda allow is
+            # a least-privilege rule in network-policies.yaml (8082/8081 only, never 9092).
+            - name: PANDAPROXY_URL
+              value: http://redpanda:8082
+            - name: SCHEMA_REGISTRY_URL
+              value: http://redpanda:8081
             # The agent host is DEFERRED (zla1.5.6); until it exists /agent/* returns 502 and
             # Operator=CLAUDE degrades to illustrative narration — every other mode still works.
             - name: AGENT_URL
