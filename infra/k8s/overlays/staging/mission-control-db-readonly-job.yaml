@@ -1,0 +1,95 @@
+# Provision the dedicated READ-ONLY Postgres role Mission Control's Outbox·Inbox lens connects as
+# (bd babelstone-zla1.17.3). The /pg window is read-only by construction in serve.py (session
+# read-only + fixed SELECT-only queries + a table allowlist + a PII-column firewall), but for a
+# PUBLIC-facing BFF the boundary must ALSO be enforced by the database itself — so MC connects as
+# `babelstone_readonly`, a role with SELECT-only grants and NO write/DDL ability at all.
+#
+# Idempotent (create-role-if-absent; grants + password re-applied each run) and carries
+# ttlSecondsAfterFinished so the next deploy recreates it cleanly — the same pattern as
+# logto-db-init. It runs as the superuser (babelstone) to CREATE ROLE + GRANT; the role's own
+# password comes from the operator-provisioned MC_READONLY_DB_PASSWORD secret key (never in git).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mission-control-db-readonly
+  labels:
+    app.kubernetes.io/name: mission-control-db-readonly
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mission-control-db-readonly
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70          # 'postgres' user in postgres:18-alpine
+        runAsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision-readonly-role
+          image: postgres:18-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "waiting for postgres at $PGHOST:$PGPORT …"
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do sleep 2; done
+              # 1 · create-or-rotate the read-only role (roles are cluster-global). The DO block is
+              #     idempotent; ALTER ROLE sets/rotates the password from the secret each run.
+              psql -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+                   -v pw="$MC_READONLY_DB_PASSWORD" <<'SQL'
+              DO $$ BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'babelstone_readonly') THEN
+                  CREATE ROLE babelstone_readonly LOGIN;
+                END IF;
+              END $$;
+              ALTER ROLE babelstone_readonly LOGIN PASSWORD :'pw'
+                NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+              SQL
+              # 2 · SELECT-only grants in each application DB. No INSERT/UPDATE/DELETE and no DDL are
+              #     ever granted, so the role physically cannot write. ALTER DEFAULT PRIVILEGES covers
+              #     tables a later migration adds. (serve.py further restricts WHICH tables/columns.)
+              for db in babelstone babelstone_orchestrator; do
+                echo "granting read-only on $db …"
+                psql -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$db" <<SQL
+              GRANT CONNECT ON DATABASE $db TO babelstone_readonly;
+              GRANT USAGE ON SCHEMA public TO babelstone_readonly;
+              GRANT SELECT ON ALL TABLES IN SCHEMA public TO babelstone_readonly;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO babelstone_readonly;
+              SQL
+              done
+              echo "babelstone_readonly provisioned (SELECT-only on babelstone + babelstone_orchestrator)"
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            - name: MC_READONLY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: MC_READONLY_DB_PASSWORD

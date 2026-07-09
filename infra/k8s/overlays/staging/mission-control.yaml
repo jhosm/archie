@@ -75,6 +75,36 @@ spec:
               value: http://redpanda:8082
             - name: SCHEMA_REGISTRY_URL
               value: http://redpanda:8081
+            # Metrics + Logs lenses (bd zla1.17.2): serve.py's /prom and /loki arms read the
+            # appliance's Prometheus + Loki query APIs. Needs 9090/3100 on the grafana-lgtm Service
+            # (grafana-query-svc.patch.yaml) + the mission-control→grafana-lgtm allow (9090/3100).
+            # Read-only query APIs; the lenses degrade gracefully if a backend isn't reachable.
+            - name: PROM_URL
+              value: http://grafana-lgtm:9090
+            - name: LOKI_URL
+              value: http://grafana-lgtm:3100
+            # Outbox·Inbox lens (bd zla1.17.3): the REAL engine + orchestrator outbox/inbox/dedup
+            # tails through serve.py's read-only /pg window. It connects as the dedicated
+            # `babelstone_readonly` role (SELECT-only; provisioned by the mission-control-db-readonly
+            # Job), NOT the app role. MC_PG_ENABLE turns the routes on in the pod; MC_PG_ALLOW_HOSTS
+            # is the explicit opt-in that lets the DSN reach the in-cluster `postgres` host (the
+            # laptop default stays 127.0.0.1-only). Reads are read-only + PII-column-firewalled; the
+            # mission-control→postgres:5432 allow is a least-privilege rule in network-policies.yaml.
+            - name: MC_PG_ENABLE
+              value: "1"
+            - name: MC_PG_ALLOW_HOSTS
+              value: postgres
+            # Defined BEFORE the DSNs so k8s resolves the $(MC_READONLY_DB_PASSWORD) interpolation
+            # (same pattern as the engine's POSTGRES_PASSWORD → ConnectionStrings).
+            - name: MC_READONLY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: MC_READONLY_DB_PASSWORD
+            - name: MC_ENGINE_DSN
+              value: postgresql://babelstone_readonly:$(MC_READONLY_DB_PASSWORD)@postgres:5432/babelstone
+            - name: MC_ORCH_DSN
+              value: postgresql://babelstone_readonly:$(MC_READONLY_DB_PASSWORD)@postgres:5432/babelstone_orchestrator
             # The agent host is DEFERRED (zla1.5.6); until it exists /agent/* returns 502 and
             # Operator=CLAUDE degrades to illustrative narration — every other mode still works.
             - name: AGENT_URL
