@@ -39,14 +39,20 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
    - **cert-manager** (Helm) — see `bootstrap/README.md`.
    - Rancher **system-upgrade-controller** (creates the `system-upgrade` namespace + SA the
      k3s upgrade Plan uses).
+   - **Secrets Store CSI driver** (vendored, pinned v1.6.0 — `kubectl apply` of the openbao-csi
+     component's `upstream/` files) **+ the HashiCorp vault-csi-provider** (Helm, csi-only) — the
+     out-of-band half of the openbao-csi component that sources app-tier secrets from OpenBao
+     (bd babelstone-zla1.12.21). Its CRDs/CSIDriver/DaemonSet land cluster-scoped in kube-system,
+     NEVER in the strict overlay render; the overlay registers only the `SecretProviderClass`.
+     See `bootstrap/README.md` step 1c and `../k8s/components/openbao-csi/README.md`.
    (The **external CSI snapshot controller** is no longer installed — the Hetzner CSI is dropped;
    bd babelstone-zla1.12.20 — so there is no `VolumeSnapshotClass` to back.)
 4. `kubectl apply` the cluster-scoped bootstrap (the issuers and the k3s upgrade `Plan`). A blanket
-   `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` now **fails** on
-   `volume-snapshot-class.yaml` (its CRD is gone with the CSI) — apply the files **individually,
-   skipping that one**, or just run `staging-bootstrap.sh` (step 3 above), which already excludes it.
-   The `helm/` subfolder is skipped by the non-recursive glob — those are Helm values, applied in
-   step 3, not `kubectl apply`.
+   `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` is now safe — the dead
+   `volume-snapshot-class.yaml` (its CRD was gone with the Hetzner CSI) was removed in bd
+   babelstone-zla1.12.24, so nothing in that glob references a missing CRD — or just run
+   `staging-bootstrap.sh` (step 3 above), which applies the same set. The `helm/` subfolder is
+   skipped by the non-recursive glob — those are Helm values, applied in step 3, not `kubectl apply`.
    Then **open inbound 80/443 on the Hetzner firewall and set Cloudflare TLS** (bd babelstone-zla1.14):
    `infra/hetzner-k3s/firewall-web.sh --apply` (Cloudflare-scoped; dry-runs without `--apply`),
    then set the Cloudflare SSL/TLS mode to **Full (strict)**. `cluster.yaml` can't express these

@@ -79,6 +79,19 @@ resources:
   # command surface, Postgres, OpenBao, Redpanda, or the Kong Admin API.
   # Enforced by k3s's embedded NetworkPolicy controller — nothing to install.
   - network-policies.yaml
+  # Source app-tier secrets from OpenBao via the Secrets Store CSI driver
+  # (bd babelstone-zla1.12.21; ADR-PC-004 §A1 OpenBao PII boundary). This
+  # registers ONLY the SecretProviderClass custom resource — a direct file
+  # reference into the openbao-csi component, NOT the whole `components:` entry —
+  # so the CRD-bearing, cluster-scoped driver install under that component's
+  # upstream/ NEVER enters `kustomize build overlays/staging` (it is installed
+  # out-of-band at bootstrap, like cert-manager — see
+  # ../../components/openbao-csi/README.md and bootstrap/README.md). The
+  # SecretProviderClass Kind has no vendored kubeconform schema, so the
+  # staging-overlay leg of the strict gate carries -ignore-missing-schemas (it
+  # keeps -strict for every kind that HAS a schema, and skips only this CR);
+  # base/ha render no SecretProviderClass, so their gates stay fully strict.
+  - ../../components/openbao-csi/secret-provider-class.yaml
 
 # Third-party image digest pins for the images the apps/ layer and THIS overlay add on top of
 # base (bd babelstone-2t16.31.1; ADR-PC-007 §A3). A base `images:` transformer reaches only
@@ -195,13 +208,17 @@ patches:
   # loopback); the cd.yml CI leg needs a port-forward step + a cd-deployer
   # RBAC widening first — the named follow-up in the patch header.
   - path: kong-admin-localhost.patch.yaml
-  # GATED OPT-IN — internal mTLS on the engine + orchestrator hops (bd
+  # ENABLED — internal mTLS on the engine + orchestrator hops (bd
   # babelstone-zla1.12.8 sub-gap (c); ADR-IC-006 §P5 Boundary 2 / ADR-IC-016
-  # plane (i)). Deliberately shipped commented out: enabling it requires the
-  # bootstrap certs (bootstrap/internal-mtls.yaml), the client-cert trust
-  # remainder, and the in-cluster callers switching to https + client certs —
-  # the full rollout order is documented at the top of the patch file.
-  # - path: internal-mtls.patch.yaml
+  # plane (i)). Turned on in bd babelstone-zla1.12.21 now that the prerequisites
+  # are all on main: the server certs (bootstrap/internal-mtls.yaml, PR #530),
+  # the in-cluster callers switching to https + client certs (PR #529), and the
+  # client-cert trust remainder are landed. This is a strategic-merge patch on the
+  # engine/orchestrator Deployments (a known kind), so the strict kubeconform gate
+  # stays green. The full live rollout order (apply the bootstrap certs, re-run
+  # deck-sync to flip tls_verify, handshake-test) is the human residual — see the
+  # PR's "Live apply + verify" section and the top of the patch file.
+  - path: internal-mtls.patch.yaml
   # Mount the Grafana RBAC + Logto-OIDC overlay into grafana-lgtm (Boundary 6, ADR-IC-021 step 3 /
   # ADR-IC-007 §P6, bd babelstone-zla1.10.1). Staging is the public box where operators log in, so
   # it turns ON operator SSO via Logto's generic_oauth + the §P6 RBAC roles/Tempo lock + anonymous

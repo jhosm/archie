@@ -172,14 +172,24 @@ jobs:
         # --load-restrictor + pinned kubeconform + VENDORED schema-location as ci.yml's infra job,
         # so CD agrees with CI on "a valid manifest set" — schemas resolve offline from
         # infra/k8s/schemas/ (bd babelstone-6qt9), never the rate-limited raw.githubusercontent.com.
+        #
+        # The staging leg carries -ignore-missing-schemas (bd babelstone-zla1.12.21) — it registers
+        # the openbao-csi SecretProviderClass custom resource, whose CRD-provided schema is not
+        # vendored (the CRD is installed out-of-band at bootstrap, never in the render — see
+        # infra/k8s/components/openbao-csi/README.md). The flag SKIPS only the schema-less kinds (the
+        # SecretProviderClass); every kind that HAS a vendored schema is still validated under
+        # -strict. ha renders no SecretProviderClass, so its leg stays FULLY strict (no flag). Keep in
+        # lockstep with ci.yml's infra job.
         env:
           OVERLAY: ${{ github.event.inputs.overlay || 'staging' }}
           SCHEMA_LOC: 'infra/k8s/schemas/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json'
         run: |
           set -euo pipefail
           echo "== rendering infra/k8s/overlays/$OVERLAY =="
+          IGNORE_MISSING=""
+          case "$OVERLAY" in staging) IGNORE_MISSING="-ignore-missing-schemas" ;; esac
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
-            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            | mise exec -- kubeconform -strict $IGNORE_MISSING -summary -kubernetes-version 1.31.0 \
                 -schema-location "$SCHEMA_LOC"
       - name: Assert the digest-pin contract (hermetic — no registry, mirrors verify-images)
         # ADR-PC-007 §A2 (bd babelstone-2t16.30): the promote lane pins every first-party

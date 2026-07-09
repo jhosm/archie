@@ -365,9 +365,13 @@ invariants are preserved:
   drops its 8001 Service port (`kong-admin-localhost.patch.yaml` — the base table
   above still lists 8001 for the dev rendering); operator `deck sync` reaches it via
   `kubectl port-forward` (which targets the pod loopback). The internal-mTLS
-  extension to the engine/orchestrator hops is authored but **gated off**
-  (`internal-mtls.patch.yaml` + `bootstrap/internal-mtls.yaml` — rollout order in
-  the patch header).
+  extension to the engine/orchestrator hops is now **enabled** in the render
+  (`internal-mtls.patch.yaml` is applied — bd babelstone-zla1.12.21, now that the
+  server certs `bootstrap/internal-mtls.yaml` and the client-cert callers are on
+  main); the render flips both Kestrel hosts to HTTPS with `RequireCertificate`.
+  The live rollout (apply the bootstrap certs, re-run `deck-sync` to flip
+  `tls_verify`, handshake-test) is the human residual — rollout order in the patch
+  header.
 
 **TLS issuance is a cluster CRD, kept out of the kustomize build.** cert-manager's
 `ClusterIssuer` (and `Certificate`) are CRDs, and the CI gate runs
@@ -396,17 +400,30 @@ carries a memory limit, so the sizing stays an invariant rather than a one-off
 (the `base` and `ha` renderings are intentionally unsized — `base` is a laptop
 stack, ha is multi-node and would size differently).
 
-Validate (the same CI gate as `base`/`ha` — CI loops `base` plus both overlays):
+Validate (the same CI gate as `base`/`ha` — CI loops `base` plus both overlays).
+The staging leg adds **`-ignore-missing-schemas`** because it registers the
+`openbao-csi` `SecretProviderClass` custom resource, whose CRD-provided schema is
+not vendored (the CRD is installed out-of-band at bootstrap, never in the render —
+see [`./components/openbao-csi/README.md`](./components/openbao-csi/README.md)).
+The flag skips only that schema-less kind; every kind that HAS a vendored schema
+is still validated under `-strict`. `base`/`ha` render no `SecretProviderClass`,
+so their legs stay fully strict (no flag):
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging \
-  | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+  | mise exec -- kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.31.0
 ```
 
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
-installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
-and the end-to-end cert verification all need the Hetzner account + DNS (Phases
-0–2). The Phase-1 provisioner config now lives in [`../hetzner-k3s/`](../hetzner-k3s/)
+installing the Secrets Store CSI driver + the vault-csi-provider + cert-manager +
+the issuer, initialising/unsealing OpenBao and populating its KV paths, pointing
+DNS at the node IP, and the end-to-end cert verification all need the Hetzner
+account + DNS (Phases 0–2). The overlay itself now registers the `openbao-csi`
+`SecretProviderClass` (the app-tier secret source, bd babelstone-zla1.12.21) — but
+only that custom resource; the CRD-bearing CSI **driver** install is bootstrap-only
+(out-of-band, like cert-manager — see
+[`bootstrap/README.md`](./overlays/staging/bootstrap/README.md) and
+[`./components/openbao-csi/README.md`](./components/openbao-csi/README.md)). The Phase-1 provisioner config now lives in [`../hetzner-k3s/`](../hetzner-k3s/)
 (`hetzner-k3s create`); the apply itself stays account-gated. The engine, orchestrator, notification, Mission Control, and mcp-server
 manifests have landed (zla1.5.1/.2/.3/.5 — mcp-server behind Kong over mutual TLS,
 its internal-CA chain in `overlays/staging/bootstrap/mcp-mtls.yaml`); the only
