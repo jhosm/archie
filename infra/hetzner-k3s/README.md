@@ -20,9 +20,11 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
 - [`cluster.yaml`](./cluster.yaml) — the [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s)
   cluster config (v2.6.0+ format): 1× CPX42 x86, Hetzner Helsinki (`hel1`), single-node k3s,
   embedded etcd, with the Hetzner CCM and CSI driver **disabled** and the k3s built-in
-  `local-path` storage class enabled (so no Hetzner API token is stored in the cluster — see
-  "Posture notes"). The **provision-time** Hetzner API token is **not** in this file — it is
-  supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below). The SSH
+  `local-path` storage class enabled (removing the token's in-cluster consumers; `provision.sh`
+  then scrubs the token Secret hetzner-k3s plants on every create, so no Hetzner API token is
+  left in the cluster — see "Posture notes"). The **provision-time** Hetzner API token is
+  **not** in this file — it is supplied at runtime via the `HCLOUD_TOKEN` environment variable
+  (see below). The SSH
   allow-list is likewise **not** a real value in this file: it is the `REPLACE_ME/32` sentinel
   that `provision.sh` substitutes (deliberately invalid, so a direct `create` against the
   committed file cannot succeed).
@@ -73,7 +75,7 @@ hetzner-k3s releases | tail        # list supported releases; set cluster.yaml's
 export KUBECONFIG="$PWD/kubeconfig"
 kubectl get nodes              # the one node should reach Ready
 kubectl get pods -A           # NO Hetzner CCM / CSI pods (both addons disabled — Posture notes)
-kubectl get secret -n kube-system 2>/dev/null | grep -i hcloud   # expect NO hits: no in-cluster Hetzner token
+kubectl get secret -n kube-system 2>/dev/null | grep -i hcloud   # expect NO hits: provision.sh scrubbed the token Secret post-create
 ```
 
 The generated `./kubeconfig` is a **cluster-admin credential** — it is gitignored and must never
@@ -121,9 +123,10 @@ The full operator runbook — bring-up, redeploy, restore, upgrade, backups — 
   `k3s secrets-encrypt status`, and rotate the key periodically with
   `k3s secrets-encrypt rotate-keys` (k3s re-encrypts existing Secrets). Without this, every
   Secret (kubeconfigs, the OpenBao token, backup keys) is base64-plaintext to anyone with
-  disk or snapshot access. (There is no longer an in-cluster Hetzner API token to leak — the
-  CCM/CSI addons that would plant one are off, see "Posture notes" — but this hardening still
-  matters for every OTHER Secret.)
+  disk or snapshot access. (hetzner-k3s plants an all-powerful Hetzner API token as the
+  kube-system `hcloud` Secret on every create regardless of the addon toggles; `provision.sh`
+  scrubs it post-create, see "Posture notes" — but this hardening still matters for every
+  OTHER Secret, and for the brief window before the scrub.)
 
 To pick these up on the EXISTING staging box either re-provision (restore from backups per
 `../runbooks/staging-ops.md`), or apply the equivalent by hand on the node (write the two
@@ -136,17 +139,23 @@ the source of truth either way.
   and CSI driver are both disabled in [`cluster.yaml`](./cluster.yaml)'s `addons` section
   (`cloud_controller_manager.enabled: false`, `csi_driver.enabled: false`; confirmed supported
   as addon toggles in the pinned hetzner-k3s v2.6.0). Those were the only in-cluster consumers
-  of a Hetzner Cloud API credential, so hetzner-k3s no longer plants the all-powerful
-  `HCLOUD_TOKEN` as a kube-system Secret at all. We lose nothing by dropping them: ingress rides
-  a Cloudflare Tunnel (bd babelstone-zla1.12.14) with **no** `type: LoadBalancer` Service, so the
-  CCM's cloud-LB function is unused; and the CSI's only benefit — durable/snapshot-able
+  of a Hetzner Cloud API credential. Disabling them is **necessary but not sufficient**:
+  hetzner-k3s plants the all-powerful `HCLOUD_TOKEN` as the kube-system `hcloud` Secret on
+  **every** create regardless of the addon toggles (verified live on v2.6.0 — the Secret is
+  recreated even with both addons off), and there is no flag to suppress it. With the addons
+  off nothing consumes it, so it sits orphaned — and [`provision.sh`](./provision.sh)'s
+  **post-create scrub** deletes it (failing closed if it cannot). The no-in-cluster-token end
+  state therefore comes from the **combination**: addons off (no consumers, no storage
+  dependency) **plus** the post-create scrub. We lose nothing by dropping the addons: ingress
+  rides a Cloudflare Tunnel (bd babelstone-zla1.12.14) with **no** `type: LoadBalancer` Service,
+  so the CCM's cloud-LB function is unused; and the CSI's only benefit — durable/snapshot-able
   `hcloud-volumes` — is the DR feature staging has scoped out. Stateful storage now uses the
   k3s built-in **local-path** provisioner (node-local; `addons.local_path_storage_class.enabled:
   true`), which needs no cloud API call. **This SUPERSEDES the spend-cap containment posture of
   bd babelstone-zla1.12.2** — eliminating the token beats bounding what a leaked one can spend,
   taking its cost-abuse blast radius to zero. The **provision-time** `HCLOUD_TOKEN` (env var,
-  never committed) is still required for hetzner-k3s to *create* the cluster, but with these
-  addons off it is no longer persisted in-cluster. (In the spirit of the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+  never committed) is still required for hetzner-k3s to *create* the cluster; the orphaned
+  in-cluster copy it plants is removed by `provision.sh`'s scrub. (In the spirit of the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
   minimise-surface posture — removing a standing in-cluster cloud credential shrinks the attack
   surface, though that ADR's minimise-surface language is about the public network edge, not
   in-cluster cloud credentials; and

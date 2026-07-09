@@ -102,10 +102,16 @@ masters_pool:
 
 addons:
   # ── No Hetzner API token lives in this cluster — by design (bd babelstone-zla1.12.20) ──
-  # Both Hetzner cloud integrations that need an in-cluster API credential are turned OFF,
-  # so hetzner-k3s never plants the all-powerful HCLOUD token as a kube-system Secret. That
-  # takes the token's cost-abuse blast radius to zero and SUPERSEDES the spend-cap containment
-  # of bd babelstone-zla1.12.2 — removing the token beats capping what a leaked one can spend.
+  # Both Hetzner cloud integrations that need an in-cluster API credential are turned OFF.
+  # This does NOT stop hetzner-k3s from planting the token: it writes the all-powerful HCLOUD
+  # token as the kube-system `hcloud` Secret on EVERY create, regardless of the addon toggles
+  # (verified live on v2.6.0 — the Secret is recreated even with both addons off). What these
+  # toggles remove are the token's in-cluster CONSUMERS and the hcloud-volumes storage
+  # dependency; ./provision.sh then SCRUBS the now-orphaned Secret post-create. That
+  # combination — no consumers + post-create scrub — is what leaves no Hetzner API token in the
+  # cluster. It takes the token's cost-abuse blast radius to zero and SUPERSEDES the spend-cap
+  # containment of bd babelstone-zla1.12.2 — removing the token beats capping what a leaked one
+  # can spend.
   #   • cloud_controller_manager — its only job here was wiring a cloud LoadBalancer. This box
   #     has NO `type: LoadBalancer` Service: ingress rides a Cloudflare Tunnel (bd
   #     babelstone-zla1.12.14), so the CCM buys us nothing. (Confirmed supported as an addon
@@ -114,7 +120,7 @@ addons:
   #     feature staging has scoped OUT (bd babelstone-zla1.12.20). Stateful storage moves to the
   #     k3s-built-in local-path provisioner (node-local, no cloud API call) enabled below.
   # The provision-time HCLOUD_TOKEN (env var, never committed) is still needed for hetzner-k3s
-  # to CREATE the cluster; with these addons off it is simply not persisted in-cluster.
+  # to CREATE the cluster; the orphaned in-cluster copy it plants is scrubbed by ./provision.sh.
   cloud_controller_manager:
     enabled: false
   csi_driver:
@@ -192,8 +198,10 @@ additional_pre_k3s_commands:
   # (2) etcd SECRETS-AT-REST ENCRYPTION (CIS secrets section): k3s defaults to storing
   #     Secrets base64-only in etcd, so anyone with disk/snapshot access (Hetzner rescue
   #     boot, a stolen image) reads kubeconfigs, the OpenBao token and backup keys in clear.
-  #     (No in-cluster Hetzner API token to leak — the CCM/CSI addons that would plant one are
-  #     off above; this hardening still matters for every OTHER Secret.) `secrets-encryption:
+  #     (hetzner-k3s plants an all-powerful Hetzner API token as the kube-system/hcloud Secret
+  #     on every create regardless of the addon toggles; ./provision.sh scrubs it post-create —
+  #     but this at-rest encryption still matters for every OTHER Secret, and for the brief
+  #     window before the scrub.) `secrets-encryption:
   #     true` makes k3s
   #     generate an AES key and AES-CBC-encrypt Secrets at rest. Written as a k3s config
   #     DROP-IN (config.yaml.d) rather than /etc/rancher/k3s/config.yaml so nothing

@@ -20,8 +20,12 @@
 #
 # Required env:
 #   HCLOUD_TOKEN       read/write Hetzner Cloud API token (consumed by hetzner-k3s itself to
-#                      CREATE the cluster). With the CCM + CSI addons off in cluster.yaml
-#                      (bd babelstone-zla1.12.20) it is NOT persisted as a kube-system Secret.
+#                      CREATE the cluster). hetzner-k3s plants this token as the kube-system
+#                      `hcloud` Secret on EVERY create — regardless of the addon toggles
+#                      (verified live on v2.6.0: it lands even with the CCM + CSI addons off in
+#                      cluster.yaml, bd babelstone-zla1.12.20). With those addons off nothing
+#                      consumes it, so it sits orphaned — and THIS SCRIPT scrubs it post-create
+#                      (step 5) so no Hetzner API credential persists in-cluster.
 #   SSH_ALLOWED_CIDR   the operator / jump-host IPv4 /32 allowed to SSH — e.g. 203.0.113.7/32
 #                      (comma-separate a small list: "203.0.113.7/32,198.51.100.2/32")
 #
@@ -126,4 +130,35 @@ command -v hetzner-k3s >/dev/null \
   || fail "hetzner-k3s not found on PATH — install it first (see ./README.md prerequisites)"
 
 echo "creating the cluster: hetzner-k3s create --config $RENDERED"
-exec hetzner-k3s create --config "$RENDERED"
+hetzner-k3s create --config "$RENDERED"
+
+# ── 5 · scrub the unconditionally-planted Hetzner token Secret (bd babelstone-zla1.12.20) ──
+# The box now EXISTS with the Hetzner token in a kube-system Secret. Fail-CLOSED throughout:
+#   • trap (the "finally"): any early exit from here fails LOUD with the manual remediation;
+#   • targeted delete of the kube-system/hcloud Secret hetzner-k3s v2.6 plants;
+#   • then a NAME- AND VERSION-INDEPENDENT proof: the token VALUE must be absent from EVERY
+#     kube-system Secret — so a renamed Secret on a future hetzner-k3s cannot produce a false
+#     all-clear, and a kubectl/API error is a hard fail (never an all-clear), not a warning.
+KUBECONFIG_PATH="./kubeconfig"; TOKEN_NS="kube-system"; TOKEN_SECRET="hcloud"
+warn_unscrubbed() {
+  echo "" >&2
+  echo "!!! SECURITY: cluster CREATED but the Hetzner token was NOT confirmed removed from ${TOKEN_NS}." >&2
+  echo "!!! The all-powerful read/write Hetzner token may still be in-cluster. Inspect + remove NOW:" >&2
+  echo "!!!   kubectl --kubeconfig $PWD/$KUBECONFIG_PATH -n ${TOKEN_NS} get secret -o name" >&2
+  echo "!!!   kubectl --kubeconfig $PWD/$KUBECONFIG_PATH -n ${TOKEN_NS} delete secret ${TOKEN_SECRET}" >&2
+  echo "!!! Do not expose the box until confirmed clean." >&2
+}
+trap warn_unscrubbed EXIT
+command -v kubectl >/dev/null || fail "kubectl not found on PATH — cannot scrub the Hetzner token Secret"
+echo "scrubbing the kube-system Hetzner token Secret (CCM/CSI off -> nothing consumes it)"
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TOKEN_NS" delete secret "$TOKEN_SECRET" --ignore-not-found
+# name/version-independent proof: the token VALUE must be gone from EVERY kube-system Secret.
+token_b64="$(printf '%s' "$HCLOUD_TOKEN" | base64 | tr -d '\n')"
+secrets_json="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$TOKEN_NS" get secret -o json)" \
+  || fail "could not enumerate ${TOKEN_NS} Secrets to verify the token is gone (kubectl/API error) -- do NOT expose the box"
+if printf '%s' "$secrets_json" | grep -qF "$token_b64"; then
+  fail "the Hetzner API token is STILL present in a ${TOKEN_NS} Secret (possibly under a name other than '${TOKEN_SECRET}') -- remove it before exposing the box"
+fi
+unset token_b64 secrets_json
+trap - EXIT
+echo "confirmed: the Hetzner API token is absent from all ${TOKEN_NS} Secrets"
