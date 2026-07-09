@@ -81,8 +81,7 @@ Third-party controllers are installed at a **pinned version, never floating `lat
 bring-up is reproducible and an upstream release can't silently change what lands on the box
 (the same supply-chain ethos as the digest-pinned first-party images, PR #531). The versions
 below MUST stay **identical** to [`scripts/staging-bootstrap.sh`](../../../../../scripts/staging-bootstrap.sh)
-— the script and this list are one contract. All three are current-stable and compatible with
-the pinned k3s (`../../../../hetzner-k3s/cluster.yaml` `k3s_version`) and its k8s server (~1.31+).
+— the script and this list are one contract. The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed, BEFORE a live provision.
 To verify/bump: cert-manager `helm search repo jetstack/cert-manager --versions`; Traefik
 `helm search repo traefik/traefik --versions`; system-upgrade-controller the
 [releases page](https://github.com/rancher/system-upgrade-controller/releases). Pinned:

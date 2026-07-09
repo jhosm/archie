@@ -57,8 +57,11 @@ SECRET_PREFLIGHT_SCRIPT="$REPO_ROOT/scripts/cd-secret-preflight.sh"
 # `latest`, so a bring-up is reproducible and an upstream release can't silently change what
 # lands on the box (same ethos as the digest-pinned first-party images, PR #531). Keep these
 # IDENTICAL to bootstrap/README.md's "Apply order" — the two sources are one contract.
-# All three are current-stable and compatible with the pinned k3s (infra/hetzner-k3s/
-# cluster.yaml `k3s_version`) and its k8s server (~1.31+ API surface).
+# The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s
+# server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a
+# chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT
+# proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed,
+# BEFORE a live provision.
 # Verify / bump:
 #   cert-manager  → `helm search repo jetstack/cert-manager --versions` (after `helm repo update`)
 #   Traefik chart → `helm search repo traefik/traefik --versions`
