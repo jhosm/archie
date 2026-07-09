@@ -38,7 +38,8 @@
 #                                                # cluster mutation, NO live cluster required
 #   scripts/staging-bootstrap.sh --set-cd-secret # after minting the CD kubeconfig, set the
 #                                                # KUBECONFIG_B64 env secret via gh (needs gh);
-#                                                # without it, the base64 is printed to set by hand
+#                                                # without it, the base64 is written to a mode-600
+#                                                # temp file to set by hand (never printed)
 #   scripts/staging-bootstrap.sh -h|--help       # this header
 set -euo pipefail
 
@@ -64,7 +65,7 @@ case "${1:-}" in
   "") ;;
   --check-only)   CHECK_ONLY=true ;;
   --set-cd-secret) SET_CD_SECRET=true ;;
-  -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "ERROR: unknown argument: $1 (want --check-only, --set-cd-secret, or --help)" >&2; exit 2 ;;
 esac
 
@@ -172,11 +173,20 @@ if $CLOUDFLARE_SECRET_EXISTS; then
   step "5. cert-manager/${CLOUDFLARE_SECRET} Secret already exists — leaving it as-is"
 else
   step "5. cert-manager/${CLOUDFLARE_SECRET} Secret (idempotent apply from \$CLOUDFLARE_API_TOKEN)"
-  # Build the Secret YAML and apply it; the token rides through kubectl on stdin, never echoed.
-  kubectl create secret generic "$CLOUDFLARE_SECRET" \
-    --namespace "$CERT_MANAGER_NAMESPACE" \
-    --from-literal=api-token="$CLOUDFLARE_API_TOKEN" \
-    --dry-run=client -o yaml | kubectl apply -f -
+  # Keep the token OUT of the process argv (visible via `ps`) and out of stdout: base64 it into
+  # a Secret manifest applied on stdin. The value never appears as a command argument.
+  cf_token_b64="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | base64 | tr -d '\n')"
+  kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${CLOUDFLARE_SECRET}
+  namespace: ${CERT_MANAGER_NAMESPACE}
+type: Opaque
+data:
+  api-token: ${cf_token_b64}
+EOF
+  unset cf_token_b64
 fi
 
 # ── STEP 6 · the cluster-scoped bootstrap (glob, excluding volume-snapshot-class.yaml) ───
@@ -208,18 +218,21 @@ cleanup() { rm -f "$CD_KUBECONFIG_TMP"; }
 trap cleanup EXIT
 "$CD_KUBECONFIG_SCRIPT" -o "$CD_KUBECONFIG_TMP"
 
-CD_KUBECONFIG_B64="$(base64 < "$CD_KUBECONFIG_TMP")"
 if $SET_CD_SECRET; then
   step "   setting the KUBECONFIG_B64 env secret (gh secret set --env p6-staging)"
-  printf '%s' "$CD_KUBECONFIG_B64" | gh secret set KUBECONFIG_B64 --env p6-staging --body -
+  base64 < "$CD_KUBECONFIG_TMP" | gh secret set KUBECONFIG_B64 --env p6-staging
   echo "   KUBECONFIG_B64 set on the p6-staging environment."
 else
+  # Do NOT print the credential to stdout (terminal scrollback / CI logs). Write the base64 to a
+  # private (mode 600) temp file OUTSIDE this script's cleanup trap; the operator sets the secret
+  # from it, then shreds it.
+  cd_b64_out="$(mktemp "${TMPDIR:-/tmp}/cd-deployer-b64.XXXXXX")"
+  ( umask 077; base64 < "$CD_KUBECONFIG_TMP" > "$cd_b64_out" )
   echo
-  echo "   --set-cd-secret NOT passed. Set the KUBECONFIG_B64 environment secret manually with the base64 below:"
-  echo "   gh secret set KUBECONFIG_B64 --env p6-staging --body '<paste the base64>'"
-  echo "   --- KUBECONFIG_B64 (base64) ---"
-  printf '%s\n' "$CD_KUBECONFIG_B64"
-  echo "   --- end KUBECONFIG_B64 ---"
+  echo "   --set-cd-secret NOT passed. The base64 CD kubeconfig (a CREDENTIAL) was written to:"
+  echo "       $cd_b64_out   (mode 600 — do NOT commit or share it)"
+  echo "   Set the environment secret from it, then shred it:"
+  echo "       gh secret set KUBECONFIG_B64 --env p6-staging < \"$cd_b64_out\" && shred -u \"$cd_b64_out\""
 fi
 # cleanup trap removes the temp token file on exit (success or failure).
 
