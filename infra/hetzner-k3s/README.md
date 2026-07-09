@@ -89,9 +89,16 @@ and mint the least-privilege `cd-deployer` kubeconfig with
 ## Hand-off — what comes next
 
 1. **Phase 2 — cluster bootstrap** ([`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)):
-   install cert-manager + the CSI snapshot controller + the system-upgrade-controller, then
-   `kubectl apply -f` the issuers / `VolumeSnapshotClass` / k3s upgrade Plan. Point the
-   `babelstone.dev` DNS A records at the new node IP.
+   install cert-manager + the system-upgrade-controller, then `kubectl apply -f` the issuers /
+   k3s upgrade Plan. Point the `babelstone.dev` DNS A records at the new node IP.
+   (**Retired with the CSI:** the CSI snapshot controller + the `hcloud-volumes`
+   `VolumeSnapshotClass` — block-level volume snapshots — no longer apply now that the Hetzner
+   CSI driver is disabled (see "Posture notes"); local-path claims are not CSI-snapshottable.
+   Removal of the now-dead manifests
+   [`../k8s/overlays/staging/volume-snapshot-cronjob.yaml`](../k8s/overlays/staging/volume-snapshot-cronjob.yaml)
+   + [`../k8s/overlays/staging/bootstrap/volume-snapshot-class.yaml`](../k8s/overlays/staging/bootstrap/volume-snapshot-class.yaml)
+   is tracked in bd babelstone-zla1.12.21, blocked on PR #531 which owns the overlay
+   `kustomization.yaml`.)
 2. **Phase 3 — deploy** the workloads: `kubectl apply -k ../k8s/overlays/staging` (or dispatch
    `cd.yml`).
 
@@ -113,8 +120,10 @@ The full operator runbook — bring-up, redeploy, restore, upgrade, backups — 
   `config.yaml.d` drop-in). After provisioning, verify on the node with
   `k3s secrets-encrypt status`, and rotate the key periodically with
   `k3s secrets-encrypt rotate-keys` (k3s re-encrypts existing Secrets). Without this, every
-  Secret (the in-cluster Hetzner token, kubeconfigs, the OpenBao token, backup keys) is
-  base64-plaintext to anyone with disk or snapshot access.
+  Secret (kubeconfigs, the OpenBao token, backup keys) is base64-plaintext to anyone with
+  disk or snapshot access. (There is no longer an in-cluster Hetzner API token to leak — the
+  CCM/CSI addons that would plant one are off, see "Posture notes" — but this hardening still
+  matters for every OTHER Secret.)
 
 To pick these up on the EXISTING staging box either re-provision (restore from backups per
 `../runbooks/staging-ops.md`), or apply the equivalent by hand on the node (write the two
@@ -137,8 +146,10 @@ the source of truth either way.
   bd babelstone-zla1.12.2** — eliminating the token beats bounding what a leaked one can spend,
   taking its cost-abuse blast radius to zero. The **provision-time** `HCLOUD_TOKEN` (env var,
   never committed) is still required for hetzner-k3s to *create* the cluster, but with these
-  addons off it is no longer persisted in-cluster. (Honours [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
-  minimise-attack-surface — removes a standing in-cluster cloud credential; and
+  addons off it is no longer persisted in-cluster. (In the spirit of the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+  minimise-surface posture — removing a standing in-cluster cloud credential shrinks the attack
+  surface, though that ADR's minimise-surface language is about the public network edge, not
+  in-cluster cloud credentials; and
   [ADR-PC-005](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md),
   whose production HA/warm-standby posture is untouched — node-local storage deepens the
   already-recorded single-node staging deviation, it does not reverse a production decision.)
