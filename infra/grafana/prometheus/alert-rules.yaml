@@ -553,20 +553,20 @@ groups:
     rules:
       - alert: BackupJobFailed
         # Any failed backup-family Job in a day is a page: db-logical-backup
-        # (the off-box dump) and volume-snapshot (the CSI snapshot leg) share
-        # the babelstone.io/dr-role backup posture; job_name carries the
-        # CronJob-stamped prefix.
-        expr: increase(kube_job_status_failed{job_name=~"(db-logical-backup|volume-snapshot).*"}[24h]) > 0
+        # (the off-box dump) carries the babelstone.io/dr-role backup posture;
+        # job_name carries the CronJob-stamped prefix. (The CSI volume-snapshot
+        # leg was retired with the Hetzner CSI driver — bd babelstone-zla1.12.24.)
+        expr: increase(kube_job_status_failed{job_name=~"db-logical-backup.*"}[24h]) > 0
         for: 0m
         labels:
           severity: critical
           sli: backup_job
           adr: ADR-PC-005
         annotations:
-          summary: "A backup Job failed (logical dump or volume snapshot)"
+          summary: "A backup Job failed (logical dump)"
           description: >-
-            kube_job_status_failed reports a failed db-logical-backup /
-            volume-snapshot Job in the last 24h. The off-box copy of the data
+            kube_job_status_failed reports a failed db-logical-backup
+            Job in the last 24h. The off-box copy of the data
             did not advance; the box is one disk loss away from exceeding the
             recovery point. Inspect the Job's pod logs (the fail-closed
             upload_and_assert step names the object that did not land) and
