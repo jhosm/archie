@@ -20,8 +20,12 @@
 #
 # Required env:
 #   HCLOUD_TOKEN       read/write Hetzner Cloud API token (consumed by hetzner-k3s itself to
-#                      CREATE the cluster). With the CCM + CSI addons off in cluster.yaml
-#                      (bd babelstone-zla1.12.20) it is NOT persisted as a kube-system Secret.
+#                      CREATE the cluster). hetzner-k3s plants this token as the kube-system
+#                      `hcloud` Secret on EVERY create — regardless of the addon toggles
+#                      (verified live on v2.6.0: it lands even with the CCM + CSI addons off in
+#                      cluster.yaml, bd babelstone-zla1.12.20). With those addons off nothing
+#                      consumes it, so it sits orphaned — and THIS SCRIPT scrubs it post-create
+#                      (step 5) so no Hetzner API credential persists in-cluster.
 #   SSH_ALLOWED_CIDR   the operator / jump-host IPv4 /32 allowed to SSH — e.g. 203.0.113.7/32
 #                      (comma-separate a small list: "203.0.113.7/32,198.51.100.2/32")
 #
@@ -126,4 +130,20 @@ command -v hetzner-k3s >/dev/null \
   || fail "hetzner-k3s not found on PATH — install it first (see ./README.md prerequisites)"
 
 echo "creating the cluster: hetzner-k3s create --config $RENDERED"
-exec hetzner-k3s create --config "$RENDERED"
+hetzner-k3s create --config "$RENDERED"
+
+# ── 5 · scrub the unconditionally-planted Hetzner token Secret (bd babelstone-zla1.12.20) ──
+# hetzner-k3s plants the read/write HCLOUD token as the kube-system `hcloud` Secret on EVERY
+# create — even with the CCM + CSI addons disabled (verified live on v2.6.0: recreated,
+# orphaned, no consumer). Remove it so NO Hetzner API credential persists in-cluster.
+# Idempotent. Uses the cluster-admin kubeconfig the create above wrote to ./kubeconfig.
+KUBECONFIG_PATH="./kubeconfig"
+if ! command -v kubectl >/dev/null; then
+  fail "kubectl not found on PATH — cannot scrub the kube-system/hcloud token Secret. Delete it by hand: kubectl --kubeconfig $KUBECONFIG_PATH -n kube-system delete secret hcloud"
+fi
+echo "scrubbing the orphaned kube-system/hcloud token Secret (CCM/CSI off → nothing consumes it)"
+kubectl --kubeconfig "$KUBECONFIG_PATH" -n kube-system delete secret hcloud --ignore-not-found
+if kubectl --kubeconfig "$KUBECONFIG_PATH" -n kube-system get secret hcloud >/dev/null 2>&1; then
+  fail "kube-system/hcloud token Secret STILL present after scrub — do not expose the box until resolved"
+fi
+echo "confirmed: no Hetzner API token Secret in kube-system"
