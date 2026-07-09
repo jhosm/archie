@@ -198,8 +198,10 @@ additional_pre_k3s_commands:
   # (2) etcd SECRETS-AT-REST ENCRYPTION (CIS secrets section): k3s defaults to storing
   #     Secrets base64-only in etcd, so anyone with disk/snapshot access (Hetzner rescue
   #     boot, a stolen image) reads kubeconfigs, the OpenBao token and backup keys in clear.
-  #     (No in-cluster Hetzner API token to leak — the CCM/CSI addons that would plant one are
-  #     off above; this hardening still matters for every OTHER Secret.) `secrets-encryption:
+  #     (hetzner-k3s plants an all-powerful Hetzner API token as the kube-system/hcloud Secret
+  #     on every create regardless of the addon toggles; ./provision.sh scrubs it post-create —
+  #     but this at-rest encryption still matters for every OTHER Secret, and for the brief
+  #     window before the scrub.) `secrets-encryption:
   #     true` makes k3s
   #     generate an AES key and AES-CBC-encrypt Secrets at rest. Written as a k3s config
   #     DROP-IN (config.yaml.d) rather than /etc/rancher/k3s/config.yaml so nothing
