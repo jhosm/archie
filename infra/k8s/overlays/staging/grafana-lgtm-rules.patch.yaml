@@ -19,10 +19,10 @@
 # the Compose stack mounts (single config source — the otel-collector-config /
 # kong-config pattern).
 #
-# OTLP boundary preserved: this is a Deployment-only patch (volumes/volumeMounts);
-# it does NOT touch the grafana-lgtm Service, so 4317/4318 stay unexposed
-# (ADR-IC-007 §P1, CI-asserted). The grafana-tempo-svc.patch.yaml Service patch is
-# the only thing that edits ports, and it adds only 3200 (Tempo query).
+# OTLP boundary: this is a Deployment-only patch (volumes/volumeMounts); it does NOT
+# touch the grafana-lgtm Service. The overlay DOES republish the OTLP ports (4317/4318)
+# on that Service via grafana-otlp-svc.patch.yaml, walled to the Collector by the
+# allow-grafana-lgtm-ingress NetworkPolicy (ADR-IC-007 §P1 amendment 2026-07-09).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

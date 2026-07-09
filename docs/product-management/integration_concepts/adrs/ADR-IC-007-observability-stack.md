@@ -194,6 +194,8 @@ Service SDKs → OTLP → OTel Collector → Tempo (traces)
 
 Sampling strategy for POC: tail-based sampling at the Collector with a 100% sample rate (no dropping). When volumes grow, introduce a head-based probabilistic sampler with a 10% default rate and a 100% rate for traces containing an error span.
 
+*Revised 2026-07-09 (bd babelstone-zla1.16, ADR-PC-020 §D3 explicit-drift): the "single OTLP entry point" is a boundary on **who** may reach a backend's OTLP intake, not a ban on that intake appearing on a Service. The original k8s implementation enforced it by omitting 4317/4318 from the `grafana-lgtm` Service — but that also severed the Collector's **own** fan-out hop (its sole exporter targets `grafana-lgtm:4317`), so in-cluster no telemetry ever reached the appliance and every signal was dropped (`sending queue is full`). The staging overlay therefore republishes 4317/4318 on the `grafana-lgtm` ClusterIP Service (`grafana-otlp-svc.patch.yaml`) with the boundary moved to the network layer: the `allow-grafana-lgtm-ingress` NetworkPolicy admits those ports from the `otel-collector` pod **only**, so the Collector remains the single OTLP entry point and no service can export direct-to-backend. The `base` render stays OTLP-free (it carries no NetworkPolicy to lean on), so the §P1 base CI assertion is unchanged; a positive staging CI assertion guards the republish-plus-policy pairing so the boundary can never regress to a bare open port.*
+
 ---
 
 ### P2 — Span naming convention follows the document 06 model

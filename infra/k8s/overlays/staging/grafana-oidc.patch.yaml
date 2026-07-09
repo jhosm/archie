@@ -21,8 +21,9 @@
 # staging secrets at deploy; CI validates structure only). Grafana maps the GF_AUTH_GENERIC_OAUTH_*
 # env onto [auth.generic_oauth], so client_secret stays out of grafana.ini.
 #
-# OTLP boundary preserved: Deployment-only patch (env/volumes/volumeMounts); it does NOT touch the
-# grafana-lgtm Service, so 4317/4318 stay unexposed (ADR-IC-007 §P1, CI-asserted).
+# OTLP boundary: Deployment-only patch (env/volumes/volumeMounts); it does NOT touch the
+# grafana-lgtm Service. The overlay republishes OTLP (4317/4318) on that Service via
+# grafana-otlp-svc.patch.yaml, walled to the Collector by the NetworkPolicy (ADR-IC-007 §P1 amendment 2026-07-09).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
