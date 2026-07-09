@@ -58,18 +58,23 @@ spec:
                   key: OPENBAO_DEV_TOKEN
             - name: BAO_ADDR
               value: http://127.0.0.1:8200
-          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). Drop ALL
-          # capabilities, then ADD BACK only IPC_LOCK — OpenBao mlock()s its
-          # memory to keep key material out of swap, and that needs IPC_LOCK.
-          # enforce=baseline ALLOWS IPC_LOCK (it rejects only privileged /
-          # host-namespace pods), so the namespace stays at baseline.
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). Run as the
+          # image's non-root `openbao` user (uid 100 / gid 1000) and drop ALL
+          # Linux capabilities. runAsUser is REQUIRED: the image defaults to root,
+          # so runAsNonRoot alone would be refused by the kubelet ("image will run
+          # as root"). We add NO capabilities — PSA `baseline` REJECTS IPC_LOCK
+          # (it is not on baseline's capability allow-list), and the `-dev` server
+          # is in-memory so it never mlock()s (verified: it boots unsealed with
+          # drop:[ALL] and no IPC_LOCK). When real provisioning lands (M.2/puu3),
+          # disable mlock via `disable_mlock` in config, not by re-adding the cap.
           # readOnlyRootFilesystem is omitted: even in -dev mode OpenBao writes
           # runtime files (plugin/socket scratch) to its root fs.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
-              add: ["IPC_LOCK"]

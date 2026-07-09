@@ -37,7 +37,7 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
    placeholders are dropped from the build, so a redeploy can never overwrite what you set
    here), and the deploy **fails closed** if `babelstone-dev-secrets` is missing or still
    holds a placeholder value (`scripts/cd-secret-preflight.sh`, wired into `cd.yml`).
-   Create it once with real values (all nine keys are secretKeyRef'd by workloads):
+   Create it once with real values (all ten keys are secretKeyRef'd by workloads):
 
    ```bash
    kubectl -n babelstone-staging create secret generic babelstone-dev-secrets \
@@ -49,8 +49,18 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
      --from-literal=LOGTO_MISSION_CONTROL_CLIENT_SECRET="<the Logto mission-control app client secret>" \
      --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)" \
      --from-literal=LOGTO_BACKSTAGE_CLIENT_SECRET="<the Logto backstage app client secret>" \
-     --from-literal=BACKSTAGE_AUTH_SESSION_SECRET="$(openssl rand -base64 32)"
+     --from-literal=BACKSTAGE_AUTH_SESSION_SECRET="$(openssl rand -base64 32)" \
+     --from-literal=MC_READONLY_DB_PASSWORD="$(openssl rand -base64 24)"
    ```
+
+   `MC_READONLY_DB_PASSWORD` (bd zla1.17.3) is the password for the dedicated read-only Postgres
+   role `babelstone_readonly` that Mission Control's Outbox·Inbox `/pg` lens connects as: the
+   `mission-control-db-readonly` Job SETS the role's password from this key and the Mission Control
+   Deployment reads it for the `/pg` DSNs — mint it with `openssl rand` as shown. To add it to an
+   already-provisioned Secret without disturbing the other keys:
+   `kubectl -n babelstone-staging patch secret babelstone-dev-secrets --type merge -p "{\"stringData\":{\"MC_READONLY_DB_PASSWORD\":\"$(openssl rand -base64 24)\"}}"`,
+   then re-run the Job (`kubectl -n babelstone-staging delete job mission-control-db-readonly` +
+   re-apply) and `kubectl -n babelstone-staging rollout restart deploy/mission-control`.
 
    `LOGTO_GRAFANA_CLIENT_SECRET`, `LOGTO_MISSION_CONTROL_CLIENT_SECRET`, and
    `LOGTO_BACKSTAGE_CLIENT_SECRET` come from **hand-registered Logto applications** (DCR is the

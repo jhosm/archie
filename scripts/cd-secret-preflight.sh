@@ -39,13 +39,17 @@ PLACEHOLDER_OIDC_PREFIX="dev-placeholder"   # OIDC_PRIVATE_KEYS placeholder star
 # NOT a placeholder) before the pod boots on its public bind.
 PLACEHOLDER_MC_CLIENT_SECRET_PREFIX="dev-placeholder-mission-control-client-secret"
 PLACEHOLDER_MC_SESSION_KEY_PREFIX="dev-placeholder-mc-session-signing-key"
+# The read-only /pg role password (bd zla1.17.3) — the mission-control-db-readonly Job SETS the
+# babelstone_readonly role's password from it and the mission-control Deployment secretKeyRefs it for
+# the /pg DSNs, both non-optionally, so it must be present + non-placeholder before deploy.
+PLACEHOLDER_MC_READONLY_DB_PASSWORD_PREFIX="dev-placeholder-mc-readonly-db-password"
 SECRET_NAME="babelstone-dev-secrets"
 # LOGTO_GRAFANA_CLIENT_SECRET has no committed placeholder (it was never in
 # secrets.example.yaml) but grafana-oidc.patch.yaml secretKeyRefs it non-optionally,
 # so presence is still required for the pod to start. LOGTO_MISSION_CONTROL_CLIENT_SECRET +
 # MC_SESSION_SIGNING_KEY are the same contract for the mission-control OIDC gate (both DO carry
 # committed placeholders above, so they get body/placeholder detection like SECRET_VAULT_KEK).
-REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET LOGTO_MISSION_CONTROL_CLIENT_SECRET MC_SESSION_SIGNING_KEY"
+REQUIRED_KEYS="POSTGRES_PASSWORD OPENBAO_DEV_TOKEN SECRET_VAULT_KEK OIDC_PRIVATE_KEYS LOGTO_GRAFANA_CLIENT_SECRET LOGTO_MISSION_CONTROL_CLIENT_SECRET MC_SESSION_SIGNING_KEY MC_READONLY_DB_PASSWORD"
 
 MODE=""
 NAMESPACE="babelstone-staging"
@@ -94,6 +98,8 @@ if [ "$MODE" = "render" ]; then
     && fail "placeholder LOGTO_MISSION_CONTROL_CLIENT_SECRET body found in the render"
   printf '%s\n' "$RENDER" | grep -q "$PLACEHOLDER_MC_SESSION_KEY_PREFIX" \
     && fail "placeholder MC_SESSION_SIGNING_KEY body found in the render"
+  printf '%s\n' "$RENDER" | grep -q "$PLACEHOLDER_MC_READONLY_DB_PASSWORD_PREFIX" \
+    && fail "placeholder MC_READONLY_DB_PASSWORD body found in the render"
 
   echo "render preflight OK: no placeholder Secret and no placeholder credential bodies in the applied set"
   exit 0
@@ -131,6 +137,10 @@ for key in $REQUIRED_KEYS; do
     MC_SESSION_SIGNING_KEY)
       case "$val" in
         "$PLACEHOLDER_MC_SESSION_KEY_PREFIX"*) fail "live MC_SESSION_SIGNING_KEY is still the dev placeholder — the gated demo UI must not sign sessions with it" ;;
+      esac ;;
+    MC_READONLY_DB_PASSWORD)
+      case "$val" in
+        "$PLACEHOLDER_MC_READONLY_DB_PASSWORD_PREFIX"*) fail "live MC_READONLY_DB_PASSWORD is still the dev placeholder — the /pg read-only role must not use it" ;;
       esac ;;
   esac
 done
