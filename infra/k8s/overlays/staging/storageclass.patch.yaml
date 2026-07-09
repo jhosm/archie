@@ -1,7 +1,12 @@
-# JSON6902 — pin durable Hetzner CSI block storage on the stateful volume claim.
+# JSON6902 — pin the k3s built-in local-path storage class on the stateful volume claim.
 # Shared by the postgres / redpanda / registry StatefulSet targets (each has a
 # single volumeClaimTemplate at index 0). See overlays/staging/kustomization.yaml
 # for why this is JSON6902 (add-only) rather than a strategic-merge patch.
+#
+# local-path is node-local (no Hetzner cloud API token needed — the CSI driver that
+# backed the former hcloud-volumes class is now disabled in infra/hetzner-k3s/cluster.yaml,
+# bd babelstone-zla1.12.20). Node-local persistence survives a POD restart but NOT node
+# loss — consistent with DR being out of scope on the single-node staging tier.
 - op: add
   path: /spec/volumeClaimTemplates/0/spec/storageClassName
-  value: hcloud-volumes
+  value: local-path
