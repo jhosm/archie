@@ -366,15 +366,25 @@ independent gates, so no single failure exposes them. The other public hosts
      sh -c 'wget -qO- --header="Host: auth-admin.babelstone.dev" http://127.0.0.1:3001/ >/dev/null && echo core-serves-admin-OK'
    ```
 
-**Known residual — the Cloudflare origin bypass (tracked: bd babelstone-zla1.12.14).**
-Because the firewall must allow *all* Cloudflare IPs, an attacker who discovers the origin
-IP could proxy through their *own* Cloudflare zone with a spoofed `Host` header, reaching
-the origin from a CF IP and bypassing the babelstone.dev edge — including Cloudflare Access.
-They still hit each app's own login (+ 2FA), so it is **not** access, only loss of the edge
-layer + exposure of the pre-auth surface. Risk is **LOW on staging** (targeted-only;
-origin-IP discovery is the limiter — note `:6443` is world-open and reveals a live cluster),
-rising to **MEDIUM in production**. It is a **cluster-wide** concern (every public host, not
-just these two). The fix — Cloudflare Authenticated Origin Pulls (origin mTLS), a
-`Cf-Access-Jwt-Assertion` check at Traefik, or a Cloudflare Tunnel that removes the inbound
-origin port entirely — is **bd babelstone-zla1.12.14, gated as a MUST before production
-promotion.**
+**Resolved — the Cloudflare origin bypass, closed by a Cloudflare Tunnel (bd babelstone-zla1.12.14).**
+The hole: because the firewall had to allow *all* Cloudflare IPs on inbound `:80`/`:443`, an
+attacker who discovered the origin IP could proxy through their *own* Cloudflare zone with a
+spoofed `Host` header, reaching the origin from a CF IP and bypassing the babelstone.dev edge
+— including Cloudflare Access. (They still hit each app's own login + 2FA, so it was **not**
+access, only loss of the edge layer + exposure of the pre-auth surface. Risk was **LOW on
+staging** — targeted-only; origin-IP discovery the limiter, though `:6443` is world-open and
+reveals a live cluster — rising to **MEDIUM in production**. Cluster-wide: every public host.)
+The fix: a **Cloudflare Tunnel** (`cloudflared`,
+[`bootstrap/cloudflare-tunnel.yaml`](../k8s/overlays/staging/bootstrap/cloudflare-tunnel.yaml))
+now runs in-cluster and dials **outbound** to Cloudflare, so the inbound web ports are removed
+entirely ([`firewall-web.sh`](../hetzner-k3s/firewall-web.sh) no longer adds them and removes
+the two `cloudflare-web-*` rules — tunnel up first, ports down second). With **no inbound origin
+web port**, there is nothing left to spoof, closing the bypass for all six public hosts at once.
+(Authenticated Origin Pulls — Traefik requiring Cloudflare's origin client cert — was the lighter
+alternative considered; it leaves the ports open-but-mTLS-gated rather than removed, so the Tunnel
+was chosen.) This satisfies the **MUST-before-production-promotion gate (ADR-PC-020 §D3)** on the
+parent epic. **Human residual (account-gated):** create the tunnel + connector token in the
+Cloudflare Zero Trust dashboard, apply the manifest, point the CNAMEs at the tunnel, run
+`firewall-web.sh --apply`, then verify a spoofed-`Host` request to the origin IP (95.217.237.53)
+is refused host-by-host — see [`bootstrap/README.md`](../k8s/overlays/staging/bootstrap/README.md)
+"Apply order" steps 6-8.

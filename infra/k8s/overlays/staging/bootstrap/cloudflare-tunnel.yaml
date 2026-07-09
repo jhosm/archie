@@ -1,0 +1,199 @@
+# infra/k8s/overlays/staging/bootstrap/cloudflare-tunnel.yaml
+# Cloudflare Tunnel (cloudflared) for the staging box — closes the origin-bypass
+# residual (bd babelstone-zla1.12.14; ADR-IC-006 network & transport hardening).
+#
+# Plain English: today Cloudflare's proxy reaches the origin over inbound :80/:443,
+# and the Hetzner firewall has to allow those ports from ALL of Cloudflare's IP ranges
+# (infra/hetzner-k3s/firewall-web.sh). So an attacker who discovers the origin IP
+# (95.217.237.53) can point their OWN Cloudflare zone at it, send a spoofed Host header,
+# and reach the origin from a Cloudflare IP — bypassing the babelstone.dev edge (and its
+# Cloudflare Access identity gate on auth-admin/grafana). This manifest flips the
+# direction: cloudflared runs INSIDE the cluster and dials OUTBOUND to Cloudflare over a
+# QUIC/HTTPS tunnel, so Cloudflare never has to reach IN. Once the tunnel is up we can
+# delete the inbound :80/:443 firewall rules entirely (firewall-web.sh, this PR) — there
+# is no origin web port left to spoof. The tunnel routes each public hostname to the same
+# in-cluster Services the Ingress used (Traefik is bypassed for the public edge; cert-
+# manager Let's Encrypt certs remain only for any internal/direct paths — Cloudflare now
+# terminates TLS at its edge and re-originates over the tunnel).
+#
+# Alternative considered: Cloudflare Authenticated Origin Pulls (AOP) — Traefik requires
+# Cloudflare's origin client cert (mTLS), refusing spoofed-zone traffic at the origin. AOP
+# is lighter (keeps Traefik + the existing Ingress, no new workload) but leaves the inbound
+# web ports OPEN (mTLS-gated, not removed) and relies on Cloudflare's shared origin-pull CA,
+# which any Cloudflare customer's cert chains to unless the per-zone cert is pinned. The
+# Tunnel is the stronger close: it removes the inbound origin port outright rather than
+# guarding it. Chosen here for that reason.
+#
+# NOT part of the kustomize overlay: this directory (bootstrap/) is deliberately NOT
+# referenced by ../kustomization.yaml, so it never enters `kustomize build overlays/staging`
+# and cannot trip the strict-kubeconform gate on the routine deploy path. It is applied ONCE,
+# by hand or by the Phase-2 provisioning script (see ./README.md "Apply order").
+#
+# ── Human step: create the tunnel + its token (account-gated; NEVER commit the token) ──
+#   1. In the Cloudflare Zero Trust dashboard (Networks → Tunnels) create a *remotely-managed*
+#      tunnel named e.g. `babelstone-staging`. Copy the connector token it shows (a long
+#      base64 blob beginning `ey…`). This token IS the tunnel credential — treat it as a secret.
+#   2. Create the Secret this Deployment reads (do NOT use the placeholder Secret below in
+#      production — it is an empty-value example so the manifest is self-contained + kubeconform-
+#      valid):
+#        kubectl -n babelstone-staging create secret generic cloudflare-tunnel-token \
+#          --from-literal=token='<PASTE-CONNECTOR-TOKEN>'
+#   3. In the tunnel's *Public Hostname* config (dashboard) OR via this ConfigMap (if you switch
+#      to a locally-managed / credentials-file tunnel), map each hostname below to its Service.
+#      A remotely-managed tunnel takes its ingress rules from the dashboard, so the ConfigMap
+#      here is the authoritative record + the drop-in for a locally-managed tunnel; keep the two
+#      in lockstep with overlays/staging/ingress.yaml (the six public hosts).
+#   4. Point each babelstone.dev CNAME at the tunnel (`<tunnel-id>.cfargotunnel.com`, proxied).
+#   5. ONLY THEN remove the inbound :80/:443 firewall rules (firewall-web.sh) — tunnel UP first,
+#      ports down second, or the edge goes dark. See firewall-web.sh for the ordering note.
+---
+# The tunnel connector token, BY REFERENCE. This placeholder makes the manifest self-
+# contained and kubeconform-valid; the REAL token is injected out-of-band (step 2 above)
+# and MUST NOT be committed. `stringData.token: ""` is an intentionally-empty example —
+# a cloudflared started against it will fail to register (loud), which is the safe failure.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-tunnel-token
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: babelstone-staging-edge
+  annotations:
+    # PLACEHOLDER — overwrite with the real connector token via `kubectl create secret`
+    # (see the header block). Never commit a real token to git.
+    babelstone.dev/placeholder: "replace-out-of-band-never-commit"
+type: Opaque
+stringData:
+  token: ""
+---
+# Ingress rules mapping each public hostname to its in-cluster Service — mirrors the six
+# hosts in ../ingress.yaml (app/api/backstage/auth/auth-admin/grafana). For a REMOTELY-
+# managed tunnel these rules also live in the Zero Trust dashboard (which wins); this
+# ConfigMap is the committed record + the drop-in for a locally-managed tunnel that reads
+# /etc/cloudflared/config.yaml. Keep in lockstep with ingress.yaml. cloudflared re-originates
+# HTTP to each ClusterIP Service inside the cluster; TLS is terminated by Cloudflare's edge.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: babelstone-staging-edge
+data:
+  config.yaml: |
+    # No `tunnel:`/`credentials-file:` here — TUNNEL_TOKEN (from the Secret) carries the
+    # tunnel id + credentials for a remotely-managed tunnel. metrics/readiness on :2000.
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      # api → Kong PROXY (8000) — Kong stays the ADR-IC-006 authz edge for the product API.
+      - hostname: api.babelstone.dev
+        service: http://kong:8000
+      # backstage → Backstage catalogue portal (7007).
+      - hostname: backstage.babelstone.dev
+        service: http://backstage:7007
+      # app → Mission Control demo UI (9000) — same-origin-proxies engine/orchestrator internally.
+      - hostname: app.babelstone.dev
+        service: http://mission-control:9000
+      # auth → Logto core listener (3001) — OAuth/OIDC issuer (sign-in + OIDC discovery + JWKS).
+      - hostname: auth.babelstone.dev
+        service: http://logto:3001
+      # auth-admin → Logto core listener (3001) — admin console served on the core port
+      #   (ADMIN_DISABLE_LOCALHOST=true; routed by the auth-admin Host). NOT 3002 (closed).
+      - hostname: auth-admin.babelstone.dev
+        service: http://logto:3001
+      # grafana → grafana-lgtm UI (3000). OTLP 4317/4318 are NEVER tunnelled (ADR-IC-007 §P1).
+      - hostname: grafana.babelstone.dev
+        service: http://grafana-lgtm:3000
+      # Catch-all: refuse anything not explicitly mapped (a required trailing rule).
+      - service: http_status:404
+---
+# The cloudflared connector. Egress-only: it opens OUTBOUND QUIC/HTTPS to Cloudflare and
+# needs NO inbound ports and NO Service — which is the whole point (there is nothing to
+# spoof). Single replica (staging is single-node; scale to 2 for zero-downtime connector
+# restarts in production). Runs the token from the Secret via TUNNEL_TOKEN.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: babelstone-staging-edge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app.kubernetes.io/part-of: babelstone-staging-edge
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          # Pin the connector image by tag (a routine PR static-validates this manifest;
+          # the human pins to a digest at apply time per the estate's pin-by-digest posture).
+          image: cloudflare/cloudflared:2024.10.0
+          args:
+            - tunnel
+            - --no-autoupdate
+            # --metrics exposes /ready + /metrics on :2000 for the probes below.
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            # The connector token — id + credentials for the remotely-managed tunnel.
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-tunnel-token
+                  key: token
+          # Mount the committed ingress record so a locally-managed tunnel (or an operator
+          # diffing intent vs the dashboard) has /etc/cloudflared/config.yaml on disk.
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared
+              readOnly: true
+          ports:
+            - name: metrics
+              containerPort: 2000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
