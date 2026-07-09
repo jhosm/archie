@@ -43,15 +43,15 @@ spec:
               set -eu
               echo "waiting for postgres at $PGHOST:$PGPORT …"
               until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do sleep 2; done
-              # 1 · create-or-rotate the read-only role (roles are cluster-global). The DO block is
-              #     idempotent; ALTER ROLE sets/rotates the password from the secret each run.
+              # 1 · create-or-rotate the read-only role (roles are cluster-global). \gexec runs the
+              #     CREATE only when the role is absent (idempotent); ALTER sets/rotates its password.
+              #     NB: NO PL/pgSQL DO-block dollar-quoting here — Kubernetes performs $(VAR) expansion
+              #     on a container's command/args and collapses a doubled-dollar to a single one, which
+              #     would corrupt 'DO $$…$$' into 'DO $…$' before the container ever runs (bd zla1.20).
               psql -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
                    -v pw="$MC_READONLY_DB_PASSWORD" <<'SQL'
-              DO $$ BEGIN
-                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'babelstone_readonly') THEN
-                  CREATE ROLE babelstone_readonly LOGIN;
-                END IF;
-              END $$;
+              SELECT 'CREATE ROLE babelstone_readonly LOGIN'
+               WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'babelstone_readonly')\gexec
               ALTER ROLE babelstone_readonly LOGIN PASSWORD :'pw'
                 NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
               SQL
