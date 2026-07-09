@@ -382,8 +382,8 @@ the two `cloudflare-web-*` rules — tunnel up first, ports down second). With *
 web port**, there is nothing left to spoof, closing the bypass for all six public hosts at once.
 (Authenticated Origin Pulls — Traefik requiring Cloudflare's origin client cert — was the lighter
 alternative considered; it leaves the ports open-but-mTLS-gated rather than removed, so the Tunnel
-was chosen.) This satisfies the **MUST-before-production-promotion gate (ADR-PC-020 §D3)** on the
-parent epic. **Human residual (account-gated):** create the tunnel + connector token in the
+was chosen.) This satisfies the **MUST-before-production-promotion gate** on the
+parent epic (bd babelstone-zla1.12.14). **Human residual (account-gated):** create the tunnel + connector token in the
 Cloudflare Zero Trust dashboard, apply the manifest, point the CNAMEs at the tunnel, run
 `firewall-web.sh --apply`, then verify a spoofed-`Host` request to the origin IP (95.217.237.53)
 is refused host-by-host — see [`bootstrap/README.md`](../k8s/overlays/staging/bootstrap/README.md)
