@@ -1,6 +1,6 @@
 # infra/k8s/overlays/staging/bootstrap/cloudflare-tunnel.yaml
 # Cloudflare Tunnel (cloudflared) for the staging box — closes the origin-bypass
-# residual (bd babelstone-zla1.12.14; ADR-IC-006 network & transport hardening).
+# residual (bd babelstone-zla1.12.14; minimise-public-surface posture (ADR-IC-006)).
 #
 # Plain English: today Cloudflare's proxy reaches the origin over inbound :80/:443,
 # and the Hetzner firewall has to allow those ports from ALL of Cloudflare's IP ranges
