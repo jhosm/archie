@@ -144,3 +144,22 @@ the source of truth either way.
   ([`../k8s/overlays/staging/bootstrap/helm/traefik-values.yaml`](../k8s/overlays/staging/bootstrap/helm/traefik-values.yaml)),
   which binds those ports on the node — hetzner-k3s disables the bundled Traefik + servicelb, so
   both the controller and the firewall rule are required for `https://*.babelstone.dev` to answer.
+- **The in-cluster Hetzner API token is a cost-abuse blast radius, capped in the Console — not here**
+  (parent security epic bd babelstone-zla1.12). hetzner-k3s stores the `HCLOUD_TOKEN` (see above)
+  as a `kube-system` Secret so the bundled Hetzner CCM + CSI driver can call the Cloud API. That
+  token is **read/write and cannot be resource-scoped** — Hetzner project tokens are all-or-nothing
+  — so a leak (a compromised node, a stolen etcd snapshot) lets an attacker spin up servers or
+  crypto-mine on the project's bill. The real containment is not a Kubernetes or config knob and so
+  cannot live in this repo; it is **the maintainer's to set once in the Hetzner Cloud Console**:
+  (1) a project **spend cap** plus a **budget-alert threshold** (the euro values are the
+  maintainer's call) so runaway spend is bounded and paged, and (2) **confirmed billing
+  isolation** — the `babelstone-staging` project sits in its own account, carrying no shared
+  payment method with any prod or billing-sensitive account, so a staging-token abuse can't reach
+  a production balance. At rest the token is already protected by etcd secrets-at-rest encryption
+  (bd babelstone-zla1.12.9, closed — see *Control-plane hardening* above), so disk/snapshot access
+  alone doesn't yield it in clear. **Rotate on incident:** regenerate the read/write token in the
+  Hetzner Cloud Console, re-export `HCLOUD_TOKEN` and re-run [`provision.sh`](./provision.sh) (or,
+  on the running box, recreate the `kube-system` Hetzner-token Secret by hand and restart the CCM +
+  CSI pods so they pick it up), then **delete the old token in the Console** so the leaked value is
+  dead. Recorded as posture drift, not a fix — the Console spend-cap + budget-alert +
+  billing-isolation actions are account-gated and remain the human residual.
