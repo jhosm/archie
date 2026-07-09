@@ -44,6 +44,11 @@ resources:
   - redpanda-console.yaml
   - kong.yaml
   - openbao.yaml
+  # OpenBao raft (integrated-storage) server config, mounted into the openbao
+  # container as /openbao/config/config.hcl (bd babelstone-zla1.12.13 — persistent
+  # OpenBao). Carries the storage/listener/disable_mlock stanzas; NO `seal` stanza
+  # (single-node manual unseal, no Hetzner KMS — see openbao-config.yaml header).
+  - openbao-config.yaml
   - grafana-lgtm.yaml
   - otel-collector.yaml
   - registry.yaml

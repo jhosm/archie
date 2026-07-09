@@ -92,6 +92,12 @@ spec:
                 secretKeyRef:
                   name: babelstone-dev-secrets
                   key: POSTGRES_PASSWORD
+            # With OpenBao__Enabled=true (below) the engine resolves the "Engine"
+            # connection string FROM OpenBao KV (secret/data/Engine), so this env var is
+            # the fallback the ConfigurationSecretProvider would use only if OpenBao were
+            # off — kept because the wait-for-event-store-migration initContainer still
+            # needs POSTGRES_PASSWORD to poll Postgres directly (it does not talk to
+            # OpenBao). Not dead: the DB password is a legitimate initContainer input.
             - name: ConnectionStrings__Engine
               value: Host=postgres;Port=5432;Database=babelstone;Username=babelstone;Password=$(POSTGRES_PASSWORD)
             # Event bus — INTERNAL Redpanda listener (9092), not the 19092 host listener.
@@ -110,14 +116,55 @@ spec:
               value: http://otel-collector:4317
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
               value: grpc
-            # The engine boots-fails without an environment; PII secret boundary stays off
-            # the bus — OpenBao disabled here, DB password resolved from the Secret seam.
+            # The engine boots-fails without an environment.
             - name: ASPNETCORE_ENVIRONMENT
               value: Production
             - name: ASPNETCORE_HTTP_PORTS
               value: "8080"
+            # OpenBao ON — exercise the REAL per-subject PII transit boundary
+            # (ADR-PC-004) now that OpenBao is persistent (bd babelstone-zla1.12.13).
+            # Flipping this from "false" changes the engine's composition root
+            # (engine/src/Babelstone.Engine.Api/Program.cs): the ISecretProvider
+            # becomes OpenBaoKvSecretProvider (AppRole login → reads the "Engine"
+            # connection string from secret/data/Engine) and the IPiiKeyStore becomes
+            # the real OpenBaoTransitClient. Both need an OpenBao-auth ANCHOR, which the
+            # Secrets Store CSI SecretProviderClass (components/openbao-csi) syncs into
+            # the babelstone-app-secrets Secret and this pod mounts (see the CSI volume
+            # below). The engine talks to OpenBao directly over its own HttpClient; the
+            # engine→openbao hop is walled by the allow-openbao-ingress NetworkPolicy.
+            #
+            # LIVE PREREQ (account-gated, NOT run from CI — see the PR Live-apply
+            # checklist): the CSI driver + vault provider installed, OpenBao
+            # initialised/unsealed, its k8s auth method + babelstone-app role + policy
+            # provisioned, and secret/data/Engine (+ the engine-approle / engine-transit
+            # anchors) populated. Until then the engine pod stays NotReady — fail-closed,
+            # never a silent fallback to the placeholder Secret.
             - name: OpenBao__Enabled
-              value: "false"
+              value: "true"
+            # In-cluster OpenBao API. The KV secret provider AND the transit key store
+            # share this address (Program.cs OpenBao:Address).
+            - name: OpenBao__Address
+              value: http://openbao:8200
+            # AppRole anchor for the KV secret provider (role-id + secret-id → login →
+            # client token). Sourced from the CSI-synced Secret, NOT committed. MountPath
+            # defaults to "secret" (the KV v2 mount) in Program.cs.
+            - name: OpenBao__RoleId
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-app-secrets
+                  key: OPENBAO_APPROLE_ROLE_ID
+            - name: OpenBao__SecretId
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-app-secrets
+                  key: OPENBAO_APPROLE_SECRET_ID
+            # Token for the transit key store (the per-subject crypto-shred boundary).
+            # TransitMount defaults to "transit" in Program.cs. Also CSI-synced.
+            - name: OpenBao__Token
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-app-secrets
+                  key: OPENBAO_TRANSIT_TOKEN
             # Regulatory pack — disk mode loads pt.2026.1 baked into this image at /app/packs.
             - name: Engine__PackRegistry
               value: disk
@@ -154,3 +201,27 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
+          # Mount the Secrets Store CSI volume. The MOUNT is what makes the driver
+          # fetch the OpenBao KV secrets and (via the SecretProviderClass
+          # secretObjects) sync them into the babelstone-app-secrets Secret the env
+          # secretKeyRef above reads. readOnly is mandatory for a CSI inline volume.
+          # The files also land under /mnt/secrets-store, though the engine reads its
+          # anchor from env (the synced Secret), not the files.
+          volumeMounts:
+            - name: openbao-app-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        # Secrets Store CSI inline volume bound to the babelstone-app-secrets
+        # SecretProviderClass (infra/k8s/components/openbao-csi). Sources the
+        # app-tier + OpenBao-anchor secrets FROM OpenBao (k8s auth) rather than a
+        # committed k8s Secret — the ADR-PC-004 §A1 boundary. Requires the CSI
+        # driver + vault provider + the SecretProviderClass installed (the
+        # openbao-csi component, registered by an overlay — deferred this run; see
+        # the PR deferred-registration note). Static-validates as a manifest today.
+        - name: openbao-app-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: babelstone-app-secrets
