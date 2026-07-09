@@ -254,11 +254,16 @@ ride on this wiring but are out of scope here:
 
 *Applying* either overlay is the **CD / promotion pipeline — Q.6**
 ([`.github/workflows/cd.yml`](../../.github/workflows/cd.yml)): a human-dispatched,
-environment-gated `promote` job kubectl-applies the chosen overlay, applies the
-forward-only DB migrations ([`scripts/cd-migrate.sh`](../../scripts/cd-migrate.sh)),
-and `deck sync`s the edge with real OpenBao material
-([`scripts/deck-sync.sh`](../../scripts/deck-sync.sh)). This README's CI job stays
-validate-only; the deploy lives in `cd.yml`.
+environment-gated `promote` job kubectl-applies the chosen overlay, and — **for
+non-staging overlays** — applies the forward-only DB migrations from the runner
+([`scripts/cd-migrate.sh`](../../scripts/cd-migrate.sh)) and `deck sync`s the edge
+with real OpenBao material ([`scripts/deck-sync.sh`](../../scripts/deck-sync.sh)).
+**Staging skips both of those runner-side steps** (bd babelstone-zla1.12.16/.18): it
+migrates **in-cluster** (the `event-store-migrate` Job + the engine/orchestrator apps
+self-migrating on boot, each against its own DB) and keeps its **committed POC
+`kong.yml` edge**, because its OpenBao is the `-dev` empty seam (real edge material is
+deferred to M.2/puu3). This README's CI job stays validate-only; the deploy lives in
+`cd.yml`.
 
 The `ha-secrets.example.yaml` replication credential is a **DEV-ONLY
 placeholder**, same seam contract as `base/secrets.example.yaml` — never commit
@@ -343,7 +348,11 @@ invariants are preserved:
   collector's OTLP `4317/4318` are never fronted — they stay admitted from the
   Collector podSelector only and never reach a public route.
 - **No POC cert/key literals committed** — TLS is issued at runtime by
-  cert-manager, exactly as the edge mTLS material is sourced at `deck sync` time.
+  cert-manager, exactly as the edge mTLS material is sourced at `deck sync` time
+  (for non-staging overlays). **Staging's deck-sync is skipped** (bd babelstone-zla1.12.18):
+  its `-dev` OpenBao holds no real edge material, so the Kong upstreams stay on the
+  committed POC placeholder mTLS (`tls_verify: false`) until M.2/puu3 — a §D3 deferral
+  consistent with ADR-PC-004 A1's dev-mode seam, not a silent divergence.
 - **In-cluster network walls** (bd babelstone-zla1.12.8;
   [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
   §P5 / [ADR-IC-016](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md)
