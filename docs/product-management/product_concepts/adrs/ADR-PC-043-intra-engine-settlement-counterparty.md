@@ -2,8 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-09 |
+| Accepted | 2026-07-10 |
 | Deciders | jhosm |
 | Shape | Contract-shape |
 | Counterparty | The engine-owned current-account family ([ADR-PC-037](./ADR-PC-037-current-account-family.md)) — **single-owner**: the engine owns both sides of this contract |
