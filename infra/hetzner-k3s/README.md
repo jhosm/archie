@@ -145,7 +145,11 @@ the source of truth either way.
   which binds those ports on the node — hetzner-k3s disables the bundled Traefik + servicelb, so
   both the controller and the firewall rule are required for `https://*.babelstone.dev` to answer.
 - **The in-cluster Hetzner API token is a cost-abuse blast radius, capped in the Console — not here**
-  (parent security epic bd babelstone-zla1.12). hetzner-k3s stores the `HCLOUD_TOKEN` (see above)
+  (parent security epic bd babelstone-zla1.12). **The real fix is to remove the in-cluster token
+  entirely** — drop the Hetzner CCM + CSI driver in favour of k3s local-path storage, so no Hetzner
+  API credential lives in the cluster at all (tracked as bd babelstone-zla1.12.20). The spend cap +
+  budget alert + rotate-on-incident posture recorded here is the **containment fallback** — the
+  best we can do for as long as the token exists — not the target end state. hetzner-k3s stores the `HCLOUD_TOKEN` (see above)
   as a `kube-system` Secret so the bundled Hetzner CCM + CSI driver can call the Cloud API. That
   token is **read/write and cannot be resource-scoped** — Hetzner project tokens are all-or-nothing
   — so a leak (a compromised node, a stolen etcd snapshot) lets an attacker spin up servers or
@@ -155,9 +159,11 @@ the source of truth either way.
   maintainer's call) so runaway spend is bounded and paged, and (2) **confirmed billing
   isolation** — the `babelstone-staging` project sits in its own account, carrying no shared
   payment method with any prod or billing-sensitive account, so a staging-token abuse can't reach
-  a production balance. At rest the token is already protected by etcd secrets-at-rest encryption
-  (bd babelstone-zla1.12.9, closed — see *Control-plane hardening* above), so disk/snapshot access
-  alone doesn't yield it in clear. **Rotate on incident:** regenerate the read/write token in the
+  a production balance. At rest, `cluster.yaml` now carries etcd secrets-at-rest encryption
+  (bd babelstone-zla1.12.9, closed — see *Control-plane hardening* above), so **once the box is
+  re-provisioned** disk/snapshot access alone won't yield the token in clear — but that encryption
+  only takes effect on (re-)provision and does **not** retrofit the currently-running box (provisioned
+  2026-07-07). **Rotate on incident:** regenerate the read/write token in the
   Hetzner Cloud Console, re-export `HCLOUD_TOKEN` and re-run [`provision.sh`](./provision.sh) (or,
   on the running box, recreate the `kube-system` Hetzner-token Secret by hand and restart the CCM +
   CSI pods so they pick it up), then **delete the old token in the Console** so the leaked value is
