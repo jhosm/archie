@@ -210,6 +210,9 @@ public sealed class HoldExpiryRuleTests
         public Task<long> GetBalanceCentsAsync(string accountRef, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(
             string accountRef, CancellationToken ct = default) =>
             throw new NotSupportedException();

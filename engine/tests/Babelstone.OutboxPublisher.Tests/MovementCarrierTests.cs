@@ -46,7 +46,7 @@ public sealed class MovementCarrierTests
                 { "name": "direction", "type": { "type": "enum", "name": "MovementDirection", "symbols": ["Debit", "Credit"] } },
                 { "name": "amount_cents", "type": "long" },
                 { "name": "value_date", "type": { "type": "int", "logicalType": "date" } },
-                { "name": "operation", "type": { "type": "enum", "name": "MovementOperation", "symbols": ["Disburse", "CollectInstallment", "PayMaturity", "PayCoupon", "PayEarlyTermination", "RepayEarly", "RolloverDebit"] } },
+                { "name": "operation", "type": { "type": "enum", "name": "MovementOperation", "symbols": ["Disburse", "CollectInstallment", "PayMaturity", "PayCoupon", "PayEarlyTermination", "RepayEarly", "RolloverDebit", "AccrueOverdraftInterest"] } },
                 { "name": "origin", "type": { "type": "enum", "name": "MovementOrigin", "symbols": ["Originated", "Observed"] } },
                 { "name": "command_id", "type": { "type": "string", "logicalType": "uuid" } }
               ]

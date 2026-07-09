@@ -19,6 +19,7 @@ internal static class PackTestData
         "parameters/constants.yaml",
         "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
+        "rate-sheet-refs/current-account-pt.yaml",
     ];
 
     public static string RepoRoot()

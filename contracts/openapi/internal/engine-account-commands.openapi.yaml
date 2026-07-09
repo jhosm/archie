@@ -322,6 +322,49 @@ paths:
             Concurrent modification (optimistic-concurrency conflict on the account stream). Expiry
             consults no family legality gate, so — unlike the lifecycle transitions — it has no 422
             domain-rejection path.
+  /v1/accounts/{id}/overdraft/accrue:
+    post:
+      operationId: accrueOverdraftInterest
+      summary: Accrue a day's overdraft interest for a drawn account (ADR-PC-037 §D5).
+      description: >
+        The projection-derived overdraft-interest accrual command. The engine owns no clock (ADR-PC-023),
+        so an OverdraftInterestAccrued is appended off a projection over the accounts drawn below zero,
+        fired by the ADR-PC-036 lifecycle-command driver — this is that driver's target surface. The engine
+        reads the account's drawn balance, resolves the overdraft TAN from the rate sheet effective on the
+        accrual_date (ADR-PC-008), computes the day's fee command-side to the cent (ADR-PC-010 §P1–§P2), and
+        appends a store-only current_account.OverdraftInterestAccrued carrying the fee as a Debit Movement
+        that deepens the overdraft. An INTERNAL ledger charge, not a rails money-mover (no external
+        settlement), so NOT step-up-SCA-gated. Idempotent (ADR-PC-029): a replayed command id (the driver's
+        canonical number-pinned day ordinal) returns the ORIGINAL outcome with no second accrual — one
+        accrual per account per day. A no-applicable-accrual outcome (not Active / not drawn / no overdraft
+        rate / a fee that rounds to zero) appends nothing and returns the current head.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverdraftAccrualRequest'
+      responses:
+        '200':
+          description: >
+            The account after the accrual (the authoritative post-append fold; the account's OWN lifecycle
+            status is unchanged — the fee moves the spine-owned balance). A no-op outcome and an idempotent
+            replay return the same shape, and commit_sequence is the ADR-IC-005 §P3 read-your-writes token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict on the account stream).
+        '422':
+          description: >
+            The account declares an overdraft rate but no rate sheet is deployed / prices the drawn band (a
+            misconfiguration, ADR-PC-037 §D5) — the driver retries the occurrence until the sheet lands.
 components:
   parameters:
     AccountId:
@@ -582,3 +625,24 @@ components:
           description: The acting principal recorded on the append (defaults to the lifecycle hold-expiry driver principal); a role, never PII.
       examples:
         - value_date: "2026-03-05"
+    OverdraftAccrualRequest:
+      type: object
+      description: >
+        The overdraft-interest accrual command (OverdraftAccrualRequest, snake_case). The account is the path
+        id; this body carries only the accrual's economic accrual_date — the business valid_time the engine
+        stamps on the OverdraftInterestAccrued (ADR-PC-002 / ADR-PC-023), which the ADR-PC-036 driver read
+        from the overdraft projection. The drawn balance and the overdraft rate are read command-side, never
+        on the wire. The Idempotency-Key command id rides the header (ADR-PC-029), not the body. actor
+        defaults to the non-interactive lifecycle overdraft-accrual driver principal — a structural role,
+        never PII.
+      required: [accrual_date]
+      properties:
+        accrual_date:
+          type: string
+          format: date
+          description: The accrual's economic value-date — the business valid_time stamped on the OverdraftInterestAccrued (ADR-PC-023).
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the lifecycle overdraft-accrual driver principal); a role, never PII.
+      examples:
+        - accrual_date: "2026-03-05"

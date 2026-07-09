@@ -74,3 +74,14 @@ public sealed class AuthorizationDeclinedHandler : IEventHandler<AccountPosition
     public HandlerResult<AccountPosition> Apply(AccountPosition state, AuthorizationDeclined @event)
         => HandlerResult<AccountPosition>.From(state);
 }
+
+public sealed class OverdraftInterestAccruedHandler : IEventHandler<AccountPosition, OverdraftInterestAccrued>
+{
+    // A no-op fold on the FAMILY position, the conformant shape: the accrual's effect on the balance is the
+    // fee Movement the event carries, folded by the SPINE's account-keyed movement ledger (the event is
+    // IMovementBearing), never family state — a demand account's accounting balance is a spine-owned fold
+    // (ADR-PC-033), so the family position is untouched by an accrual, exactly as it is by a hold. The
+    // accrual's own audit facts (rate, sheet version, fee) live on the store-only event, not on this state.
+    public HandlerResult<AccountPosition> Apply(AccountPosition state, OverdraftInterestAccrued @event)
+        => HandlerResult<AccountPosition>.From(state);
+}

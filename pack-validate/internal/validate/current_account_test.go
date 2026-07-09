@@ -9,10 +9,11 @@ import (
 
 // The current_account fixtures exercise the THIRD product family — current_account — end to end
 // through the binary, and specifically pin the depth-3 rate-sheet gate (depths.go): the requirement
-// that "the pack can price the family" applies only to a variant that carries a `rate:` block to
-// resolve at constitution. A demand account declares no `rate:` at all (its overdraft-interest rate is
-// resolved separately, not from a variant rate_ref), so it must validate against a pack that carries
-// NO rate-sheet ref for it — otherwise every rate-less family would be un-shippable.
+// that "the pack can price the family" applies only to a variant that carries a `rate:` block. The
+// rate-BEARING ca_pt_standard (an arranged overdraft, so a `rate` #RateRef for its overdraft-interest
+// accrual, ADR-PC-037 §D5) requires the pack to carry a current_account rate-sheet ref (which pt.2026.1
+// now does); the rate-LESS ca_pt_basic (no overdraft, no rate) requires none. One family, both directions
+// of the presence-based gate.
 //
 // Paths are relative to this package dir; caPtStandard / caPtBasic are the committed runtime configs.
 const (
@@ -20,11 +21,11 @@ const (
 	caPtBasic    = "../../../product-configs/current-account/ca_pt_basic.yaml"
 )
 
-// TestCurrentAccountVariantsPassAllDepthsWithoutRateSheetRef — the real committed current-account
-// product-configs conform through all four depths against the REAL pt.2026.1 pack, which carries no
-// current_account rate-sheet ref. This is the depth-3 gate fix: a rate-less variant prices nothing at
-// constitution, so the "pack can price the family" obligation does not apply to it.
-func TestCurrentAccountVariantsPassAllDepthsWithoutRateSheetRef(t *testing.T) {
+// TestCurrentAccountVariantsPassAllDepths — the real committed current-account product-configs conform
+// through all four depths against the REAL pt.2026.1 pack. The rate-BEARING ca_pt_standard passes because
+// the pack now carries a current_account rate-sheet ref (depth-3 is satisfied, not exempted); the rate-LESS
+// ca_pt_basic passes because it prices nothing (depth-3 stays silent for it).
+func TestCurrentAccountVariantsPassAllDepths(t *testing.T) {
 	for _, variant := range []string{caPtStandard, caPtBasic} {
 		t.Run(filepath.Base(variant), func(t *testing.T) {
 			rep, err := Run(Options{
@@ -45,9 +46,10 @@ func TestCurrentAccountVariantsPassAllDepthsWithoutRateSheetRef(t *testing.T) {
 }
 
 // TestRateGateFiresOnlyForRateBearingVariants pins BOTH directions of the depth-3 rate gate against a
-// pack stripped of every rate-sheet ref: a rate-BEARING term-deposit variant still fails
-// unresolved_rate_ref (the gate is preserved, not removed), while a rate-LESS current_account variant
-// passes (the gate correctly stays silent). One pack proves the gate keys on the variant's rate block.
+// pack stripped of every rate-sheet ref: rate-BEARING variants (a term-deposit, a personal-loan, and now
+// a current_account with an overdraft `rate` #RateRef) all fail unresolved_rate_ref (the gate is preserved,
+// not removed), while a rate-LESS current_account (ca_pt_basic, no overdraft) passes (the gate correctly
+// stays silent). One pack proves the gate keys on the variant's rate block, family-agnostically.
 func TestRateGateFiresOnlyForRateBearingVariants(t *testing.T) {
 	pk := clonePackWithoutRateSheets(t)
 
@@ -86,9 +88,27 @@ func TestRateGateFiresOnlyForRateBearingVariants(t *testing.T) {
 		}
 	})
 
-	t.Run("rate-less current-account passes", func(t *testing.T) {
+	// current_account with an arranged overdraft carries `rate: #RateRef` for its overdraft-interest
+	// accrual (ADR-PC-037 §D5) — the same presence-based gate that catches the deposit/loan catches it too.
+	t.Run("rate-bearing current-account (overdraft rate ref) still fails unresolved_rate_ref", func(t *testing.T) {
 		rep, err := Run(Options{
 			VariantPath: caPtStandard,
+			SchemaDir:   schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory,
+		})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if rep.OK {
+			t.Fatalf("expected the rate-bearing current-account variant to fail without a rate-sheet ref, got OK")
+		}
+		if !hasKind(rep.Diagnostics, diag.KindUnresolvedRateRef) {
+			t.Errorf("expected an unresolved_rate_ref diagnostic, got %+v", rep.Diagnostics)
+		}
+	})
+
+	t.Run("rate-less current-account (no overdraft) passes", func(t *testing.T) {
+		rep, err := Run(Options{
+			VariantPath: caPtBasic,
 			SchemaDir:   schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory,
 		})
 		if err != nil {

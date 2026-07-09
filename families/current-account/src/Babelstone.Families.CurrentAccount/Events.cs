@@ -114,3 +114,56 @@ public sealed record AuthorizationDeclined(
     Money Amount,
     DateOnly ValueDate,
     string? Detail = null) : DomainEvent;
+
+/// <summary>A day's overdraft interest accrued against a drawn (negative) demand-account balance
+/// (ADR-PC-037 §D5). In plain English: the account sat below zero, so the bank charged one day of
+/// overdraft interest on the drawn amount — the fee is posted as a Debit <see cref="Movement"/> that
+/// makes the balance a little more negative. The fee is computed COMMAND-SIDE (never in a fold) with
+/// <c>Accrual.DailyBalanceInterest</c> over the negative balance at the rate-sheet-resolved TAN, rounded
+/// HALF_EVEN once at the cent boundary (ADR-PC-010 §P1–§P2). Unlike the family's lifecycle events this one
+/// CARRIES a Movement (the fee), the same idiom as the loan's <c>LoanDisbursed</c>, so the spine's
+/// account-keyed movement ledger folds it into the accounting balance (<see cref="IMovementBearing"/>).
+/// The family fold itself is a no-op — a demand account's balance is a spine-owned fold, never family
+/// state (ADR-PC-033). STORE-ONLY (uncatalogued — the accrual is an internal ledger fact, not a bus event
+/// downstream reacts to, ADR-IC-017), so it carries no <c>.avsc</c>. The fee Movement is
+/// <see cref="MovementOrigin.Observed"/> in the ADR-PC-043 "engine-internal already-effected" sense: the
+/// engine charges it directly onto its own account's balance in one append — no external counterparty, no
+/// cash leg to settle — so it starts no settlement saga (current_account is an Observed-mode family,
+/// commitment XC-3), not an <see cref="MovementOrigin.Originated"/> move awaiting a Core leg. STRUCTURAL
+/// only, no PII (ADR-PC-004 §P2) — opaque ids, integer-cents <see cref="Money"/>, and audit facts.</summary>
+/// <param name="AccountId">The account stream the accrual is appended to — never PII (ADR-PC-004 §P2).</param>
+/// <param name="AccountRef">The account's opaque spine key the fee Movement posts against
+/// (<see cref="AccountPosition.AccountRef"/>) — a reference the engine resolves internally, never PII.</param>
+/// <param name="InterestAmount">The accrued fee as a positive integer-cents magnitude (the drawn-balance
+/// interest owed), posted as a Debit so the balance moves further below zero.</param>
+/// <param name="TanBasisPoints">The overdraft TAN in basis points resolved from the rate sheet at accrual
+/// time, stamped for audit — the rate this day's fee was computed at (ADR-PC-008).</param>
+/// <param name="RateSheetVersionId">The rate-sheet version the TAN was resolved from, pinned for audit and
+/// replay (ADR-PC-008 — the id anchors which sheet governed this accrual).</param>
+/// <param name="AccruedOn">The accrual's economic value-date — a caller-supplied input the driver read
+/// from the overdraft projection, never a clock read in a fold (ADR-PC-023).</param>
+/// <param name="Movements">The fee as ONE Observed Debit Movement against <paramref name="AccountRef"/>
+/// (operation <c>AccrueOverdraftInterest</c>; Observed in the ADR-PC-043 engine-internal-already-effected
+/// sense). Kept nullable and defaulted so a forward-only replay of a pre-Movement record still decodes
+/// (ADR-IC-002), mapped onto the non-null seam member below.</param>
+public sealed record OverdraftInterestAccrued(
+    Guid AccountId,
+    string AccountRef,
+    Money InterestAmount,
+    int TanBasisPoints,
+    string RateSheetVersionId,
+    DateOnly AccruedOn,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
+{
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: the accrual's fee Movement as a NON-null list. Maps the nullable
+    /// <see cref="Movements"/> carrier — kept nullable and defaulted so a forward-only replay still decodes
+    /// (ADR-IC-002) — onto the non-null seam member by coalescing <see langword="null"/> to empty, so the
+    /// generic projector folds it with no per-event null guard. No <c>IntegrationHeaders</c> override — the
+    /// fee Movement is <see cref="MovementOrigin.Observed"/> (ADR-PC-043 engine-internal-already-effected), so
+    /// <c>MovementHeaders</c> emits no Originated header and the settlement predicate starts no saga on the
+    /// account's own event (the loop-breaker), and the event is store-only besides.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
+}

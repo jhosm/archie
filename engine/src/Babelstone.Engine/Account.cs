@@ -160,6 +160,17 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
         => await movements.GetBalanceCentsAsync(accountRef, ct)
            - await holds.GetActiveHoldCentsAsync(accountRef, ct);
 
+    /// <summary>
+    /// Every account whose accounting balance is strictly negative — the projection-derived
+    /// "who is overdrawn?" read the overdraft-interest accrual driver evaluates as-of a date (ADR-PC-037
+    /// §D5 / ADR-PC-023). Delegates to the movement-ledger signed-sum grouping; family-agnostic (keyed on
+    /// the opaque <c>account_ref</c>), and a read, never a clock, so an accrual decided from it stays
+    /// replay-deterministic. The "which product actually accrues at what rate" policy is the family
+    /// driver's / command shell's, not this spine read's.
+    /// </summary>
+    public Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default)
+        => movements.GetOverdrawnAccountsAsync(ct);
+
     /// <summary>The account's currently-active holds, as the spine <see cref="Hold"/> value object.</summary>
     public async Task<IReadOnlyList<Hold>> GetActiveHoldsAsync(string accountRef, CancellationToken ct = default)
     {

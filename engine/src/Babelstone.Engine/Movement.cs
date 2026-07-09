@@ -115,4 +115,9 @@ public enum MovementOperation
     /// <summary>The rollover debit leg of a deposit renewal — the matured principal re-debited into the
     /// renewed deposit (paired with an interest credit on the same renewal event).</summary>
     RolloverDebit,
+
+    /// <summary>An overdraft-interest accrual — the fee charged against a demand account's drawn (negative)
+    /// balance (ADR-PC-037 §D5), a Debit that makes the balance more negative. Added at the END so the
+    /// existing ordinals are stable (forward-only schema evolution, ADR-IC-002).</summary>
+    AccrueOverdraftInterest,
 }

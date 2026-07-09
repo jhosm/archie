@@ -39,20 +39,23 @@ public sealed class CurrentAccountLifecycleModule : IFamilyLifecycleModule
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(ctx);
 
-        // The SPINE-owned active-hold read (ADR-PC-033): unlike the deposit/loan lifecycle modules (which bind
-        // a family read-model store), a current account's holds live in the spine's account_holds fold, read
-        // through AccountBalanceReader. Build it over the host's read-model connection from the two concrete
-        // Npgsql spine stores (both spine projections materialised in the same engine read-model database).
-        // The movement-ledger store is required by AccountBalanceReader's ctor but is never touched by the
-        // expiry read (GetExpiryCandidatesAsync reads only the hold store); constructing it is cheap — Npgsql
-        // connects lazily, on the first query that never comes.
+        // The SPINE-owned reads (ADR-PC-033): unlike the deposit/loan lifecycle modules (which bind a
+        // family read-model store), a current account's holds and balance are spine folds (account_holds +
+        // movement_ledger), read through AccountBalanceReader. Build it over the host's read-model connection
+        // from the two concrete Npgsql spine stores. BOTH stores are now live reads: the hold-expiry rule reads
+        // the hold store (GetExpiryCandidatesAsync), and the overdraft-accrual rule reads the movement-ledger
+        // store (GetOverdrawnAccountsAsync).
         services.AddSingleton(new AccountBalanceReader(
             new PostgresMovementLedgerStore(ctx.ReadModelConnectionString),
             new PostgresAccountHoldStore(ctx.ReadModelConnectionString)));
 
-        // The family's hold-expiry rule joins the core-resolvable ILifecycleCommandRule set the
-        // LifecycleSchedulePass enumerates per tick. It resolves the spine reader registered just above.
+        // The family's TWO lifecycle-command rules join the core-resolvable ILifecycleCommandRule set the
+        // LifecycleSchedulePass enumerates per tick (it injects IEnumerable<ILifecycleCommandRule>, so both
+        // run every pass). Both resolve the spine reader registered above: HoldExpiryRule off the active-hold
+        // horizon read, OverdraftAccrualRule off the overdraft read (ADR-PC-037 §D4e / §D5).
         services.AddSingleton<ILifecycleCommandRule>(sp =>
             new HoldExpiryRule(sp.GetRequiredService<AccountBalanceReader>()));
+        services.AddSingleton<ILifecycleCommandRule>(sp =>
+            new OverdraftAccrualRule(sp.GetRequiredService<AccountBalanceReader>()));
     }
 }

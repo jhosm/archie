@@ -425,6 +425,9 @@ public sealed class AccountHoldProjectorTests
         public Task<long> GetBalanceCentsAsync(string accountRef, CancellationToken ct = default) =>
             Task.FromResult(balanceCents);
 
+        public Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
         public Task AppendAsync(IReadOnlyList<MovementLedgerEntry> entries, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
