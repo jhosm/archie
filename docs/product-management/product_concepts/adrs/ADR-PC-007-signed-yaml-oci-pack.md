@@ -184,6 +184,14 @@ The §P1 pack layout is **extended** with one more format-fixed data file, `fami
 
 This is **additive**: it reverses no part of the Decision — the pack stays auditor-readable YAML data + bundled `.cue` schemas, distributed as a cosign-signed OCI artefact pulled by digest (§P1–P4). The fail-loud structural parse and the verified-signature-attests-CUE posture (§P2/§P4) extend to the new file unchanged. The load-time consumer of this manifest — the host's MANDATORY fail-closed family/schema-version cross-check — is owned by [ADR-PC-009 §A1](./ADR-PC-009-per-instance-version-pinning.md) (the pinned pack is the authoritative per-deployment family set); this ADR owns only the pack-format addition. Gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` in the [commitment catalogue](./commitment-catalogue.md) (recorded in Verifiable commitments below).
 
+### A2 · The first-party container images are pinned by digest at the CD boundary — verify what you deploy (2026-07-09, bd `babelstone-2t16.30`)
+
+**In plain English:** the same "cosign-signed, pulled by digest, never a movable tag" rule this ADR sets for pack OCI artefacts (§P2) now also governs the first-party *container images* the CD pipeline promotes. Until now the pipeline verified images by digest but then deployed manifests that still said `:latest` — so it could cosign-verify one set of bytes and let the kubelet pull another. The promote step now resolves each first-party image to its exact signed digest, verifies *that* digest, and pins the rendered manifest to it, so the bytes verified are the bytes deployed.
+
+§P2's distribution posture — cosign-keyless-signed, identity-pinned, and consumed **by digest, never by a movable tag** — is **extended** from pack artefacts to the first-party container images built and signed by `image-build.yml` (the same cosign machinery, under the same OIDC signing identity §P2 already names). At promotion (`.github/workflows/cd.yml`), for every `ghcr.io/jhosm/babelstone-*` image the target overlay renders, the pipeline (1) resolves its in-manifest tag to the immutable manifest digest, (2) `cosign verify`s that `name@sha256:…` against the `image-build.yml` signing identity, and (3) pins the rendered manifest to that digest (`kustomize edit set image`) before `kubectl apply`. One digest flows resolve → verify → deploy, closing the time-of-check-to-time-of-use gap between the cosign verification and the kubelet pull. `scripts/cd-pin-images.sh` carries the logic in two modes — a hermetic `--contract` assertion on the push/PR gate lane (mirrors how the `verify-images` job asserts its cosign contract with no live digests) and the real `--pin` on a dispatched apply.
+
+This is **additive**: it reverses no part of the Decision — packs are unchanged (still auditor-readable YAML data + bundled `.cue` schemas, cosign-signed OCI, pulled by digest, §P1–§P5), and this generalises §P2's "by digest, never by tag" trust rule to the container images the same signature already covers. Explicitly **out of scope** here and tracked separately (bd `babelstone-2t16.31`): third-party images (`svhd/logto`, `postgres`, `kong`, …) and commit-pinned (rather than current-`latest`-resolved) promotion. Recorded in Verifiable commitments below.
+
 ---
 
 ## Verifiable commitments
@@ -197,6 +205,8 @@ Two falsifiable invariants this decision introduces are not yet wired to a Test 
 
 - **Fail-loud pack load** (§P4): a pack pull or cosign-signature-verify failure at engine startup is fatal — the engine refuses to serve rather than silently degrading; new `pack_version` references trigger a hot pull + verify + cache with the same discipline. No Test ID is wired yet.
 - **Generated-not-authored corpus** (§P5): the publish gate regenerates `expected-events.yaml` from the engine rather than accepting a hand-authored file, so a hand-edited corpus cannot land. No Test ID is wired yet.
+
+The §A2 CD-boundary invariant — **verify what you deploy** — is gated by the CD workflow itself rather than an engine fitness function: the hermetic `cd-pin-images.sh --contract` assertion on the push/PR lane proves the resolve → verify → pin path stays wired, and the promote-time `cosign verify` of each resolved `ghcr.io/jhosm/babelstone-*@sha256:…` digest gates the real apply (fail-closed — an unverifiable digest aborts the promotion). No commitment-catalogue Test ID is wired: this is a delivery-pipeline invariant, not an engine replay/fold property.
 
 ---
 
