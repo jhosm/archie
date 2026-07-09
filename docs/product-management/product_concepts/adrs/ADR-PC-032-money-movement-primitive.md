@@ -185,6 +185,18 @@ Concretely, the engine-spine producer ([`Babelstone.Engine.MovementHeaders`](../
 
 ---
 
+## Amendment — 2026-07-10: slot-4 key-derivation carve-out for the single-owner engine-owned-CA settlement surface (ratified by ADR-PC-043)
+
+[ADR-PC-043](./ADR-PC-043-intra-engine-settlement-counterparty.md) (Accepted 2026-07-10) settles a family's `Originated` `Movement` against an *engine-owned* current account ([ADR-PC-037](./ADR-PC-037-current-account-family.md)) via the substrate `SettlementProcess` saga, distributed with no shared transaction across families. Making that leg land exactly once required deriving the CA-apply idempotency key from the settlement reference — which slot 4 says the primitive does not do. This records that carve-out; it is additive and scoped to the single-owner engine-CA surface, and leaves the two-party legacy-ACL leg untouched.
+
+### A11 · The CA-apply `command_id` MAY be derived from the process-id-derived settlement reference (refines §Decision slot 4)
+
+Slot 4 keeps two distinct keys — the engine append `CommandId` and the ACL Core idempotency key — and states "this ADR does not collapse or derive one from the other." For the **engine-owned-CA settlement surface only** (the ADR-PC-043 `/capture` and `/credit` endpoints, effected by the substrate saga against an account the engine itself owns), the CA-apply `command_id` IS deliberately derived from the process-id-derived reference `SettlementReferences.Derive(prefix, processId)`, so a saga reissue re-presenting a byte-identical body under a fresh dispatch `message_id` collapses to one append via `command_dedup`. This is legitimate precisely because the engine owns *both* sides of that leg — unlike the two-party legacy-ACL leg slot 4 was written for, where the two keys stay separate and this carve-out does NOT apply.
+
+### A12 · Single-sidedness and append-first are preserved; this amends slot 4, it does not supersede this ADR
+
+The `Movement` stays single-sided and append-first: a cross-family settlement is still TWO independent single-sided Movements (one on the source family instance, one on the engine CA), never a balanced pair ([ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) intact — no engine-side double-entry). Slots 1–3, 5–6, §Consequences, and A1–A10 (including the 2026-07-04 per-occurrence-identity revision) remain binding as written; §A9/§A10 per-occurrence `process_id` and the header-only, family-agnostic fan-out are unchanged. This amendment refines slot 4 for the engine-CA surface; it is appended to — not a revision of — the original decision.
+
 ## Verifiable commitments
 
 This decision's load-bearing commitments are fitness functions ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)). The spine's family-agnosticism rides the existing [`ENGINE_FAMILY_AGNOSTIC`](./commitment-catalogue.md) gate unchanged (the `Movement` type + generic leg name no family). The two **new** commitments below are not yet catalogued centrally — they register into the [commitment catalogue](./commitment-catalogue.md) when the implementing issues (bd `babelstone-5r9n.1`, `babelstone-t7o3.13`) land their gates:
