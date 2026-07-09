@@ -109,6 +109,11 @@ jobs:
       # promotable digest set yet), so this step asserts the verify CONTRACT: the exact cosign
       # invocation a deployer runs, with the identity regexes a promotion must pin. A real
       # promotion supplies IMAGE_DIGESTS (newline-separated name@sha256:… refs) as an env secret.
+      # The deployed-bytes realisation of this — resolve every rendered first-party image to its
+      # digest, cosign-verify THAT, and pin the manifest to it — runs in the promote job (step
+      # 4c2, ADR-PC-007 §A2), so verify and deploy reference the same digest and the kubelet can
+      # no longer pull a movable :latest the check never saw. This job stays the early fail-fast
+      # contract gate plus the explicit-PROMOTE_IMAGE_DIGESTS override path.
       - name: Assert the cosign-verify contract (identity-pinned, by digest)
         env:
           # The OIDC identity image-build.yml signs under — pin to the repo's signing workflow.
@@ -176,6 +181,17 @@ jobs:
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
             | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0 \
                 -schema-location "$SCHEMA_LOC"
+      - name: Assert the digest-pin contract (hermetic — no registry, mirrors verify-images)
+        # ADR-PC-007 §A2 (bd babelstone-2t16.30): the promote lane pins every first-party
+        # ghcr.io/jhosm/babelstone-* image the overlay renders to its cosign-verified digest
+        # before apply, so CD deploys the exact bytes it verified (closing the verify/deploy
+        # TOCTOU). This is the CI-runnable HALF — it proves the resolve→verify→pin path stays
+        # wired and finds a non-empty first-party set, WITHOUT a live registry, exactly as
+        # verify-images asserts its cosign contract with no live digests. The real
+        # resolve + cosign-verify + pin runs at apply time in the promote job (step 4c2).
+        env:
+          OVERLAY: ${{ github.event.inputs.overlay || 'staging' }}
+        run: ./scripts/cd-pin-images.sh --contract "infra/k8s/overlays/$OVERLAY"
       - name: Secret preflight — the staging render must carry NO placeholder credential bodies
         # bd babelstone-zla1.12.4 (ADR-PC-004 §A1): staging drops the committed dev-placeholder
         # Secret (drop-dev-secrets.patch.yaml); this gate proves it stays dropped. Staging only —
@@ -214,6 +230,16 @@ jobs:
           version: "2026.6.6"
       - name: Install kubectl + cosign
         uses: sigstore/cosign-installer@v3
+      - name: Log in to GHCR (read image manifests + cosign signatures)
+        # crane (resolve tag→digest) and `cosign verify` both read the private GHCR
+        # manifests + signatures the digest pin (step 4c2) checks; packages:read on this
+        # job + the run token authorise it. Writes ~/.docker/config.json, which crane and
+        # cosign both read.
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       # 4a — forward-only migrations applied to the live DBs BEFORE the new images serve.
       #      SKIPPED for staging: staging migrates entirely IN-CLUSTER, each series against its
       #      OWN database, so a runner-side apply is both unreachable and structurally wrong there:
@@ -267,6 +293,17 @@ jobs:
         env:
           KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: ./scripts/cd-secret-preflight.sh --live -n babelstone-staging
+      # 4c2 — pin first-party images to their cosign-verified digests (ADR-PC-007 §A2,
+      #       bd babelstone-2t16.30). For every ghcr.io/jhosm/babelstone-* image the overlay
+      #       renders, resolve its tag to the immutable manifest digest (crane), cosign-verify
+      #       THAT name@sha256 against the image-build.yml signing identity, then `kustomize edit
+      #       set image` the overlay to it — so 4d applies the exact bytes verify-images checks,
+      #       closing the verify/deploy TOCTOU. Fail-closed: an unresolvable/unverifiable image
+      #       aborts the promotion. Runs for BOTH overlays (staging renders 6 first-party, ha 1).
+      - name: Pin first-party images by digest (resolve + cosign-verify, then pin the overlay)
+        env:
+          OVERLAY: ${{ github.event.inputs.overlay }}
+        run: ./scripts/cd-pin-images.sh --pin "infra/k8s/overlays/$OVERLAY"
       # 4d — apply the rendered overlay to the cluster with the scoped deploy identity.
       - name: kubectl apply the rendered overlay
         env:
