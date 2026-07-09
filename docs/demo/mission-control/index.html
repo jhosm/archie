@@ -590,6 +590,7 @@ body.console-open .hint-bar { display:none; }
     // LIVE·saga mode: the constitution saga driven through the orchestrator edge
     processId: null, streamUrl: null, sagaES: null,
     sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false, sagaReached: 0,
+    sagaStalled: false, sagaStallTimer: null,   // watchdog: a non-terminal saga that stops advancing (bd zla1.17)
     // LIVE·engine real traces (bd babelstone-f0ic.9): the engine's X-Trace-Id + the spans fetched
     // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
     traceId: null, realTrace: null, traceState: "illustrative",
@@ -759,8 +760,22 @@ body.console-open .hint-bar { display:none; }
       default: return s.toLowerCase().replace(/_/g, " ");
     }
   }
+  // Saga stall watchdog (bd babelstone-zla1.17): a running saga that stops advancing — e.g. the
+  // engine 500s on the constitute leg, leaving the orchestrator stuck at APPROVED — must NOT read as
+  // "still working". If no state advance arrives within SAGA_STALL_MS while the saga is non-terminal,
+  // renderSagaProcess surfaces a "stalled" warning instead of an open-ended "Awaiting…".
+  var SAGA_STALL_MS = 20000;
+  function clearSagaWatchdog() { if (state.sagaStallTimer) { clearTimeout(state.sagaStallTimer); state.sagaStallTimer = null; } }
+  function armSagaWatchdog() {
+    clearSagaWatchdog();
+    if (state.sagaTerminal) return;   // terminal states are their own signal — no watchdog needed
+    state.sagaStallTimer = setTimeout(function () {
+      if (state.mode === "saga" && !state.sagaTerminal) { state.sagaStalled = true; renderSagaProcess(); }
+    }, SAGA_STALL_MS);
+  }
   function openSagaStream() {
     if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
+    state.sagaStalled = false; armSagaWatchdog();   // arm on open; each advance re-arms (onSagaState)
     var es = new EventSource(API_BASE + state.streamUrl);
     state.sagaES = es;
     es.addEventListener("state", function (ev) { try { onSagaState(JSON.parse(ev.data)); } catch (e) {} });
@@ -772,6 +787,7 @@ body.console-open .hint-bar { display:none; }
     if (d.version === state.sagaVersion && d.state === state.sagaState) return;
     var changed = d.state !== state.sagaState;
     state.sagaState = d.state; state.sagaVersion = d.version; state.sagaTerminal = !!d.terminal;
+    state.sagaStalled = false;   // a real advance clears any prior stall
     var pid = (state.processId || "").slice(0, 8) + "…";
     if (changed) addEvent({ seq: "v" + d.version, name: "Saga · " + d.state, meta: sagaStateBlurb(d.state) });
     // Topology lens (bd babelstone-f0ic.15.3): light the REAL legs this advance produced —
@@ -819,6 +835,8 @@ body.console-open .hint-bar { display:none; }
       }
       toast(d.state === "COMPLETED" ? "Saga complete · DepositConstituted" : "Saga ended · " + d.state, d.state === "COMPLETED" ? "verify" : "err");
     }
+    // re-arm the stall watchdog on each advance (armSagaWatchdog clears the timer once terminal)
+    armSagaWatchdog();
     setButtons();
   }
   function renderSagaProcess() {
@@ -842,11 +860,14 @@ body.console-open .hint-bar { display:none; }
       return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;color:' + color + '">' +
              '<span style="width:14px;text-align:center">' + mark + '</span><span>' + label + '</span></div>';
     }).join("");
+    var stalled = state.sagaStalled && !failure && !complete;
     var note = complete
       ? '<div class="pb-sub" style="color:var(--verify)">✓ DepositConstituted — the saga drove edge → settlement → engine end-to-end.</div>'
       : failure
         ? '<div class="pb-sub" style="color:var(--wrong)">Fail-closed · ' + sagaStateBlurb(s) + ' — nothing was committed.</div>'
-        : s === "APPROVED"
+        : stalled
+          ? '<div class="pb-sub" style="color:var(--wrong)">⚠ Stalled — no saga advance for ' + Math.round(SAGA_STALL_MS / 1000) + 's. The orchestrator has not progressed past <b>' + s + '</b>; the engine\'s constitute leg may be failing (check the engine and the Outbox·Inbox lens). Nothing is confirmed — this is NOT a completed deposit.</div>'
+          : s === "APPROVED"
           ? '<div class="pb-sub">Reached <b>APPROVED</b> — the reversible reserve <b>and</b> the irreversible debit both fired, and <b>ActivateDeposit</b> landed a real deposit in the engine. Awaiting the engine\'s <b>DepositConstituted</b> event to carry the saga <b>APPROVED→COMPLETED</b> (ADR-PC-029 slot 2 — the advance is on the engine\'s event, never the HTTP 2xx).</div>'
           : '<div class="pb-sub">Walking the reversible validations in <b>' + s + '</b> — reserve + product-limit checks, before any irreversible effect (the dispatcher delivers each leg to the Core-ACL stub).</div>';
     passbook.innerHTML =

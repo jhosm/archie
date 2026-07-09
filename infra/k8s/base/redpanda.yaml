@@ -25,6 +25,15 @@ spec:
     - name: schema-ext
       port: 18081
       targetPort: 18081
+    # HTTP Proxy (pandaproxy) — the Kafka-REST listener Mission Control's Topic·Avro lens reads
+    # (mirrors compose; the k8s base had drifted by omitting it). `pandaproxy` is the in-cluster
+    # listener MC's serve.py dials via PANDAPROXY_URL=http://redpanda:8082.
+    - name: pandaproxy
+      port: 8082
+      targetPort: 8082
+    - name: pandaproxy-ext
+      port: 18082
+      targetPort: 18082
     - name: admin
       port: 9644
       targetPort: 9644
@@ -82,6 +91,11 @@ spec:
             - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
             - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
             - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+            # HTTP Proxy (pandaproxy) — the Kafka-REST listener Mission Control's Topic·Avro lens
+            # reads (mirrors compose infra/compose.yaml; the k8s base had drifted by omitting it).
+            # Internal advertised as `redpanda`, external as `localhost` (only internal matters in-cluster).
+            - --pandaproxy-addr=internal://0.0.0.0:8082,external://0.0.0.0:18082
+            - --advertise-pandaproxy-addr=internal://redpanda:8082,external://localhost:18082
             # LISTEN on all local interfaces (a pod cannot bind the Service ClusterIP that
             # `redpanda` resolves to → "Cannot assign requested address"); ADVERTISE the
             # service name so peers/clients reach it. Surfaced on the first real-cluster apply.
@@ -96,6 +110,10 @@ spec:
               containerPort: 8081
             - name: schema-ext
               containerPort: 18081
+            - name: pandaproxy
+              containerPort: 8082
+            - name: pandaproxy-ext
+              containerPort: 18082
             - name: admin
               containerPort: 9644
           readinessProbe:
