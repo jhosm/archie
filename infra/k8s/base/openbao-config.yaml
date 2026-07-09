@@ -1,0 +1,65 @@
+# OpenBao server config — raft (integrated storage), single node.
+#
+# Plain English: this is the config file the REAL (non-`-dev`) OpenBao server
+# reads. It swaps the throwaway in-memory dev store for on-disk Raft storage
+# (integrated storage), so keys survive a pod restart — the prerequisite for
+# actually sourcing app-tier secrets and per-subject PII keys from OpenBao
+# (ADR-PC-004). It is mounted read-only into the openbao container as
+# /openbao/config/config.hcl (see base/openbao.yaml).
+#
+# SCOPE (bd babelstone-zla1.12.13): this is the PERSISTENT-storage + policy-
+# governed slice. It deliberately does NOT configure auto-unseal (a `seal`
+# stanza) — the single-node staging box has no Hetzner KMS to anchor a
+# Transit/KMS auto-unseal, so the node comes up SEALED and an operator unseals
+# it manually (documented caveat — see infra/k8s/components/openbao-csi/README.md
+# and the header of base/openbao.yaml). Auto-unseal + DR (raft snapshots) are a
+# separate, later slice (ADR-PC-005 §P4, out of scope here); this file must stay
+# free of a `seal` stanza until a real key-management anchor exists.
+#
+# disable_mlock=true (NOT the IPC_LOCK capability): the hardened pod posture
+# (base/openbao.yaml) drops ALL Linux capabilities and PSA `baseline` rejects
+# IPC_LOCK, so OpenBao cannot mlock() its memory. Disabling mlock is the
+# supported alternative the OpenBao docs prescribe for containers that can't hold
+# IPC_LOCK; the residual risk (secrets could be swapped to disk) is accepted
+# because the node runs without swap (k3s default) — the same trade the file
+# header of base/openbao.yaml already prescribed for real provisioning.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  labels:
+    app.kubernetes.io/name: openbao
+data:
+  config.hcl: |
+    # Raft integrated storage — the durable, single-node key store. node_id is
+    # fixed (single replica); the data lives on the mounted PVC at /openbao/data
+    # (hcloud-volumes in staging), so keys and the transit key-ring survive a pod
+    # restart. A multi-node Raft cluster (retry_join / HA) is out of scope for
+    # this single-node box.
+    storage "raft" {
+      path    = "/openbao/data"
+      node_id = "openbao-0"
+    }
+
+    # API listener. TLS terminates at the in-cluster mesh boundary (ADR-IC-006 §P5
+    # is the Kong edge; the engine->OpenBao hop is walled by the
+    # allow-openbao-ingress NetworkPolicy, staging overlay). tls_disable here keeps
+    # the listener plain-HTTP inside the pod network exactly as the dev-mode
+    # listener was; enabling listener TLS is a follow-up paired with the internal
+    # mTLS rollout (overlays/staging/internal-mtls.patch.yaml).
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = "true"
+    }
+
+    # The address peers/clients advertise for this node (single node -> itself).
+    api_addr     = "http://openbao:8200"
+    cluster_addr = "http://openbao:8201"
+
+    # See the ConfigMap header: drop ALL caps + PSA baseline reject IPC_LOCK, so
+    # mlock is disabled rather than re-adding the capability.
+    disable_mlock = true
+
+    # Expose the /sys/metrics + health surface. ui is off (no operator console on
+    # the in-cluster listener; operators reach it via kubectl port-forward).
+    ui = false

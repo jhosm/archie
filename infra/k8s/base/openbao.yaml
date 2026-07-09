@@ -1,8 +1,41 @@
 # OpenBao — per-subject key store for crypto-shredding (ADR-PC-004).
 #
-# DEV-ONLY: `-dev` mode is in-memory and auto-unsealed with a fixed root token.
-# This is a SEAM, not real provisioning. Production OpenBao (real storage,
-# auto-unseal, policy/auth setup, HA/DR per ADR-PC-005) is M.2 (babelstone-puu3).
+# Plain English: this runs OpenBao (the self-hosted secrets manager the engine
+# uses for per-subject PII encryption keys, ADR-PC-004) in PERSISTENT mode. It no
+# longer runs the throwaway `-dev` server (in-memory, auto-unsealed, one fixed
+# root token); it now stores its data on a real on-disk Raft store (integrated
+# storage) mounted from a PVC, so keys survive a pod restart. That is the
+# prerequisite for actually sourcing app-tier secrets and per-subject keys from
+# OpenBao instead of from a plain Kubernetes Secret (bd babelstone-zla1.12.13).
+#
+# SCOPE (bd babelstone-zla1.12.13 — PERSISTENT storage + policy-governed): this
+# slice makes OpenBao durable and turns on the engine's real transit boundary. It
+# deliberately EXCLUDES:
+#   • auto-unseal / KMS: the single-node staging box has NO Hetzner KMS to anchor a
+#     Transit/KMS auto-unseal seal, so there is NO `seal` stanza in the raft config
+#     (base/openbao-config.yaml). The node comes up SEALED after any restart and an
+#     operator unseals it MANUALLY — the documented caveat below.
+#   • DR / raft snapshots (ADR-PC-005 §P4): the scheduled raft-snapshot backup lives
+#     in overlays/ha/openbao-dr-ha.yaml, out of scope here.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLE-NODE MANUAL-UNSEAL CAVEAT (READ BEFORE A NODE DRAIN / k3s UPGRADE)
+# ─────────────────────────────────────────────────────────────────────────────
+# Without auto-unseal, OpenBao boots SEALED. A k3s node drain / auto-upgrade
+# reboots the single node, which restarts this pod SEALED — and every dependent
+# (the engine's PII boundary, and any pod whose SecretProviderClass mounts a
+# secret from OpenBao) stays unavailable until an operator runs
+# `bao operator unseal` with the unseal key(s) held OUT of the cluster
+# (secret-zero — see infra/k8s/components/openbao-csi/README.md for the full
+# init/unseal + ordered-restart procedure). Ordered restart after an unseal:
+# unseal OpenBao FIRST, then bounce the engine / CSI-consuming pods so their
+# secret mounts resolve. This is the accepted single-node trade until a KMS
+# auto-unseal anchor exists (a later slice).
+#
+# The full one-time init/unseal + k8s-auth + policy + transit-mount provisioning
+# is an ACCOUNT-GATED operator step (it needs the live cluster and produces the
+# secret-zero unseal keys/root token) — captured in the PR's Live-apply checklist
+# and components/openbao-csi/README.md, never run from CI.
 apiVersion: v1
 kind: Service
 metadata:
@@ -17,6 +50,47 @@ spec:
     - name: api
       port: 8200
       targetPort: 8200
+    # Raft peer/cluster port. Single node advertises it to itself (cluster_addr in
+    # the raft config); present so a future multi-node cluster needs no Service edit.
+    - name: cluster
+      port: 8201
+      targetPort: 8201
+---
+# ServiceAccount the k8s auth method binds workloads to. OpenBao's Kubernetes auth
+# method verifies a workload's projected SA token; the Secrets Store CSI
+# SecretProviderClass (infra/k8s/components/openbao-csi) authenticates as this SA
+# to fetch app-tier secrets. Created here so the base render is self-consistent;
+# the auth-method ROLE mapping (which SA -> which policy) is an operator init step.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: openbao
+---
+# Raft data volume. A standalone PVC (ReadWriteOnce) rather than a StatefulSet
+# volumeClaimTemplate, because OpenBao here MUST stay a Deployment: the staging
+# overlay's resources.patch.yaml (which sizes the single node) targets
+# `kind: Deployment name: openbao`, and the staging sizing fitness-check in ci.yml
+# requires every workload container to carry a memory limit — a StatefulSet would
+# miss that patch and fail the gate. Single replica + RWO is correct for
+# single-node raft. storageClassName is set to the durable Hetzner CSI class
+# (hcloud-volumes) so the key store survives a node rebuild and is the same
+# durable tier as the Postgres/Redpanda data (staging pins those via
+# storageclass.patch.yaml; this PVC pins it inline since the overlay patch targets
+# only StatefulSet VCTs). ~1Gi is ample for a key-ring + raft log.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openbao-data
+  labels:
+    app.kubernetes.io/name: openbao
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: hcloud-volumes
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -24,10 +98,15 @@ metadata:
   name: openbao
   labels:
     app.kubernetes.io/name: openbao
-  annotations:
-    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the single RWO PVC (openbao-data) cannot be
+  # mounted by two pods at once, so a rolling update would deadlock (new pod
+  # Pending on the volume held by the old pod). Recreate tears the old pod down
+  # first — acceptable for a single-node key store (it is sealed on restart anyway,
+  # see the manual-unseal caveat above).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: openbao
@@ -35,45 +114,77 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: openbao
-      annotations:
-        babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
     spec:
+      serviceAccountName: openbao
+      # PVC ownership: fsGroup chowns the mounted raft volume to gid 1000 so the
+      # non-root openbao process (runAsUser 100 below) can write /openbao/data.
+      # Mirrors the postgres StatefulSet's fsGroup pattern.
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: openbao
           image: openbao/openbao:2.5.4
-          # Dev server: in-memory store, single unsealed node. NOT for prod.
-          # ARGS, not command: the image ENTRYPOINT is `docker-entrypoint.sh` (it runs
-          # `bao "$@"`), so these are arguments to it. Using `command:` would REPLACE the
-          # entrypoint and try to exec a binary literally named `server` — which does not
-          # exist, so the container fails with RunContainerError. Verified: the default
-          # entrypoint + these args boots OpenBao unsealed as uid 100 with drop:[ALL].
+          # Real server reading the raft HCL config (base/openbao-config.yaml),
+          # NOT `-dev`. ARGS, not command: the image ENTRYPOINT is
+          # `docker-entrypoint.sh` (it runs `bao "$@"`), so these are arguments to
+          # it. Using `command:` would REPLACE the entrypoint and try to exec a
+          # binary literally named `server` — which does not exist, so the
+          # container fails with RunContainerError.
           args:
             - server
-            - -dev
-            - -dev-listen-address
-            - 0.0.0.0:8200
+            - -config=/openbao/config/config.hcl
           ports:
             - name: api
               containerPort: 8200
+            - name: cluster
+              containerPort: 8201
           env:
-            - name: BAO_DEV_ROOT_TOKEN_ID
-              valueFrom:
-                secretKeyRef:
-                  name: babelstone-dev-secrets
-                  key: OPENBAO_DEV_TOKEN
             - name: BAO_ADDR
               value: http://127.0.0.1:8200
+          volumeMounts:
+            - name: config
+              mountPath: /openbao/config
+              readOnly: true
+            - name: data
+              mountPath: /openbao/data
+          # Readiness/liveness use OpenBao's health endpoint. A SEALED or
+          # uninitialized node returns non-200 on the default /sys/health, which
+          # would keep the pod NotReady forever after a restart (manual-unseal
+          # caveat above). We therefore treat sealed+uninitialized as "ready enough
+          # to accept the unseal call": standbyok + sealedcode/uninitcode=200 map
+          # those states to 200 so the pod is Ready and reachable for the operator's
+          # `bao operator unseal`. Liveness only checks the process is answering
+          # (any HTTP response on /sys/health), so a legitimately-sealed node is not
+          # killed in a crash-loop while it waits to be unsealed.
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+              port: 8200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200&drsecondarycode=200&performancestandbycode=200
+              port: 8200
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). Run as the
           # image's non-root `openbao` user (uid 100 / gid 1000) and drop ALL
           # Linux capabilities. runAsUser is REQUIRED: the image defaults to root,
           # so runAsNonRoot alone would be refused by the kubelet ("image will run
           # as root"). We add NO capabilities — PSA `baseline` REJECTS IPC_LOCK
-          # (it is not on baseline's capability allow-list), and the `-dev` server
-          # is in-memory so it never mlock()s (verified: it boots unsealed with
-          # drop:[ALL] and no IPC_LOCK). When real provisioning lands (M.2/puu3),
-          # disable mlock via `disable_mlock` in config, not by re-adding the cap.
-          # readOnlyRootFilesystem is omitted: even in -dev mode OpenBao writes
-          # runtime files (plugin/socket scratch) to its root fs.
+          # (it is not on baseline's capability allow-list). Real raft mode WOULD
+          # normally mlock() its memory, but the config disables mlock
+          # (disable_mlock=true in openbao-config.yaml) — the supported alternative
+          # to holding IPC_LOCK, exactly as this file's header prescribed for real
+          # provisioning; the node runs without swap so the residual risk is
+          # accepted. readOnlyRootFilesystem is omitted: OpenBao writes runtime
+          # files (plugin/socket scratch) to its root fs; durable state is the
+          # mounted /openbao/data volume, not the root fs.
           securityContext:
             runAsNonRoot: true
             runAsUser: 100
@@ -83,3 +194,10 @@ spec:
               type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: openbao-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: openbao-data
