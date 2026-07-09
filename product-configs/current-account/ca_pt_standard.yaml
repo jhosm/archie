@@ -2,13 +2,13 @@
 # runtime by the current_account family's own product-config store (ADR-PC-037 §D5).
 #
 # In plain English: this is the real, deployed config for the standard current account — an arranged
-# overdraft of EUR 500, a per-transaction cap of EUR 5 000, and (declared but not yet enforced) daily
-# and monthly velocity caps. The authorize decider reads the overdraft + per-transaction values at
-# stage 4 (ADR-PC-030 §P3) to answer "can this debit go through?": a debit that overdraws within the
-# EUR 500 arranged limit is authorized; one beyond it (ultrapassagem) is refused
-# (declined: OVERDRAFT_LIMIT_EXCEEDED); one above the per-transaction cap is refused
-# (declined: LIMIT_EXCEEDED). The overdraft-interest rate is resolved from the rate sheet, not declared
-# here (this file carries the declarative LIMITS, never a price).
+# overdraft of EUR 500, a per-transaction cap of EUR 5 000, and rolling daily (EUR 10 000) and monthly
+# (EUR 100 000) velocity caps. The authorize decider reads all of these at stage 4 (ADR-PC-030 §P3) to
+# answer "can this debit go through?": a debit that overdraws within the EUR 500 arranged limit is
+# authorized; one beyond it (ultrapassagem) is refused (declined: OVERDRAFT_LIMIT_EXCEEDED); one above
+# the per-transaction cap, or one that would push the day's / month's debit total past a velocity cap,
+# is refused (declined: LIMIT_EXCEEDED). The overdraft-interest rate is resolved from the rate sheet,
+# not declared here (this file carries the declarative LIMITS, never a price).
 #
 # It is validated against the #CurrentAccount schema (contracts/cue/families/current-account.cue) by
 # pack-validate depths 1–4 (ADR-PC-006). It lives in product-configs/current-account/ — a subdirectory
@@ -20,12 +20,11 @@ pack: pt.2026.1
 currency: EUR
 arranged_overdraft_limit: 50000
 transaction_limits:
-  # Enforced at stage 4 today.
+  # All three caps are enforced at stage 4 (ADR-PC-037 §D5, VELOCITY_LIMIT_PACK_BOUNDED).
   per_transaction_max_cents: 500000
-  # Declared but NOT yet enforced: velocity needs a windowed-spend projection the engine does not carry
-  # yet (a rolling sum of debits over a day/month), so the authorize decider reads only the
-  # per-transaction cap. Scoped out with a follow-up; the grammar accepts the values so the product's
-  # intended caps are auditor-visible in the pinned config.
+  # Rolling velocity caps: the day's / month's authorized-debit total plus a new debit may not exceed
+  # these. Measured against a projection-derived windowed sum of the account's authorization holds
+  # (ADR-PC-023); a breach is refused (declined: LIMIT_EXCEEDED, detail DAILY_VELOCITY / MONTHLY_VELOCITY).
   daily_velocity_cents: 1000000
   monthly_velocity_cents: 10000000
 dormancy_horizon_days: 540

@@ -43,14 +43,20 @@ public static class CurrentAccountAuthorizeDecider
     /// <param name="position">The account's folded lifecycle position (the source of the ACCOUNT_NOT_ACTIVE gate).</param>
     /// <param name="request">The authorization attempt (opaque account_ref, integer-cents amount, value-date, hold id).</param>
     /// <param name="availableBalanceCents">The current available-balance fold (accounting − Σ active holds), read before deciding.</param>
-    /// <param name="rules">The pack-supplied stage-4 rule inputs (arranged overdraft, per-transaction limit).</param>
+    /// <param name="rules">The pack-supplied stage-4 rule inputs (arranged overdraft, per-transaction limit, velocity caps).</param>
     /// <param name="activeFreeze">The account's active compliance freeze, or null when it is not frozen (ADR-PC-041).</param>
+    /// <param name="windowedDailyDebitCents">The account's rolling DAILY debit total before this attempt — a
+    /// projection-derived read the shell supplies (ADR-PC-023), measured against the pack daily velocity cap.</param>
+    /// <param name="windowedMonthlyDebitCents">The account's rolling MONTHLY debit total before this attempt —
+    /// the month-window counterpart, measured against the pack monthly velocity cap.</param>
     public static DomainEvent Decide(
         AccountPosition position,
         AuthorizationRequest request,
         long availableBalanceCents,
         AuthorizationRules rules,
-        AccountFreeze? activeFreeze)
+        AccountFreeze? activeFreeze,
+        long windowedDailyDebitCents = 0,
+        long windowedMonthlyDebitCents = 0)
     {
         ArgumentNullException.ThrowIfNull(position);
         ArgumentNullException.ThrowIfNull(request);
@@ -67,8 +73,11 @@ public static class CurrentAccountAuthorizeDecider
         }
 
         // Stages 3–5: the engine-owned funds/limit/freeze decider (ADR-PC-030). It answers Authorized
-        // (with the HoldPlaced earmark) or Declined (with a generic reason) — nothing appended.
-        var decision = FundsAndRulesDecider.Decide(request, availableBalanceCents, rules, activeFreeze);
+        // (with the HoldPlaced earmark) or Declined (with a generic reason) — nothing appended. The
+        // windowed debit totals ride in so the spine's velocity gate can measure this attempt against the
+        // pack caps (ADR-PC-037 §D5); the shell read them, keeping the decider pure.
+        var decision = FundsAndRulesDecider.Decide(
+            request, availableBalanceCents, rules, activeFreeze, windowedDailyDebitCents, windowedMonthlyDebitCents);
 
         return decision switch
         {
@@ -77,7 +86,7 @@ public static class CurrentAccountAuthorizeDecider
 
             // Refused: turn the spine's generic reason into the family's D6 code + refusal fact.
             AuthorizationDecision.Declined declined => Declined(
-                position, request, MapReason(declined.Reason, rules), FreezeDetail(declined)),
+                position, request, MapReason(declined.Reason, rules), DeclineDetail(declined)),
 
             _ => throw new InvalidOperationException(
                 $"Unexpected authorization decision '{decision.GetType().Name}'."),
@@ -93,9 +102,12 @@ public static class CurrentAccountAuthorizeDecider
         // A frozen account is "blocked" — one of the ACCOUNT_NOT_ACTIVE cases (ADR-PC-037 §D6).
         AuthorizationDeclineReason.AccountFrozen => AccountDeclinedReason.AccountNotActive,
 
-        // The per-transaction ceiling (the only velocity cap the pure decider enforces; daily/monthly
-        // velocity needs a windowed-spend read and lands with the pack-rule read).
-        AuthorizationDeclineReason.PerTransactionLimitExceeded => AccountDeclinedReason.LimitExceeded,
+        // Every pack transaction limit folds onto the family's single LIMIT_EXCEEDED code (ADR-PC-037 §D6
+        // names it "LIMIT_EXCEEDED (velocity/transaction)"): the per-transaction ceiling AND the rolling
+        // daily/monthly velocity caps. DeclineDetail names WHICH cap fired for the audit trail.
+        AuthorizationDeclineReason.PerTransactionLimitExceeded
+            or AuthorizationDeclineReason.DailyVelocityLimitExceeded
+            or AuthorizationDeclineReason.MonthlyVelocityLimitExceeded => AccountDeclinedReason.LimitExceeded,
 
         // The spine's single insufficient-funds reason is two product outcomes: if an arranged overdraft
         // is configured, the debit went BEYOND it (unarranged overdraft / ultrapassagem, ADR-PC-037 §D5);
@@ -115,11 +127,17 @@ public static class CurrentAccountAuthorizeDecider
         _ => throw new InvalidOperationException($"Unmapped authorization decline reason '{reason}'."),
     };
 
-    // Name a compliance-freeze refusal (HOLD_REASON_OBSERVABLE): the freeze reason code makes "why was
-    // this refused?" a read, not a forensic dig. A stable code, never PII (ADR-PC-041). Null for every
-    // non-freeze decline (the code stands alone).
-    private static string? FreezeDetail(AuthorizationDecision.Declined declined) =>
-        declined.Reason == AuthorizationDeclineReason.AccountFrozen ? declined.FreezeReason : null;
+    // Name the specific cause of a refusal (HOLD_REASON_OBSERVABLE) so "why was this refused?" is a read,
+    // not a forensic dig — a stable code, never PII. A freeze names its reason (ADR-PC-041); a velocity
+    // breach names WHICH window overflowed (both the daily and monthly caps map to the one LIMIT_EXCEEDED
+    // code, so the detail is what distinguishes them). Null for every other decline (the code stands alone).
+    private static string? DeclineDetail(AuthorizationDecision.Declined declined) => declined.Reason switch
+    {
+        AuthorizationDeclineReason.AccountFrozen => declined.FreezeReason,
+        AuthorizationDeclineReason.DailyVelocityLimitExceeded => "DAILY_VELOCITY",
+        AuthorizationDeclineReason.MonthlyVelocityLimitExceeded => "MONTHLY_VELOCITY",
+        _ => null,
+    };
 
     private static AuthorizationDeclined Declined(
         AccountPosition position, AuthorizationRequest request, string reasonCode, string? detail) =>

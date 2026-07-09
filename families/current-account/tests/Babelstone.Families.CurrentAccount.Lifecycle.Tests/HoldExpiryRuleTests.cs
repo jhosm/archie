@@ -193,6 +193,10 @@ public sealed class HoldExpiryRuleTests
             DateOnly expiryHorizon, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
+        public Task<long> GetWindowedAuthorizationHoldCentsAsync(
+            string accountRef, DateOnly fromInclusive, DateOnly toInclusive, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
         public Task TruncateAsync(CancellationToken ct = default) => throw new NotSupportedException();
     }
 
