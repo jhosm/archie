@@ -86,12 +86,16 @@ spec:
 # mounts at /certs. They carry the `client auth` EKU only (they never serve), so
 # a caller cert can never be mistaken for a server cert on the same CA.
 #
-# These do NOT enable anything on their own: until internal-mtls.patch.yaml is
-# uncommented in kustomization.yaml (a deliberately-separate rollout step — see
-# that patch's header), the engine/orchestrator still serve plain HTTP and these
-# client certs sit unused. The caller code + app-manifest half (this same bd
-# issue) switches the outbound URLs to https and mounts these Secrets so the
-# switch is a no-op wiring change ahead of the server flip.
+# Minting these certs does NOT enable anything on its own — they only matter once
+# a caller presents them. But note the caller half is NOT inert on staging: the
+# app manifests (this same bd issue) set the outbound URLs to https and mount
+# these Secrets UNCONDITIONALLY, so the moment those manifests are applied the
+# four callers dial https and present a client cert. If internal-mtls.patch.yaml
+# is still commented out at that instant, the engine/orchestrator are still plain
+# HTTP and those hops BREAK. So on staging the caller half and the server flip are
+# NOT independent steps — they, plus the deck-sync, land TOGETHER in one
+# maintenance window (that patch's ROLLOUT ORDER steps 3–4). The certs sit unused
+# only on the CA-env-UNSET hosts (demo/local/tests), which never set these envs.
 #
 #   CA Issuer (mcp-mtls-ca) ─┬─► orchestrator CLIENT cert  (dispatcher → engine + settlement)
 #                            ├─► notification  CLIENT cert  (engine-read hop)

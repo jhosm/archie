@@ -29,7 +29,13 @@ namespace Babelstone.Notification.Host;
 /// </para>
 /// <para>
 /// It is OFF by default and gated purely on configuration: with no internal-CA path configured the
-/// handler is left untouched, so every non-staging host keeps its plain-HTTP behaviour byte-for-byte.
+/// handler is left untouched, so the CA-env-UNSET hosts (the demo, the local stack, tests) keep their
+/// plain-HTTP behaviour byte-for-byte. On STAGING the app manifest sets the CA env and mounts the
+/// client cert UNCONDITIONALLY, so this helper is NOT inert there — the worker reads over https and
+/// presents a client cert the moment the manifest is applied. That is why the staging rollout flips
+/// the callers, the engine server patch (internal-mtls.patch.yaml), and the deck-sync TOGETHER in one
+/// maintenance window (that patch's ROLLOUT ORDER steps 3–4): applying the caller half while the engine
+/// is still plain HTTP would break this read hop.
 /// Config keys (env form in brackets): <c>InternalMtls:CaCertPath</c>
 /// [<c>InternalMtls__CaCertPath</c>], <c>InternalMtls:ClientCertPath</c>
 /// [<c>InternalMtls__ClientCertPath</c>], <c>InternalMtls:ClientKeyPath</c>

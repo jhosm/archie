@@ -316,7 +316,11 @@ builder.Services.AddHttpClient();
 // applies the mTLS primary handler to EVERY factory client (there is only the default one), so no named
 // client is needed and SagaCommandDispatchDrainer stays untouched. It is OFF unless InternalMtls:CaCertPath
 // is configured (staging mounts the client cert + CA and sets it), so the demo/local/test hosts keep their
-// plain-HTTP default byte-for-byte. Wiring only — the orchestrator stays extraction-ready (ADR-PC-019 §P2).
+// plain-HTTP default byte-for-byte. On staging the CA env is set UNCONDITIONALLY, so this hop is https +
+// client-cert the moment the manifest is applied — which is why the callers, the server patch, and the
+// deck-sync land TOGETHER in one maintenance window (internal-mtls.patch.yaml ROLLOUT ORDER steps 3–4);
+// applying the caller half while the engine is still plain HTTP would break it. Wiring only — the
+// orchestrator stays extraction-ready (ADR-PC-019 §P2).
 if (InternalMtls.IsConfigured(builder.Configuration))
 {
     builder.Services.ConfigureHttpClientDefaults(http =>

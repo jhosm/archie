@@ -69,8 +69,13 @@ spec:
             # the two internal hops only (_build_internal_mtls_context in serve.py); every other proxy
             # arm keeps stock TLS. Client material is the babelstone-mission-control-client-tls Secret
             # cert-manager issues (overlays/staging/bootstrap/internal-mtls.yaml), mounted at /certs
-            # below. Inert until the engine/orchestrator servers are flipped to HTTPS by enabling
-            # internal-mtls.patch.yaml — a deliberately separate rollout step (that patch's header).
+            # below. On STAGING these env keys are set unconditionally, so once this manifest is applied
+            # serve.py's two internal proxy arms dial https and present a client cert — if the
+            # engine/orchestrator servers are still plain HTTP, those two hops break. So the callers, the
+            # internal-mtls.patch.yaml server flip, and the deck-sync must land TOGETHER in one maintenance
+            # window (that patch's ROLLOUT ORDER steps 3–4). (These keys are only truly inert on the
+            # CA-env-UNSET hosts — the demo, the local stack, tests — where serve.py leaves the two arms
+            # at their plain-HTTP default.)
             - name: MC_INTERNAL_CA_CERTS
               value: /certs/ca.crt
             - name: MC_INTERNAL_CLIENT_CERT

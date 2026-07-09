@@ -21,10 +21,14 @@ namespace Babelstone.Orchestrator;
 /// </para>
 /// <para>
 /// It is OFF by default and gated purely on configuration: with no internal-CA path configured the
-/// handler is left untouched, so every non-staging host (the demo, the local stack, tests) keeps its
-/// plain-HTTP behaviour byte-for-byte. Staging turns it on by mounting the client cert + the CA and
-/// setting the env keys below. The engine/orchestrator stay extraction-ready (ADR-PC-019 §P2) — this
-/// is host-composition wiring, not an engine-kernel reference.
+/// handler is left untouched, so the CA-env-UNSET hosts (the demo, the local stack, tests) keep their
+/// plain-HTTP behaviour byte-for-byte. On STAGING the app manifest sets the CA env and mounts the
+/// client cert UNCONDITIONALLY, so this helper is NOT inert there — the dispatcher dials https and
+/// presents a client cert the moment the manifest is applied. That is why the staging rollout flips
+/// the callers, the engine/orchestrator server patch (internal-mtls.patch.yaml), and the deck-sync
+/// TOGETHER in one maintenance window (that patch's ROLLOUT ORDER steps 3–4): applying the caller half
+/// while the server is still plain HTTP would break this hop. The engine/orchestrator stay
+/// extraction-ready (ADR-PC-019 §P2) — this is host-composition wiring, not an engine-kernel reference.
 /// </para>
 /// <para>
 /// Config keys (env form in brackets): <c>InternalMtls:CaCertPath</c>

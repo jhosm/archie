@@ -47,8 +47,13 @@ spec:
             # (signed by the shared internal CA, mcp-mtls-ca) and pinning the engine's server cert to
             # that same CA (InternalMtls.cs). Client material is the babelstone-notification-client-tls
             # Secret cert-manager issues (overlays/staging/bootstrap/internal-mtls.yaml), mounted at
-            # /certs below. Inert until the cert is mounted AND the engine server is flipped to HTTPS by
-            # enabling internal-mtls.patch.yaml — a deliberately separate rollout step (that patch's header).
+            # /certs below. On STAGING these env keys are set unconditionally, so once this manifest is
+            # applied the worker reads over https and presents a client cert — if the engine server is
+            # still plain HTTP, that read hop breaks. So the callers, the internal-mtls.patch.yaml server
+            # flip, and the deck-sync must land TOGETHER in one maintenance window (that patch's ROLLOUT
+            # ORDER steps 3–4). (These keys are only truly inert on the CA-env-UNSET hosts — the demo,
+            # the local stack, tests — where InternalMtls.cs leaves the HttpClient handler at its
+            # plain-HTTP default.)
             - name: InternalMtls__CaCertPath
               value: /certs/ca.crt
             - name: InternalMtls__ClientCertPath

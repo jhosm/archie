@@ -179,7 +179,11 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 # on THOSE two hops — or the handshake is rejected. It is OFF unless MC_INTERNAL_CA_CERTS is set (the
 # ENGINE_URL/ORCHESTRATOR_URL env already carry https://…:8080 in staging), so the laptop dev default
 # (plain http upstreams) is byte-for-byte unchanged and only the two internal hops use the context —
-# every OTHER arm (Tempo/Loki/Prometheus/pandaproxy/registry) keeps urllib's default TLS handling.
+# every OTHER arm (Tempo/Loki/Prometheus/pandaproxy/registry) keeps urllib's default TLS handling. On
+# staging the CA env is set UNCONDITIONALLY, so these two arms are https + client-cert the moment the
+# manifest is applied — which is why the callers, the server patch, and the deck-sync land TOGETHER in
+# one maintenance window (internal-mtls.patch.yaml ROLLOUT ORDER steps 3–4); applying the caller half
+# while the engine/orchestrator are still plain HTTP would break those hops.
 #   MC_INTERNAL_CA_CERTS   — the internal CA PEM the engine/orchestrator server cert must chain to.
 #   MC_INTERNAL_CLIENT_CERT / MC_INTERNAL_CLIENT_KEY — the proxy's own PEM client cert + key
 #                            (the cert-manager Secret's tls.crt / tls.key), presented on the handshake.

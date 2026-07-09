@@ -62,8 +62,13 @@ spec:
             # (internal_mtls.py). SEPARATE from the SERVER mTLS above (MCP_TLS_*, which is Kong→mcp-server
             # inbound): this is mcp-server→engine/orchestrator OUTBOUND. The CA is the SAME chain, so we
             # reuse the /certs/ca.crt already mounted; the CLIENT cert is the babelstone-mcp-server-client-tls
-            # Secret mounted at /client-certs below. Inert until the engine/orchestrator servers are flipped
-            # to HTTPS by enabling internal-mtls.patch.yaml — a deliberately separate rollout step.
+            # Secret mounted at /client-certs below. On STAGING these env keys are set unconditionally, so
+            # once this manifest is applied the tool clients dial https and present a client cert — if the
+            # engine/orchestrator servers are still plain HTTP, those hops break. So the callers, the
+            # internal-mtls.patch.yaml server flip, and the deck-sync must land TOGETHER in one maintenance
+            # window (that patch's ROLLOUT ORDER steps 3–4). (These keys are only truly inert on the
+            # CA-env-UNSET hosts — the demo, the local stack, tests — where internal_mtls.py leaves the
+            # httpx clients at their plain-HTTP default.)
             - name: BABELSTONE_INTERNAL_CA_CERTS
               value: /certs/ca.crt
             - name: BABELSTONE_INTERNAL_CLIENT_CERT

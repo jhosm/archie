@@ -80,9 +80,13 @@ var engineBaseUrl =
 // overlays/staging/internal-mtls.patch.yaml), this hop PRESENTS the notification worker's client cert and
 // PINS the engine's server cert to the shared internal CA (not the container's system store — the patch
 // header's "known remainder", fix (b)). OFF unless InternalMtls:CaCertPath is configured (staging mounts
-// the client cert + CA), so the demo/local/test hosts keep their plain-HTTP default byte-for-byte. This must
-// register BEFORE the module loop below, so the default handler is in place when the family module's typed
-// client is added. Wiring only — the host holds no engine kernel reference (ADR-PC-019 §P2).
+// the client cert + CA), so the demo/local/test hosts keep their plain-HTTP default byte-for-byte. On
+// staging the CA env is set UNCONDITIONALLY, so this read hop is https + client-cert the moment the
+// manifest is applied — which is why the callers, the server patch, and the deck-sync land TOGETHER in one
+// maintenance window (internal-mtls.patch.yaml ROLLOUT ORDER steps 3–4); applying the caller half while the
+// engine is still plain HTTP would break it. This must register BEFORE the module loop below, so the
+// default handler is in place when the family module's typed client is added. Wiring only — the host holds
+// no engine kernel reference (ADR-PC-019 §P2).
 if (InternalMtls.IsConfigured(builder.Configuration))
 {
     builder.Services.ConfigureHttpClientDefaults(http =>
