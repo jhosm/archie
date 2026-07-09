@@ -99,6 +99,12 @@ spec:
               value: redpanda:9092
             - name: Bus__SchemaRegistryUrl
               value: http://redpanda:8081
+            # Publish cataloged events to the bus as Avro + a registered Schema-Registry schema_id
+            # (ADR-IC-004 / ADR-IC-008), not store-JSON. The codec is built lazily against
+            # Bus__SchemaRegistryUrl above; Bus:RegisterSchemas defaults true so schemas self-register
+            # on first publish. Uncataloged events stay store-only JSON (catalog-gated relay).
+            - name: Bus__Encoding
+              value: avro
             # Telemetry to the Collector only (ADR-IC-007 §P1), never direct-to-backend.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://otel-collector:4317
@@ -119,6 +125,11 @@ spec:
               value: /app/packs
             - name: Engine__PackVersion
               value: pt.2026.1
+            # Per-variant product-config YAMLs baked into this image at /app/product-configs
+            # (see the derived Dockerfile). Without this the term_deposit family's
+            # YamlProductConfigStore can't find the tree and every POST /v1/deposits 500s.
+            - name: Engine__ProductConfigsDir
+              value: /app/product-configs
           # The engine returns 404 (not 2xx) for the demo's probe path, which a k8s httpGet
           # would treat as a failure, and has no /healthz — so probe the TCP socket: a bound
           # 8080 means Kestrel + the API host are up.
