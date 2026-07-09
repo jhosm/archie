@@ -56,6 +56,13 @@ That one-line registration was **deliberately deferred this run** to avoid
 colliding with in-flight staging-overlay work. This component is authored +
 validated standalone in the meantime.
 
+> **Sizing follow-up (bd babelstone-zla1.12.21).** The persistent OpenBao container
+> in [`../../base/openbao.yaml`](../../base/openbao.yaml) carries **no memory
+> limit** today. When this component is registered in the staging overlay, add an
+> `openbao` container memory limit in `overlays/staging/resources.patch.yaml` — the
+> staging sizing fitness-check in `ci.yml` requires every workload container to
+> carry one.
+
 ### Validate standalone
 
 ```bash

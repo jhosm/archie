@@ -5,8 +5,9 @@
 # straight from OpenBao instead of from a plain Kubernetes Secret — (1) the
 # upstream Secrets Store CSI driver install (vendored, pinned to v1.6.0), and
 # (2) the babelstone SecretProviderClass that maps the app-tier secrets (Postgres
-# password, Logto KEK + OIDC signing key) out of OpenBao via its Kubernetes auth
-# method. It is a COMPONENT (kustomize `kind: Component`) so an overlay opts into
+# password, Logto KEK + OIDC signing key + the engine's OpenBao-auth anchor
+# (AppRole role-id/secret-id + transit token)) out of OpenBao via its Kubernetes
+# auth method. It is a COMPONENT (kustomize `kind: Component`) so an overlay opts into
 # it with one `components:` line — this run does NOT register it (see the PR's
 # deferred-registration note and README.md), to avoid colliding with in-flight
 # staging-overlay work.

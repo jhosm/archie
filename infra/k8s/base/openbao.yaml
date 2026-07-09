@@ -9,14 +9,17 @@
 # OpenBao instead of from a plain Kubernetes Secret (bd babelstone-zla1.12.13).
 #
 # SCOPE (bd babelstone-zla1.12.13 — PERSISTENT storage + policy-governed): this
-# slice makes OpenBao durable and turns on the engine's real transit boundary. It
+# slice gives OpenBao node-local persistence (keys survive a pod restart) and turns
+# on the engine's real transit boundary. Storage is `local-path` (k3s node-local),
+# NOT a cloud volume — see the PVC note below (bd babelstone-zla1.12.20). It
 # deliberately EXCLUDES:
 #   • auto-unseal / KMS: the single-node staging box has NO Hetzner KMS to anchor a
 #     Transit/KMS auto-unseal seal, so there is NO `seal` stanza in the raft config
 #     (base/openbao-config.yaml). The node comes up SEALED after any restart and an
 #     operator unseals it MANUALLY — the documented caveat below.
-#   • DR / raft snapshots (ADR-PC-005 §P4): the scheduled raft-snapshot backup lives
-#     in overlays/ha/openbao-dr-ha.yaml, out of scope here.
+#   • durable / node-loss survival + DR / raft snapshots (ADR-PC-005 §P4):
+#     node-local storage does NOT survive node loss, and the scheduled raft-snapshot
+#     backup lives in overlays/ha/openbao-dr-ha.yaml — out of scope here.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # SINGLE-NODE MANUAL-UNSEAL CAVEAT (READ BEFORE A NODE DRAIN / k3s UPGRADE)
@@ -74,11 +77,15 @@ metadata:
 # `kind: Deployment name: openbao`, and the staging sizing fitness-check in ci.yml
 # requires every workload container to carry a memory limit — a StatefulSet would
 # miss that patch and fail the gate. Single replica + RWO is correct for
-# single-node raft. storageClassName is set to the durable Hetzner CSI class
-# (hcloud-volumes) so the key store survives a node rebuild and is the same
-# durable tier as the Postgres/Redpanda data (staging pins those via
-# storageclass.patch.yaml; this PVC pins it inline since the overlay patch targets
-# only StatefulSet VCTs). ~1Gi is ample for a key-ring + raft log.
+# single-node raft. storageClassName is `local-path` — k3s's built-in node-local
+# provisioner (bd babelstone-zla1.12.20) — chosen to DROP the Hetzner cloud CSI
+# (hcloud-volumes) and, with it, the in-cluster Hetzner API token that CSI needs.
+# The trade: node-local persistence survives a POD restart (the key store is
+# re-mounted intact when the pod comes back), but NOT node loss — the volume lives
+# on the single node's disk, so a node rebuild loses it. That is consistent with DR
+# being out of scope on staging (raft snapshots / off-site backup are the ha
+# overlay's concern, overlays/ha/openbao-dr-ha.yaml — not this slice). ~1Gi is
+# ample for a key-ring + raft log.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -87,7 +94,7 @@ metadata:
     app.kubernetes.io/name: openbao
 spec:
   accessModes: ["ReadWriteOnce"]
-  storageClassName: hcloud-volumes
+  storageClassName: local-path
   resources:
     requests:
       storage: 1Gi
