@@ -24,8 +24,8 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
   `local-path` storage class enabled (removing the token's in-cluster consumers; `provision.sh`
   then scrubs the token Secret hetzner-k3s plants on every create, so no Hetzner API token is
   left in the cluster — see "Posture notes"). The **provision-time** Hetzner API token is
-  **not** in this file — it is
-  supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below). The SSH
+  **not** in this file — it is supplied at runtime via the `HCLOUD_TOKEN` environment variable
+  (see below). The SSH
   allow-list is likewise **not** a real value in this file: it is the `REPLACE_ME/32` sentinel
   that `provision.sh` substitutes (deliberately invalid, so a direct `create` against the
   committed file cannot succeed).
@@ -76,7 +76,7 @@ hetzner-k3s releases | tail        # list supported releases; set cluster.yaml's
 export KUBECONFIG="$PWD/kubeconfig"
 kubectl get nodes              # the one node should reach Ready
 kubectl get pods -A           # NO Hetzner CCM / CSI pods (both addons disabled — Posture notes)
-kubectl get secret -n kube-system 2>/dev/null | grep -i hcloud   # expect NO hits: no in-cluster Hetzner token
+kubectl get secret -n kube-system 2>/dev/null | grep -i hcloud   # expect NO hits: provision.sh scrubbed the token Secret post-create
 ```
 
 The generated `./kubeconfig` is a **cluster-admin credential** — it is gitignored and must never
@@ -124,9 +124,10 @@ The full operator runbook — bring-up, redeploy, restore, upgrade, backups — 
   `k3s secrets-encrypt status`, and rotate the key periodically with
   `k3s secrets-encrypt rotate-keys` (k3s re-encrypts existing Secrets). Without this, every
   Secret (kubeconfigs, the OpenBao token, backup keys) is base64-plaintext to anyone with
-  disk or snapshot access. (There is no longer an in-cluster Hetzner API token to leak — the
-  CCM/CSI addons that would plant one are off, see "Posture notes" — but this hardening still
-  matters for every OTHER Secret.)
+  disk or snapshot access. (hetzner-k3s plants an all-powerful Hetzner API token as the
+  kube-system `hcloud` Secret on every create regardless of the addon toggles; `provision.sh`
+  scrubs it post-create, see "Posture notes" — but this hardening still matters for every
+  OTHER Secret, and for the brief window before the scrub.)
 
 To pick these up on the EXISTING staging box either re-provision (restore from backups per
 `../runbooks/staging-ops.md`), or apply the equivalent by hand on the node (write the two
