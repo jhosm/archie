@@ -42,7 +42,12 @@ spec:
         - name: openbao
           image: openbao/openbao:2.5.4
           # Dev server: in-memory store, single unsealed node. NOT for prod.
-          command:
+          # ARGS, not command: the image ENTRYPOINT is `docker-entrypoint.sh` (it runs
+          # `bao "$@"`), so these are arguments to it. Using `command:` would REPLACE the
+          # entrypoint and try to exec a binary literally named `server` — which does not
+          # exist, so the container fails with RunContainerError. Verified: the default
+          # entrypoint + these args boots OpenBao unsealed as uid 100 with drop:[ALL].
+          args:
             - server
             - -dev
             - -dev-listen-address
