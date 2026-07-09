@@ -13,9 +13,10 @@
 dotnet = "10.0.300"
 
 # Go — the out-of-process CUE validator / pack-validate binary (ADR-PC-006).
-# 1.26.4 patches two stdlib advisories govulncheck flags as reachable from pack-validate
-# (GO-2026-5037 crypto/x509, GO-2026-5039 net/textproto) — the Go-native SCA gate, ADR-IC-014 Q.7c.
-go = "1.26.4"
+# Pinned above the stdlib advisories govulncheck flags as reachable from pack-validate — the
+# Go-native SCA gate (ADR-IC-014 Q.7c): 1.26.4 patched GO-2026-5037 (crypto/x509) + GO-2026-5039
+# (net/textproto); 1.26.5 patches GO-2026-5856 (crypto/tls, Encrypted Client Hello privacy leak).
+go = "1.26.5"
 
 # Python — the MCP server, on the official Python SDK (ADR-IC-010).
 python = "3.14.5"
