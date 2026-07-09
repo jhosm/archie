@@ -288,7 +288,13 @@ jobs:
       #      PID kept for the explicit 4g teardown; the readiness loop polls the Admin /status
       #      THROUGH the tunnel so 4f never races the connection, and fails loud (with the
       #      forward's own log) if the tunnel dies or never comes up.
+      #      SKIPPED for staging (bd babelstone-zla1.12.18): deck sync (4f) needs REAL edge
+      #      material from OpenBao, but staging runs OpenBao in -dev (in-memory, EMPTY — nothing
+      #      seeds the edge material; real provisioning is deferred to M.2/puu3) and it is not
+      #      runner-reachable. There is nothing to sync, so staging's edge keeps its committed
+      #      kong.yml config; this tunnel exists only to feed 4f, so it is skipped in lockstep.
       - name: Port-forward the Kong Admin API (kubelet tunnel to the pod loopback)
+        if: ${{ github.event.inputs.overlay != 'staging' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: |
@@ -316,7 +322,10 @@ jobs:
       #      The Admin address is the 4e tunnel's local end — structural, not configuration —
       #      which retires the KONG_ADMIN_ADDR environment secret (once the loopback bind
       #      landed it pointed at nothing a runner could reach).
+      #      SKIPPED for staging in lockstep with 4e (bd babelstone-zla1.12.18): no real
+      #      OpenBao-backed edge material exists on staging (dev-mode seam, M.2/puu3).
       - name: deck sync the edge config (real OpenBao mTLS + IAM key, ADR-IC-006 §P1/§P5/§P7)
+        if: ${{ github.event.inputs.overlay != 'staging' }}
         env:
           BAO_ADDR: ${{ secrets.BAO_ADDR }}
           BAO_TOKEN: ${{ secrets.BAO_DEPLOY_TOKEN }}
@@ -325,7 +334,7 @@ jobs:
       #      anyway, but the forward holds an authenticated kubelet stream, so we kill it the
       #      moment it has served its one purpose rather than rely on teardown.
       - name: Stop the Kong Admin port-forward
-        if: always()
+        if: ${{ always() && github.event.inputs.overlay != 'staging' }}
         run: |
           set -euo pipefail
           if [ -f "$RUNNER_TEMP/kong-port-forward.pid" ]; then
