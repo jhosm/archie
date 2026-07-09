@@ -185,9 +185,9 @@ spec:
 #     §C step 1: "schedule the annual signing-key rotation, grace-period enabled, as a cron Job").
 #     `db config rotate` GENERATES a fresh key in-DB and keeps the previous one in JWKS for a
 #     grace period, so tokens signed before the roll still verify until they expire — hence no
-#     injected key material here, only DB_URL. Modelled on volume-snapshot-cronjob.yaml (Forbid
+#     injected key material here, only DB_URL. Follows the backup CronJob shape (Forbid
 #     concurrency, bounded history + deadline); needs no kube-API access (it only talks to
-#     Postgres), so no ServiceAccount/RBAC, unlike the snapshotter.
+#     Postgres), so no ServiceAccount/RBAC.
 apiVersion: batch/v1
 kind: CronJob
 metadata:

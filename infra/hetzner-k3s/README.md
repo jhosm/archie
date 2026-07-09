@@ -97,11 +97,8 @@ and mint the least-privilege `cd-deployer` kubeconfig with
    (**Retired with the CSI:** the CSI snapshot controller + the `hcloud-volumes`
    `VolumeSnapshotClass` — block-level volume snapshots — no longer apply now that the Hetzner
    CSI driver is disabled (see "Posture notes"); local-path claims are not CSI-snapshottable.
-   Removal of the now-dead manifests
-   [`../k8s/overlays/staging/volume-snapshot-cronjob.yaml`](../k8s/overlays/staging/volume-snapshot-cronjob.yaml)
-   + [`../k8s/overlays/staging/bootstrap/volume-snapshot-class.yaml`](../k8s/overlays/staging/bootstrap/volume-snapshot-class.yaml)
-   is tracked in bd babelstone-zla1.12.21, blocked on PR #531 which owns the overlay
-   `kustomization.yaml`.)
+   The now-dead volume-snapshot CronJob + its `VolumeSnapshotClass` manifest were removed from the
+   staging overlay in bd babelstone-zla1.12.24.)
 2. **Phase 3 — deploy** the workloads: `kubectl apply -k ../k8s/overlays/staging` (or dispatch
    `cd.yml`).
 
