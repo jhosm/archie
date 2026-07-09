@@ -192,6 +192,18 @@ This is **additive**: it reverses no part of the Decision — the pack stays aud
 
 This is **additive**: it reverses no part of the Decision — packs are unchanged (still auditor-readable YAML data + bundled `.cue` schemas, cosign-signed OCI, pulled by digest, §P1–§P5), and this generalises §P2's "by digest, never by tag" trust rule to the container images the same signature already covers. Explicitly **out of scope** here and tracked separately (bd `babelstone-2t16.31`): third-party images (`svhd/logto`, `postgres`, `kong`, …) and commit-pinned (rather than current-`latest`-resolved) promotion. Recorded in Verifiable commitments below.
 
+### A3 · Third-party container images are pinned by digest for reproducibility — a distinct, weaker guarantee than §A2 (2026-07-09, bd `babelstone-2t16.31.1`)
+
+**In plain English:** §A2 froze *our own* images to cosign-verified digests at promotion. This does the same *freezing* for the **third-party** images the cluster deploys (postgres, kong, redpanda, logto, the k3s control-plane upgrader, …) — a redeploy now pulls the exact bytes we validated instead of whatever a movable tag resolves to that day. The crucial difference: we do **not** sign these images, so there is nothing of ours to verify them against. They are pinned for **reproducibility / supply-chain provenance, not identity verification** — a deliberately weaker guarantee than §A2's resolve → verify → pin.
+
+§A2 generalised §P2's "by digest, never by a movable tag" rule to the first-party container images `image-build.yml` signs. This amendment extends the *digest-pinning* half of that rule — **and only that half** — to the third-party images the deployed overlays render, which §A2 explicitly left out of scope. The distinction is load-bearing and preserved here: third-party images are pinned to an immutable `sha256` digest so the bytes deployed are the bytes validated (reproducibility), but they are **NOT** routed through `cd-pin-images.sh`'s `cosign verify` path — we publish no signature under our identity for `svhd/logto`, `postgres`, `kong`, … so there is no identity to verify against. The first-party `ghcr.io/jhosm/babelstone-*` prefix filter in `cd-pin-images.sh` (§A2) deliberately continues to exclude them.
+
+**Mechanism.** For kustomize-managed images the pin is an `images:` transformer entry (`name` + `newTag` + `digest`, so the render stays legible as `name:tag@sha256:…`) in the *owning* kustomization — base-originated images in `infra/k8s/base`, overlay-only images in the respective overlay. A kustomize transformer rewrites only the resources of the kustomization that declares it, so images the `apps/` layer or an overlay adds (postgres, openbao) are re-pinned at that level to the same digest; CI renders `base`, `overlays/ha` and `overlays/staging` independently, so each carries its own coverage. The bootstrap **k3s automated-upgrade Plan** is not part of any kustomize overlay (an `upgrade.cattle.io/v1` CRD applied once), so it is pinned by editing the manifest directly; because a digest pin is incompatible with system-upgrade-controller's floating `channel:` resolution (the controller keeps advancing `.status.latestVersion` while a pinned image installs a fixed version, re-running the upgrade forever), the Plan is converted from `channel:` to a **deliberate `version:`** plus a `tag@sha256` image — the correct posture for an in-place control-plane binary swap anyway.
+
+**Maintenance.** A digest pin left unmaintained is a staleness hazard, so a scheduled `.github/workflows/cd-thirdparty-digest-audit.yml` job re-resolves each pinned tag with `crane` and opens a PR on drift — a deliberate, human-reviewed bump, never a silent float. Dependabot's `docker` ecosystem parses Dockerfiles only and cannot see a kustomize transformer digest or a Plan `image:`, which is why this is a hand-rolled auditor rather than a Dependabot ecosystem; the *maintenance mechanism* is recorded in [ADR-IC-014](../../integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md) (its supply-chain-tooling home), this ADR owning only the deploy-boundary pin.
+
+This is **additive**: it reverses no part of the Decision or of §A2. Packs are unchanged; first-party images keep their §A2 resolve → verify → pin. Two third-party references discovered broken during this work — `pgbackrest/pgbackrest:2.54.2` (Docker Hub repo absent) and `bitnami/kubectl:1.31` (tag withdrawn in Bitnami's 2025 catalog sunset) — cannot be digest-pinned until they gain a maintained replacement image (tracked in bd `babelstone-2t16.31.4` / `babelstone-2t16.31.3`) and are left unpinned meanwhile: a visible, recorded gap, not a silent one. Recorded in Verifiable commitments below.
+
 ---
 
 ## Verifiable commitments
@@ -208,6 +220,8 @@ Two falsifiable invariants this decision introduces are not yet wired to a Test 
 
 The §A2 CD-boundary invariant — **verify what you deploy** — is gated by the CD workflow itself rather than an engine fitness function: the hermetic `cd-pin-images.sh --contract` assertion on the push/PR lane proves the resolve → verify → pin path stays wired, and the promote-time `cosign verify` of each resolved `ghcr.io/jhosm/babelstone-*@sha256:…` digest gates the real apply (fail-closed — an unverifiable digest aborts the promotion). No commitment-catalogue Test ID is wired: this is a delivery-pipeline invariant, not an engine replay/fold property.
 
+The §A3 third-party pins carry a **weaker, explicitly-unverified** commitment: they are gated by neither an engine fitness function nor a `cosign verify` (we sign nothing to verify against), only by `kustomize build` rendering an immutable `name:tag@sha256:…` for every third-party image the overlays deploy — except the two recorded-broken references above — and by the scheduled `cd-thirdparty-digest-audit` job (`scripts/cd-thirdparty-digest-audit.py --check`), which also asserts the same image carries the same digest everywhere it recurs and proposes deliberate bumps on drift. Reproducibility, not identity — the distinction from §A2 is the whole point.
+
 ---
 
 ## Cross-references
@@ -218,6 +232,7 @@ The §A2 CD-boundary invariant — **verify what you deploy** — is gated by th
 - [ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) — rate-sheet storage; this ADR carries rate-sheet refs only.
 - [ADR-PC-009](./ADR-PC-009-per-instance-version-pinning.md) — per-instance pack/schema version pinning; this ADR carries the pinning column, PC-009 carries the migration-event semantics.
 - [surface §3.4–§3.10](../feature-design-configuration-surface.md) — pack manifest shape, pinning, distribution/signing (§3.7), sealed test corpus (§3.9), validator interplay (§3.10).
+- [ADR-IC-014](../../integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md) — supply-chain scanning; owns the *maintenance* of the §A3 third-party image digest pins (the hand-rolled `cd-thirdparty-digest-audit` workflow Dependabot's docker ecosystem cannot cover), this ADR owning the deploy-boundary pin itself.
 
 ---
 

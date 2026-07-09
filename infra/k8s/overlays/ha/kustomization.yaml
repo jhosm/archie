@@ -39,6 +39,23 @@ resources:
   - postgres-pitr-resources.yaml
   - openbao-dr-ha.yaml
 
+# Third-party image digest pins for the images THIS overlay adds on top of base (bd
+# babelstone-2t16.31.1; ADR-PC-007 §A3). A base `images:` transformer reaches only base's own
+# resources, so postgres (the warm-standby StatefulSet in postgres-standby-ha.yaml) and openbao
+# (the DR snapshot resources in openbao-dr-ha.yaml) are re-pinned here to the SAME digests base
+# uses (each entry also idempotently re-pins base's copy in the ha render). Reproducibility /
+# supply-chain, NOT cosign-verified (ADR-PC-007 §A2 covers the signed first-party images). Bumped
+# deliberately by the scheduled cd-thirdparty-digest-audit workflow. NOT pinned here —
+# pgbackrest/pgbackrest:2.54.2 (postgres-pitr-*.yaml): that Docker Hub repo does not exist and
+# needs a maintained replacement first (bd babelstone-2t16.31.4). Digests resolved 2026-07-09.
+images:
+  - name: postgres
+    newTag: 18-alpine
+    digest: sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+  - name: openbao/openbao
+    newTag: 2.5.4
+    digest: sha256:436eaf9778cad75507ff70ea26ace30dcbe15606e619ac3823495663d7f7c115
+
 # Replicas: Redpanda 1 -> 3 (a real Raft quorum). Postgres stays at 1 here —
 # the warm standby is a SEPARATE StatefulSet (postgres-standby), not a second
 # replica of the primary, because a synchronous standby needs distinct
