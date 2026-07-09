@@ -1,0 +1,39 @@
+# Rate sheet pt-overdrafts-2026.1 — the treasury-authored SOURCE of the current_account
+# OVERDRAFT-INTEREST rates (the descoberto autorizado price) live in the local demo stack.
+#
+# Plain English: this YAML file IS the overdraft rate sheet. It is the auditor-readable source of
+# truth a treasury / ALM author edits; deploying it serialises it 1:1 into an immutable row in the
+# `rate_sheets` Postgres table, from which the engine resolves the overdraft TAN at ACCRUAL time
+# (ADR-PC-037 §D5). You never edit the stored row — you edit THIS file and deploy a new version. A
+# correction or a new tier ships forward-only as a NEW file (a new `rate_sheet_version_id` with a later
+# `effective_from`); a published sheet is never edited in place.
+#
+# ADR-PC-008 §P1/§P2: the stored JSONB `body` is "1:1 with the deployed YAML", bounded by the verified
+# pack's `max_consumer_rate_bps` (pt.2026.1 = 2000 bps / 20%); idempotency is keyed on
+# `rate_sheet_version_id`. Owner: Treasury / ALM. Cadence: daily–weekly. The numbers below are
+# illustrative demo values, not a real PT overdraft rate card.
+#
+# How to deploy this file: `make deploy-rate-sheet SHEET=rate-sheets/current_account/pt-overdrafts-2026.1.yaml`
+# (or scripts/deploy-rate-sheet.sh) — the YAML-native deploy tool serialises this file to JSON 1:1 and
+# POSTs it. Until a sheet is deployed, an account that declares an overdraft rate accrues no interest and
+# the accrual command retries (the ADR-PC-037 §D5 rate-declared-but-undeployed contract).
+
+# --- Envelope: these fields become columns on the immutable stored row. ---
+rate_sheet_version_id: pt-overdrafts-2026.1   # PRIMARY KEY. A new version = a new file.
+product_family: current_account               # The family this sheet prices (its overdraft interest).
+pack_version: pt.2026.1                        # The verified pack whose max_consumer_rate_bps bounds every TAN.
+effective_from: "2026-01-01T00:00:00+00:00"   # Active from this instant. UNIQUE within the family.
+approved_by: treasury.alm@bank.internal       # The treasury / ALM approver, recorded on the row.
+approval_ref: ALM-2026-020                     # The treasury sign-off reference.
+
+# --- Body: products -> role -> ordered principal bands (the priceable data). ---
+# The role is `overdraft` — the role_selector the ca_pt_standard product config's `rate` block names, and
+# the role the accrual passes to ResolveTanBasisPoints(product, role, drawn). Each band is
+# { principal_cents: [from, to], tan_basis_points: N } over the DRAWN (overdrawn) principal, half-open
+# [from, to). This starter sheet offers a single open-ended `overdraft` band: one flat overdraft TAN for
+# all drawn amounts. A tiered sheet (a higher TAN above a drawn threshold) is an additive future sheet.
+products:
+  ca_pt_standard:
+    overdraft:
+      bands:
+        - { principal_cents: [0, null], tan_basis_points: 1600 }   # 16.00% overdraft TAN, all drawn amounts

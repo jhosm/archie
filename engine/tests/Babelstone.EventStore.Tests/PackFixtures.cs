@@ -18,6 +18,7 @@ internal static class PackFixtures
         "parameters/constants.yaml",
         "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
+        "rate-sheet-refs/current-account-pt.yaml",
     ];
 
     public static Dictionary<string, byte[]> LoadPt2026()

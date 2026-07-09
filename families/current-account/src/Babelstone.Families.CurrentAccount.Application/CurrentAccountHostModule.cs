@@ -2,6 +2,7 @@ using Babelstone.Engine;
 using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.CurrentAccount;
+using Babelstone.RateSheets;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -142,6 +143,20 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
         // append is a plain spine fact with no balance read or decider (holds are spine-owned, ADR-PC-033).
         services.AddSingleton(serviceProvider => new CurrentAccountHoldExpiryService(
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            ctx.Pack));
+
+        // The projection-derived OVERDRAFT-ACCRUAL command shell (ADR-PC-037 §D5): the /overdraft/accrue target
+        // the ADR-PC-036 lifecycle-command driver POSTs to for an account it found drawn below zero. A FOURTH
+        // service — it posts a fee Movement against the drawn balance, so unlike hold-expiry it reads the
+        // balance and resolves a rate: it composes the family runtime, the spine balance reader, the family's
+        // own product-config store (the overdraft rate REF), the rate-sheet store (the numeric TAN, ADR-PC-008),
+        // and the pinned pack. All are family→engine dependencies — the host still names no current-account type
+        // (ENGINE_API_HOST_FAMILY_AGNOSTIC). The fee math is command-side in the pure decider (ADR-PC-037 §P3).
+        services.AddSingleton(serviceProvider => new CurrentAccountOverdraftAccrualService(
+            serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            serviceProvider.GetRequiredService<AccountBalanceReader>(),
+            serviceProvider.GetRequiredService<CurrentAccountProductConfigStore>(),
+            serviceProvider.GetRequiredService<IRateSheetStore>(),
             ctx.Pack));
     }
 

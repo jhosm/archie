@@ -1,0 +1,9 @@
+# Version-pinned reference to the current_account OVERDRAFT-INTEREST rate sheet (ADR-PC-008). The pack
+# carries the ref ONLY — the sheet body (the numerical overdraft TANs) lives in the rate_sheets table on
+# its own fast cadence (surface §2), and the source YAML is rate-sheets/current_account/. The overdraft
+# accrual (ADR-PC-037 §D5) resolves rate_sheet_version_id at accrual time and stamps it on the store-only
+# OverdraftInterestAccrued. This ref is what makes pack-validate depth-3 pass for the rate-BEARING
+# ca_pt_standard variant (a variant carrying a `rate:` block needs the pack to price its family).
+refs:
+  - product_family: current_account
+    rate_sheet_version_id: pt-overdrafts-2026.1

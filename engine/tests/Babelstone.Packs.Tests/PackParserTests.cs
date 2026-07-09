@@ -93,12 +93,16 @@ public sealed class PackParserTests
     }
 
     [Fact]
-    public void Rate_sheet_refs_point_at_the_term_deposit_sheet()
+    public void Rate_sheet_refs_point_at_the_term_deposit_and_current_account_sheets()
     {
+        // pt.2026.1 carries two rate-sheet refs: the term-deposit sheet and — since the current_account family
+        // gained its overdraft-interest rate (bd md1a) — the current_account overdraft sheet.
         var refs = Pt2026().RateSheetRefs;
-        Assert.Single(refs);
-        Assert.Equal("term_deposit", refs[0].ProductFamily);
-        Assert.Equal("pt-deposits-2026.1", refs[0].RateSheetVersionId);
+        Assert.Equal(2, refs.Count);
+        var deposit = Assert.Single(refs, r => r.ProductFamily == "term_deposit");
+        Assert.Equal("pt-deposits-2026.1", deposit.RateSheetVersionId);
+        var currentAccount = Assert.Single(refs, r => r.ProductFamily == "current_account");
+        Assert.Equal("pt-overdrafts-2026.1", currentAccount.RateSheetVersionId);
     }
 
     [Fact]
@@ -327,10 +331,11 @@ public sealed class PackParserTests
     public void An_absent_rate_sheet_refs_block_defaults_to_no_refs()
     {
         var files = PackTestData.LoadPt2026();
-        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt", "", StringComparison.Ordinal);
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt\n  - current-account-pt", "", StringComparison.Ordinal);
         Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
         files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
-        // A dropped `?? []` would NullReference on the foreach over the (absent) ref-name list.
+        // A dropped `?? []` would NullReference on the foreach over the (absent) ref-name list. The two ref
+        // FILES stay in the dict but unreferenced by the manifest — tolerated, so refs default to empty.
         Assert.Empty(PackParser.Parse(files, "pt.2026.1").RateSheetRefs);
     }
 

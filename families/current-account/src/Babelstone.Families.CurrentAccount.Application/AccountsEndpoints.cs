@@ -39,6 +39,11 @@ public static class AccountsEndpoints
     // structural role, never PII.
     private const string ExpiryActor = "svc:lifecycle-hold-expiry";
 
+    // The default acting principal recorded on an overdraft-accrual append: the same non-interactive ADR-PC-036
+    // lifecycle-command driver (accrual is machine-fired off the overdraft projection), a structural role,
+    // never PII.
+    private const string AccrualActor = "svc:lifecycle-overdraft-accrual";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // Open a new demand account (opens the stream). The Idempotency-Key is OPTIONAL here (the
@@ -65,6 +70,15 @@ public static class AccountsEndpoints
         // (the driver's canonical dispatch id) makes an at-least-once retry replay rather than re-expire.
         // {id:guid} names the account stream; {holdId} is the hold's free-string lifecycle key.
         app.MapPost("/v1/accounts/{id:guid}/holds/{holdId}/expire", ExpireHoldAsync);
+
+        // The projection-derived OVERDRAFT-ACCRUAL command (ADR-PC-037 §D5): append an OverdraftInterestAccrued
+        // for an account the ADR-PC-036 lifecycle-command driver found drawn below zero as-of a value-date. It
+        // posts a fee Movement (a Debit that deepens the overdraft), but it is an INTERNAL ledger charge, not a
+        // rails money-mover (the fee is an Observed engine-internal-already-effected Movement, ADR-PC-043 — no
+        // external counterparty, no cash leg to settle), so it is ungated like the hold-expiry release; the
+        // mandatory Idempotency-Key (the driver's canonical dispatch id) makes an at-least-once re-POST replay
+        // rather than re-accrue — one accrual per account per day.
+        app.MapPost("/v1/accounts/{id:guid}/overdraft/accrue", AccrueOverdraftInterestAsync);
 
         // GDPR Article 17 right-to-be-forgotten (ADR-PC-004) — a DIFFERENT gate from the money-mover SCA
         // gate; governed by its own crypto-shred discipline. Mandatory Idempotency-Key (key destruction
@@ -321,6 +335,39 @@ public static class AccountsEndpoints
             // The business valid_time is the hold's economic value-date (a HoldExpired is dated by when the
             // hold was due to expire, ADR-PC-023), passed as the override so the shared choreography stamps it.
             new DateTimeOffset(request.ValueDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            clock, ct);
+
+    /// <summary>
+    /// The projection-derived overdraft-interest accrual command (ADR-PC-037 §D5): append an
+    /// <c>OverdraftInterestAccrued</c> for an account the ADR-PC-036 lifecycle-command driver found drawn below
+    /// zero as-of a value-date. It reuses the shared idempotent choreography — the accrual posts a fee Movement
+    /// but it is an INTERNAL ledger charge (an Observed engine-internal-already-effected Movement, ADR-PC-043 —
+    /// no external counterparty, no cash leg to settle), so it is ungated like the hold-expiry release, and the
+    /// mandatory Idempotency-Key (the driver's canonical dispatch id)
+    /// makes an at-least-once re-POST replay the original outcome rather than re-accrue — one accrual per
+    /// account per day. A no-applicable-accrual outcome (not Active / not drawn / no overdraft rate / a
+    /// zero-rounding fee) appends nothing and returns the current head; a rate-declaring account whose sheet is
+    /// undeployed throws (→ 422) so the driver retries. The business valid_time is the accrual's economic
+    /// value-date, not the wall-clock tick the driver fired on (ADR-PC-002 / ADR-PC-023).
+    /// </summary>
+    private static Task<IResult> AccrueOverdraftInterestAsync(
+        Guid id,
+        OverdraftAccrualRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CurrentAccountOverdraftAccrualService service,
+        AggregateRuntime<AccountPosition> runtime,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+        => RunIdempotentAsync(
+            id, idempotencyKey, runtime, commandLog,
+            (commandId, validTime) => service.AccrueOverdraftInterestAsync(
+                new OverdraftAccrualCommand(id, request.AccrualDate, request.Actor ?? AccrualActor, commandId),
+                validTime, ct),
+            // The business valid_time is the accrual's economic value-date (the day the driver is accruing for,
+            // ADR-PC-023), passed as the override so the shared choreography stamps it — a late/backfilled
+            // accrual records the correct economic date.
+            new DateTimeOffset(request.AccrualDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
             clock, ct);
 
     /// <summary>

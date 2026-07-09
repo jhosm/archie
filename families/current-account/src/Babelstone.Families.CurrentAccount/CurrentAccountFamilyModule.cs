@@ -50,6 +50,13 @@ public sealed class CurrentAccountFamilyModule : IFamilyModule
         // Store-only — a refusal is internal audit, never on the bus — and folded as a no-op.
         new("current_account.AuthorizationDeclined", typeof(AuthorizationDeclined),
             new DispatchableHandler<AccountPosition, AuthorizationDeclined>(new AuthorizationDeclinedHandler())),
+        // The overdraft-interest accrual fact (ADR-PC-037 §D5): a day's descoberto interest charged against
+        // a drawn (negative) balance. Store-only (uncatalogued — an internal ledger fact, ADR-IC-017) and
+        // folded as a no-op on the family position, but IMovementBearing, so the SPINE's movement ledger
+        // folds the fee Movement it carries into the accounting balance (the balance is spine-owned, never
+        // family state — ADR-PC-033). The fee math is command-side, never in this fold (ADR-PC-037 §P3).
+        new("current_account.OverdraftInterestAccrued", typeof(OverdraftInterestAccrued),
+            new DispatchableHandler<AccountPosition, OverdraftInterestAccrued>(new OverdraftInterestAccruedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's AccountPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every
