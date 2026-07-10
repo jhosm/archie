@@ -65,7 +65,13 @@
   path: /spec/template/spec/containers/-
   value:
     name: pgbackrest
-    image: pgbackrest/pgbackrest:2.54.2
+    # Community-maintained pgBackRest image (bd babelstone-2t16.31.4) — see the
+    # matching note in postgres-pitr-resources.yaml. woblerr/pgbackrest replaces the
+    # absent pgbackrest/pgbackrest:2.54.2 repo; digest-pinned in kustomization.yaml
+    # `images:` (ADR-PC-007 §A3). The image ENTRYPOINT (/entrypoint.sh) is overridden
+    # by `command:` below, so the sidecar runs the shell directly with the config
+    # mounted at /etc/pgbackrest (pgBackRest's default config dir) and pgbackrest on PATH.
+    image: woblerr/pgbackrest:2.58.0
     command:
       - /bin/sh
       - -c
