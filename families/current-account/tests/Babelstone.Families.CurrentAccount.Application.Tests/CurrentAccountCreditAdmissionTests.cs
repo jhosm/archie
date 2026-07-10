@@ -6,7 +6,7 @@ using Xunit;
 namespace Babelstone.Families.CurrentAccount.Application.Tests;
 
 /// <summary>
-/// The credit-ADMISSION gate commitments (ADR-PC-043 §The credit-admission gate): a current account can only
+/// The credit-ADMISSION gate commitments (ADR-PC-043): a current account can only
 /// RECEIVE money if it is open (or dormant, which reactivates); a closed or erased account refuses the credit
 /// BY CONSTRUCTION. In plain English: these pin that admissibility is decided on the account's own folded
 /// lifecycle BEFORE anything is recorded — an Active/Dormant account admits (a Dormant one reactivates + credits
@@ -22,7 +22,7 @@ namespace Babelstone.Families.CurrentAccount.Application.Tests;
 /// integration tier; here we pin the DECISION the shell reloads and re-runs.
 /// </para>
 /// <para>
-/// <b>CREDIT_ADMISSION_OWN_STREAM_OCC at the decision boundary.</b> The shell reads lifecycle from the
+/// <b>The own-stream OCC seam at the decision boundary (ADR-PC-043; its fitness anchor still planned).</b> The shell reads lifecycle from the
 /// synchronous own-stream fold and appends on the SAME stream at the loaded version, so a concurrent
 /// CloseAccount is either seen on reload or loses the per-stream OCC race → reload-and-redecide. The
 /// re-decision is exactly this decider run against the now-Closed folded position, which these tests pin
@@ -65,7 +65,7 @@ public sealed class CurrentAccountCreditAdmissionTests
         Assert.Equal(AccountRef, movement.AccountRef);
         Assert.Equal(SettlementDirection.Credit, movement.Direction);
         Assert.Equal(10_000, movement.Amount.Cents);
-        Assert.Equal(MovementOperation.PayMaturity, movement.Operation); // generic money-IN verb (98mj.8 widens the enum)
+        Assert.Equal(MovementOperation.PayMaturity, movement.Operation); // generic money-IN verb (a dedicated CA verb is a later change)
         Assert.Equal(MovementOrigin.Observed, movement.Origin); // engine-internal-already-effected loop-breaker
         Assert.Equal(CommandId, movement.CommandId);
     }
@@ -75,7 +75,7 @@ public sealed class CurrentAccountCreditAdmissionTests
     [Fact]
     public void CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH_a_dormant_account_admits_with_reactivate_then_credit_in_one_batch()
     {
-        // The load-bearing invariant (ADR-PC-043 §The credit-admission gate): a Dormant account is used again
+        // The load-bearing invariant (ADR-PC-043): a Dormant account is used again
         // by this credit, so it reactivates AND credits in ONE atomic append batch — the decider returns BOTH
         // events, reactivate FIRST, so the shell appends them together and a Close cannot wedge between them.
         var events = CurrentAccountCreditAdmissionDecider.Decide(InState(AccountLifecycle.Dormant), Command());

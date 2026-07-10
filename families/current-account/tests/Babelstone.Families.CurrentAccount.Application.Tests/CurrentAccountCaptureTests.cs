@@ -5,10 +5,9 @@ using Xunit;
 namespace Babelstone.Families.CurrentAccount.Application.Tests;
 
 /// <summary>
-/// The settlement CAPTURE commitments (ADR-PC-043 §2 ConfirmDebit → HoldCaptured + Debit Movement / ADR-PC-037
-/// §D4): a capture turns an authorize reservation into a real debit — releasing the placed hold and landing a
+/// The settlement CAPTURE commitments (ADR-PC-043 / ADR-PC-037): a capture turns an authorize reservation into a real debit — releasing the placed hold and landing a
 /// Debit Movement — but only against the reservation the authorize placed, and exactly once. In plain English:
-/// these pin that a capture must name the SAME hold the authorize placed (SETTLEMENT_CA_CAPTURE_HOLD_MATCH),
+/// these pin that a capture must name the SAME hold the authorize placed (the hold-match rule, ADR-PC-043),
 /// that it produces the spine HoldCaptured + the family AccountDebited as ONE atomic batch carrying that hold
 /// id, and that a redelivered / reissued capture lands EXACTLY ONE Debit Movement.
 /// </summary>
@@ -68,7 +67,7 @@ public sealed class CurrentAccountCaptureTests
         Assert.Equal(AccountRef, movement.AccountRef);
         Assert.Equal(SettlementDirection.Debit, movement.Direction);
         Assert.Equal(50_000, movement.Amount.Cents);
-        Assert.Equal(MovementOperation.CollectInstallment, movement.Operation); // generic money-OUT verb (98mj.8 widens the enum)
+        Assert.Equal(MovementOperation.CollectInstallment, movement.Operation); // generic money-OUT verb (a dedicated CA verb is a later change)
         Assert.Equal(MovementOrigin.Observed, movement.Origin);
         Assert.Equal(CommandId, movement.CommandId);
 
@@ -107,13 +106,13 @@ public sealed class CurrentAccountCaptureTests
             () => CurrentAccountCaptureDecider.Decide(AccountRef, [legalHold], Command()));
     }
 
-    // --- ADR-PC-037 §D4 partial / over-capture reconciliation ---
+    // --- ADR-PC-037 partial / over-capture reconciliation ---
 
     [Fact]
     public void A_partial_capture_surfaces_PARTIAL_CAPTURE_and_still_lands_one_Debit()
     {
         // Captured 300.00 against a 500.00 hold: the remainder is released, and the partial is surfaced as a
-        // reconciliation signal (ADR-PC-037 §D4), never silently absorbed. One Debit still lands (the captured amount).
+        // reconciliation signal (ADR-PC-037), never silently absorbed. One Debit still lands (the captured amount).
         var decision = CurrentAccountCaptureDecider.Decide(
             AccountRef, [ActiveAuthorizationHold(amountCents: 50_000)], Command(amountCents: 30_000));
 
@@ -126,7 +125,7 @@ public sealed class CurrentAccountCaptureTests
     public void An_over_capture_surfaces_OVER_CAPTURED_and_still_lands_one_Debit()
     {
         // Captured 600.00 against a 500.00 hold: the money moves (the transition still happens) but the
-        // over-capture is surfaced (ADR-PC-037 §D4 / HoldReleaseResult.TransitionedOverCaptured), never absorbed.
+        // over-capture is surfaced (ADR-PC-037 / HoldReleaseResult.TransitionedOverCaptured), never absorbed.
         var decision = CurrentAccountCaptureDecider.Decide(
             AccountRef, [ActiveAuthorizationHold(amountCents: 50_000)], Command(amountCents: 60_000));
 

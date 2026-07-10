@@ -6,14 +6,14 @@ namespace Babelstone.Families.CurrentAccount.Tests;
 
 /// <summary>
 /// Fold conformance for the store-only settlement money-movers <c>current_account.AccountCredited</c> and
-/// <c>current_account.AccountDebited</c> (ADR-PC-043 §2): each must decode on the family registry and fold
+/// <c>current_account.AccountDebited</c> (ADR-PC-043): each must decode on the family registry and fold
 /// replay-deterministically. In plain English: a received credit's and a captured debit's effect on the
 /// balance is the <see cref="Movement"/> each carries — folded by the SPINE's account-keyed movement ledger
 /// (both are <see cref="IMovementBearing"/>) — so on the FAMILY position each is a pure no-op, exactly like
 /// the hold + accrual events (a demand account's balance is a spine-owned fold, never family state — ADR-PC-033).
 /// </summary>
 /// <remarks>
-/// The <c>CREDIT_ADMISSION_UPSTREAM_OF_FOLD</c> commitment (ADR-PC-043 §The credit-admission gate) has an
+/// The credit-admission-upstream-of-fold commitment (ADR-PC-043; its fitness anchor still planned) has an
 /// architectural half pinned HERE: the generic movement-ledger fold is lifecycle-BLIND — this fold folds an
 /// <see cref="AccountCredited"/> the SAME no-op way regardless of the folded lifecycle (it never consults
 /// <see cref="AccountLifecycle"/>), which is exactly WHY admission MUST be decided upstream in the command
@@ -43,7 +43,7 @@ public sealed class SettlementMovementFoldTests
         var accountId = Guid.NewGuid();
         var credit = Credited(accountId);
 
-        // The generic movement-ledger fold is lifecycle-BLIND (ADR-PC-043 §The credit-admission gate): folding
+        // The generic movement-ledger fold is lifecycle-BLIND (ADR-PC-043): folding
         // an AccountCredited leaves the family position UNCHANGED — its lifecycle is never read or moved by the
         // fold. This is the architectural reason admission MUST be gated upstream: the fold itself cannot
         // refuse a credit into a Closed/Erased account, so the command decides admissibility BEFORE the append,

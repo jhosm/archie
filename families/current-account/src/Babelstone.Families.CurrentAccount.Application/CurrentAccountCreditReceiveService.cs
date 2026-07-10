@@ -5,7 +5,7 @@ using Babelstone.Packs;
 namespace Babelstone.Families.CurrentAccount.Application;
 
 /// <summary>
-/// The impure command shell for the settlement CREDIT-receive path (ADR-PC-043 §The credit-admission gate):
+/// The impure command shell for the settlement CREDIT-receive path (ADR-PC-043):
 /// it does the one atomic read-modify-write a landing credit needs — load the account's OWN stream, ask the
 /// pure <see cref="CurrentAccountCreditAdmissionDecider"/> whether the credit may land, and append the
 /// produced events at the LOADED expectedVersion under per-stream OCC — while the admission DECISION stays
@@ -15,7 +15,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Closed by construction (ADR-PC-043 §The credit-admission gate, CREDIT_ADMISSION_OWN_STREAM_OCC).</b>
+/// <b>Closed by construction (ADR-PC-043; the own-stream OCC seam is integration-pinned, its fitness anchor still planned).</b>
 /// The load→admit→append-at-loaded-version cycle is serialized against a concurrent Close/Erase by the SAME
 /// per-stream OCC seam (the stale-head check) that serializes authorize against concurrent debits: a
 /// concurrent close is either seen on reload (→ reject) or loses the OCC race (→ <see cref="ConcurrencyException"/>
@@ -23,7 +23,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// exactly ONE commit and an ACCOUNT_CLOSED reject on the retry — no credit ever folds into a Closed account.
 /// </para>
 /// <para>
-/// <b>Body-derived append key, not the HTTP Idempotency-Key (ADR-PC-043 §Idempotency — the scoped ADR-PC-029
+/// <b>Body-derived append key, not the HTTP Idempotency-Key (ADR-PC-043 — the scoped ADR-PC-029
 /// inversion).</b> The append <c>command_id</c> is derived deterministically from the body's economic-intent
 /// reference (<see cref="ReceiveCreditCommand.CommandId"/>, computed by the endpoint from the intent string),
 /// so a saga reissue with a byte-identical body but a fresh dispatch message_id collapses at command_dedup to
@@ -68,7 +68,7 @@ public sealed class CurrentAccountCreditReceiveService(AggregateRuntime<AccountP
         {
             var hydrated = await runtime.LoadAsync(command.AccountId, ct);
 
-            // Admission is decided UPSTREAM of the generic movement_ledger fold (ADR-PC-043 §The
+            // Admission is decided UPSTREAM of the generic movement_ledger fold (ADR-PC-043
             // credit-admission gate): the decider throws DomainRejectedException for a Closed/Erased account
             // BEFORE any append, so the fold only ever folds an ADMITTED credit — never a lifecycle-blind one.
             var events = CurrentAccountCreditAdmissionDecider.Decide(hydrated.State, command);

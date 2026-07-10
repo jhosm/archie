@@ -5,7 +5,7 @@ using Babelstone.FinancialTypes;
 namespace Babelstone.Families.CurrentAccount.Application;
 
 /// <summary>
-/// The pure credit-ADMISSION decision core (ADR-PC-043 §The credit-admission gate): given the account's
+/// The pure credit-ADMISSION decision core (ADR-PC-043): given the account's
 /// folded <see cref="AccountPosition"/> lifecycle and a credit-receive command, it decides whether the
 /// credit may LAND — ADMIT (produce the events to append) or REJECT (throw
 /// <see cref="DomainRejectedException"/>) — BEFORE anything is recorded. In plain English: a current
@@ -16,19 +16,20 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The gate is strictly UPSTREAM of the fold (ADR-PC-043 §The credit-admission gate).</b> The generic
+/// <b>The gate is strictly UPSTREAM of the fold (ADR-PC-043).</b> The generic
 /// <c>movement_ledger</c> fold is lifecycle-BLIND — it would fold a credit into a Closed/Erased account —
 /// so admission is decided HERE, in the family, at ingestion, exactly as <c>authorize</c> gates debits
 /// upstream. The impure shell (<see cref="CurrentAccountCreditReceiveService"/>) reads the account's own
 /// stream, calls this decider, and appends the produced events at the LOADED expectedVersion under
 /// per-stream OCC — so the admitted-or-rejected decision is serialized against a concurrent Close/Erase by
-/// the same stale-head check that serializes authorize against concurrent debits (CREDIT_ADMISSION_OWN_STREAM_OCC).
+/// the same stale-head check that serializes authorize against concurrent debits (ADR-PC-043; the own-stream
+/// OCC seam is integration-pinned, and the fitness anchor for it is still planned).
 /// </para>
 /// <para>
-/// <b>Dormant admits atomically (ADR-PC-043 §The credit-admission gate, load-bearing invariant).</b> A
+/// <b>Dormant admits atomically (ADR-PC-043, load-bearing invariant).</b> A
 /// Dormant account may fire <see cref="AccountReactivated"/> per pack policy, and the reactivation +
 /// the credit MUST be ONE atomic append batch — the decider returns BOTH events in a single list so the
-/// shell appends them together; a Close cannot wedge between them (CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH).
+/// shell appends them together; a Close cannot wedge between them (ADR-PC-043; pinned by CurrentAccountCreditAdmissionTests).
 /// Resurrection is impossible: the lifecycle legality table has no Closed→Active / Erased→Active edge, so
 /// only a genuinely-live account is ever admitted.
 /// </para>
@@ -66,11 +67,11 @@ public static class CurrentAccountCreditAdmissionDecider
             Direction: SettlementDirection.Credit,
             Amount: new Money(command.AmountCents),
             ValueDate: command.ValueDate,
-            // The generic money-IN verb the CA credit lands under (ADR-PC-032 §1 — a maturity/coupon/
+            // The generic money-IN verb the CA credit lands under (ADR-PC-032 — a maturity/coupon/
             // disbursement payout are all credit-in). The CA is family-agnostic and does not learn the
             // source's specific occurrence, so it reuses the closest existing MovementOperation rather than
-            // widening the closed enum (a dedicated CA credit verb + its governed Avro carrier symbol is bd
-            // babelstone-98mj.8). The operation is a fold LABEL; the Credit DIRECTION is what moves the balance.
+            // widening the closed enum (a dedicated CA credit verb + its governed Avro carrier symbol is a
+            // later change). The operation is a fold LABEL; the Credit DIRECTION is what moves the balance.
             Operation: MovementOperation.PayMaturity,
             // Observed, in the ADR-PC-043 "engine-internal already-effected" sense: the settlement saga
             // already drove the cash leg and the CA records the landing — no Originated header, so the
@@ -93,7 +94,7 @@ public static class CurrentAccountCreditAdmissionDecider
 
             // Dormant admits with a reactivation FIRST, in ONE atomic batch (the load-bearing invariant): a
             // dormant account is used again by this credit, so it reactivates and lands the credit together —
-            // a Close cannot wedge between them (CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH).
+            // a Close cannot wedge between them (ADR-PC-043; pinned by CurrentAccountCreditAdmissionTests).
             AccountLifecycle.Dormant =>
             [
                 new AccountReactivated(command.AccountId, command.ValueDate),
@@ -102,7 +103,7 @@ public static class CurrentAccountCreditAdmissionDecider
 
             // Closed / Erased are genuinely-unreceivable terminals — refused by construction (no resurrection
             // edge exists), each with its own machine code so the caller / reconciler can attribute the
-            // undeliverable credit (ADR-PC-043 §Undeliverable credit — the source holds the funds).
+            // undeliverable credit (ADR-PC-043 — the source holds the funds).
             AccountLifecycle.Closed => throw Reject(command.AccountId, CreditRejectedReason.AccountClosed, current.Lifecycle),
             AccountLifecycle.Erased => throw Reject(command.AccountId, CreditRejectedReason.AccountErased, current.Lifecycle),
 
