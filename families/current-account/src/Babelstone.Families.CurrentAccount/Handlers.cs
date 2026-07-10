@@ -85,3 +85,29 @@ public sealed class OverdraftInterestAccruedHandler : IEventHandler<AccountPosit
     public HandlerResult<AccountPosition> Apply(AccountPosition state, OverdraftInterestAccrued @event)
         => HandlerResult<AccountPosition>.From(state);
 }
+
+public sealed class AccountCreditedHandler : IEventHandler<AccountPosition, AccountCredited>
+{
+    // A no-op fold on the FAMILY position, the conformant shape (ADR-PC-043 / ADR-PC-033): a received credit's
+    // effect on the balance is the Credit Movement the event carries, folded by the SPINE's account-keyed
+    // movement ledger (the event is IMovementBearing), never family state — a demand account's accounting
+    // balance is a spine-owned fold, so the family position is untouched by a credit, exactly as it is by a
+    // hold or an accrual. The lifecycle is unchanged too: a credit into an Active/Dormant account does not
+    // relabel it (admission was decided UPSTREAM by ICreditAdmissible — the fold only ever sees an admitted
+    // credit, so it never needs a lifecycle guard here). The credit's audit facts (amount, intent ref) live
+    // on the store-only event, not on this state.
+    public HandlerResult<AccountPosition> Apply(AccountPosition state, AccountCredited @event)
+        => HandlerResult<AccountPosition>.From(state);
+}
+
+public sealed class AccountDebitedHandler : IEventHandler<AccountPosition, AccountDebited>
+{
+    // A no-op fold on the FAMILY position, the conformant shape (ADR-PC-043 / ADR-PC-033): a capture debit's
+    // effect on the balance is the Debit Movement the event carries, folded by the SPINE's account-keyed
+    // movement ledger (the event is IMovementBearing), never family state; the matching HoldCaptured (also in
+    // the append batch) leaves the spine-owned active-hold set, likewise not tracked here. The family position
+    // is untouched by a capture, exactly as it is by the placing authorize's HoldPlaced. The capture's audit
+    // facts (amount, hold id, intent ref) live on the store-only event, not on this state.
+    public HandlerResult<AccountPosition> Apply(AccountPosition state, AccountDebited @event)
+        => HandlerResult<AccountPosition>.From(state);
+}
