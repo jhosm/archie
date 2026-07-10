@@ -93,14 +93,23 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
                 () => Task.FromResult(acl.Requests.Any(r => r.Path == "/v1/credits")),
                 TimeSpan.FromSeconds(30),
                 "the dispatcher never delivered the credit leg to the receiver");
-            Assert.Equal("PENDING", await StatusAsync(creditId));
-            Assert.Null(await FailureStatusCodeAsync(creditId));
+            Assert.Equal("PENDING", await StatusAsync(creditId));       // retriable, not settled
+            Assert.Null(await FailureStatusCodeAsync(creditId));         // not terminal-FAILED
 
-            // The FIRST delivery reached the receiver carrying NEITHER SCA header — the gate saw an absent
-            // proof, exactly as the engine-direct path does.
-            var absent = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
-            Assert.Null(absent.ScaAcr);
-            Assert.Null(absent.ScaAuthTime);
+            // Snapshot the absent-proof-phase attempts BEFORE the fresh re-stamp. The 422 is retriable
+            // (ADR-PC-043), so the leg stays PENDING and the 100 ms poll loop keeps re-driving the SAME row —
+            // acl.Requests is a live, still-growing recorder queue and Assert.Single over it races the next
+            // poll tick (the same flake as bd babelstone-98mj.15's sibling test). Snapshotting with ToArray()
+            // right before the restamp fixes the set to the absent-proof phase and proves the semantics without
+            // a count race: at least one attempt WAS forwarded, and EVERY forwarded attempt carried NEITHER SCA
+            // header — the gate saw an absent proof, exactly as the engine-direct path does.
+            var absentPhaseAttempts = acl.Requests.Where(r => r.Path == "/v1/credits").ToArray();
+            Assert.NotEmpty(absentPhaseAttempts);                       // the absent-proof leg WAS forwarded (>=1)
+            Assert.All(absentPhaseAttempts, r =>
+            {
+                Assert.Null(r.ScaAcr);
+                Assert.Null(r.ScaAuthTime);
+            });
 
             // A fresh SCA proof arrives: re-stamp the SAME outbox row (same process_id, same seq) with fresh
             // attested claims — modelling the re-attestation that unblocks the leg. The dispatcher re-drives
@@ -146,12 +155,23 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
                 () => Task.FromResult(acl.Requests.Any(r => r.Path == "/v1/credits")),
                 TimeSpan.FromSeconds(30),
                 "the dispatcher never delivered the credit leg to the receiver");
-            Assert.Equal("PENDING", await StatusAsync(creditId));
-            Assert.Null(await FailureStatusCodeAsync(creditId));
+            Assert.Equal("PENDING", await StatusAsync(creditId));       // retriable, not settled
+            Assert.Null(await FailureStatusCodeAsync(creditId));         // not terminal-FAILED
 
-            var staleHit = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
-            Assert.Equal("urn:bank:sca:psd2", staleHit.ScaAcr);
-            Assert.Equal(stale.ToString(System.Globalization.CultureInfo.InvariantCulture), staleHit.ScaAuthTime);
+            // Snapshot the stale-phase attempts BEFORE the fresh re-attestation. Because the 422 is retriable
+            // (ADR-PC-043) the leg stays PENDING and the 100 ms poll loop keeps re-driving the SAME row, so
+            // acl.Requests is a live, still-growing recorder queue — asserting Assert.Single over it races the
+            // next poll tick (bd babelstone-98mj.15). Snapshotting with ToArray() right before the restamp
+            // fixes the set to the stale phase (no fresh-proof request can enter it) and lets us prove the
+            // semantics WITHOUT a count race: at least one attempt WAS forwarded, and EVERY forwarded stale
+            // attempt carried exactly the stale proof (strictly stronger than checking one).
+            var stalePhaseAttempts = acl.Requests.Where(r => r.Path == "/v1/credits").ToArray();
+            Assert.NotEmpty(stalePhaseAttempts);                        // the stale claims WERE forwarded (>=1)
+            Assert.All(stalePhaseAttempts, r =>
+            {
+                Assert.Equal("urn:bank:sca:psd2", r.ScaAcr);
+                Assert.Equal(stale.ToString(System.Globalization.CultureInfo.InvariantCulture), r.ScaAuthTime);
+            });
 
             // A fresh re-attestation on the SAME row re-drives the SAME leg to settlement.
             var fresh = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
