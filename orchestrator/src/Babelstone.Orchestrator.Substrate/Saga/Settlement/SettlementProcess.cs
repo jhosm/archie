@@ -279,4 +279,96 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     /// <summary>The promoted direction value for a credit movement (ADR-PC-032
     /// <c>SettlementDirection.Credit</c> — value enters the named account).</summary>
     private const string CreditDirectionValue = "Credit";
+
+    // --- The engine-CA settlement error model (ADR-PC-043 §5 slot 5) -----------------------------------
+    // In plain English: when the saga tries to move cash and the receiver says "no", we have to tell TWO
+    // different "no"s apart. One "no" means "you need to prove strong customer authentication again"
+    // (SCA_REQUIRED) — that is not a real failure, the money simply has not moved yet, so the saga should
+    // RE-TRY the SAME cash leg once a fresh proof arrives, under the SAME process_id, never dropping the
+    // payout and never starting a brand-new attempt (which would risk a double move). The other "no" means
+    // "the account genuinely declined this debit" (closed / frozen / insufficient) — that IS a real failure,
+    // so the saga parks LOUDLY in HUMAN_INTERVENTION_REQUIRED for an operator, never silently marching to
+    // COMPLETED with zero landing. The two are distinguished by the receiver's error CODE on the 4xx body,
+    // not by the status alone (both are 422s), which is why this classifier reads the code.
+
+    /// <summary>The receiver's ProblemDetails error <c>code</c> that marks a <c>422</c> as a strong-customer-
+    /// authentication (SCA) re-challenge rather than a business decline (ADR-PC-043 §5; ADR-IC-006 §P2 —
+    /// the engine's <c>ScaPrecondition</c> / the Core-ACL settlement gate return this when the attested proof
+    /// is absent, non-numeric, in the future, or older than the freshness window). Compared case-INSENSITIVELY
+    /// so a receiver that lower-cases the code still classifies as retriable. The orchestrator subtree stays
+    /// extraction-ready (ADR-PC-019 §P2), so it pins the literal here rather than referencing the engine-side
+    /// constant.</summary>
+    public const string ScaRequiredErrorCode = "SCA_REQUIRED";
+
+    /// <summary>
+    /// The engine-CA settlement DELIVERY disposition (ADR-PC-043 §5) — how the dispatcher must treat a cash
+    /// leg's HTTP outcome once it knows the receiver's error <c>code</c>, not just its status. It refines the
+    /// generic <see cref="CommandDeliveryKind"/> for the one case the status alone cannot express: a
+    /// <c>422</c> that is a retriable SCA re-challenge versus a <c>422</c> that is a genuine business decline.
+    /// </summary>
+    public enum SettlementDeliveryDisposition
+    {
+        /// <summary>The receiver could not be reached / classified as a terminal outcome by this refinement —
+        /// fall through to the substrate's default status-based classification (2xx → Applied, other 4xx →
+        /// Refused, 5xx → transient). This is the common case (no refinement needed).</summary>
+        DefaultByStatus,
+
+        /// <summary>A <c>422 SCA_REQUIRED</c> at dispatch: NOT a failure. The cash never moved, so the leg
+        /// stays retriable-PENDING under the SAME <c>process_id</c> and is re-driven once a fresh SCA proof is
+        /// attested — never terminal-FAILED (a dropped payout) and never re-driven as a fresh occurrence (a
+        /// double move). Maps onto the transient/stays-PENDING arm of the ADR-PC-029 slot-5 error model.</summary>
+        RetriablePending,
+
+        /// <summary>A genuine business DECLINE on the debit path (a closed / frozen / insufficient reserve
+        /// verdict, shaped as a <c>4xx</c> by the settlement-facing CA surface — never a 200-with-<c>Declined</c>
+        /// body the dispatcher would mis-read as <see cref="CommandDeliveryKind.Applied"/>). Maps to
+        /// <see cref="CommandDeliveryKind.Refused"/>, which the bridge turns into
+        /// <see cref="ReserveRefused"/> → a LOUD park in <see cref="States.HumanInterventionRequired"/> (no
+        /// compensation; the money did not move, ADR-IC-003 §P6).</summary>
+        Decline,
+    }
+
+    /// <summary>
+    /// Classify a settlement cash leg's terminal HTTP outcome into a <see cref="SettlementDeliveryDisposition"/>
+    /// (ADR-PC-043 §5). PURE — a function of <paramref name="commandType"/>, <paramref name="httpStatusCode"/>,
+    /// and the receiver's ProblemDetails error <paramref name="errorCode"/> alone (no clock, no I/O), so the
+    /// dispatcher shell owns the HTTP call and this owns only the decision.
+    /// <list type="bullet">
+    ///   <item>A <c>422</c> whose <paramref name="errorCode"/> is <see cref="ScaRequiredErrorCode"/> (case-
+    ///   insensitive) → <see cref="SettlementDeliveryDisposition.RetriablePending"/>: the SCA re-challenge is
+    ///   retriable under the SAME <c>process_id</c>, never terminal-FAILED, never a fresh occurrence.</item>
+    ///   <item>Any OTHER <c>4xx</c> (including a <c>422</c> with a non-SCA code — the genuine decline) →
+    ///   <see cref="SettlementDeliveryDisposition.Decline"/>: Refused → <see cref="ReserveRefused"/> → HIR.</item>
+    ///   <item>Everything else (a 2xx, a 5xx) → <see cref="SettlementDeliveryDisposition.DefaultByStatus"/>:
+    ///   the substrate's status-based classification is unchanged.</item>
+    /// </list>
+    /// The SCA carve-out applies ONLY to the irreversible cash confirms (<see cref="ConfirmDebit"/> /
+    /// <see cref="ConfirmCredit"/>) — the money-mover legs the receiver SCA-gates; a 4xx on any other leg (a
+    /// reserve, a clearance query) is a plain <see cref="SettlementDeliveryDisposition.Decline"/>, never a
+    /// silent retry.
+    /// </summary>
+    public static SettlementDeliveryDisposition ClassifySettlementDelivery(
+        string commandType, int httpStatusCode, string? errorCode)
+    {
+        // Only a 4xx refuses; a 2xx/5xx is not this refinement's concern (default status-based handling).
+        if (httpStatusCode is < 400 or >= 500)
+        {
+            return SettlementDeliveryDisposition.DefaultByStatus;
+        }
+
+        var isScaGatedConfirm = commandType is ConfirmDebit or ConfirmCredit;
+        var isScaRequired =
+            httpStatusCode == 422
+            && string.Equals(errorCode, ScaRequiredErrorCode, StringComparison.OrdinalIgnoreCase);
+
+        // A 422 SCA_REQUIRED on an irreversible confirm → retriable-PENDING (never a drop, never a double).
+        if (isScaGatedConfirm && isScaRequired)
+        {
+            return SettlementDeliveryDisposition.RetriablePending;
+        }
+
+        // Every other 4xx — a genuine decline (closed / frozen / insufficient), or an SCA_REQUIRED on a
+        // non-confirm leg — is Refused → ReserveRefused → a loud HIR park, never a silent COMPLETED.
+        return SettlementDeliveryDisposition.Decline;
+    }
 }
