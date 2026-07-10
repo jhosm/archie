@@ -132,11 +132,13 @@ public static class SettlementCommandPayloadFactory
 /// <b>Source→destination threading (ADR-PC-043 §Idempotency).</b> The intent id originates at the SOURCE
 /// family (the deposit / loan) as <c>SettlementReferences.DeriveIntentId(source_id, occurrence)</c> — the
 /// same stable occurrence key the source-family payout <c>LifecycleCommandKey</c> uses (ADR-PC-036), so it
-/// is deterministic across reissues. The source promotes it (with the target header, STEP B) onto the
-/// Movement-bearing event; the substrate carries it UNTOUCHED here and derives the CA-apply reference from it
-/// — NEVER from a fresh value and NEVER from the HTTP Idempotency-Key. Resolution/retry keys derive from the
-/// SAME intent id via <see cref="SettlementReferences.DeriveResolutionIntentId"/>, so a late original apply
-/// and an operator re-target collapse to one landing by construction.
+/// is deterministic across reissues. The source family is EXPECTED to promote it (with the target header,
+/// STEP B) onto the Movement-bearing event (the source-promotion + intent-threading wiring lands with bd
+/// babelstone-98mj.3/.4 — this slice is derivation-only); once threaded, the substrate carries it UNTOUCHED
+/// here and derives the CA-apply reference from it — NEVER from a fresh value and NEVER from the HTTP
+/// Idempotency-Key. The derivation half IS wired and pinned: given an intent, resolution/retry keys derive
+/// from the SAME intent id via <see cref="SettlementReferences.DeriveResolutionIntentId"/>, so a late
+/// original apply and an operator re-target collapse to one landing by construction.
 /// </para>
 /// <para>
 /// <b>Structural, PII-free (ADR-PC-004 §P2).</b> The intent id is an opaque token; the amount rides as
