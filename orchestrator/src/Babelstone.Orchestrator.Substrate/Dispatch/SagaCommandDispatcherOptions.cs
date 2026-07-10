@@ -41,8 +41,10 @@ public sealed record SagaCommandDispatcherOptions
     /// leg is routed to when its promoted <c>ce_settlementtarget</c> header is <c>engine-ca</c>. Optional: when
     /// null (or blank) no leg is engine-CA-routed and every settlement command stays on
     /// <see cref="SettlementBaseUrl"/> — so an estate that has not stood up the engine-CA surface keeps the
-    /// pre-ADR-PC-043 behaviour with no config change. The engine's own command surface (ADR-PC-029), which the
-    /// settlement-facing CA <c>/capture</c> and <c>/credit</c> endpoints live behind.</summary>
+    /// pre-ADR-PC-043 behaviour with no config change. This is the engine's own command surface (ADR-PC-029),
+    /// reached via the counterparty-invariant <c>SettlementCommandRouter</c> paths (the same
+    /// <c>/v1/reservations</c>, <c>/v1/debits</c>, <c>/v1/credits</c>, … routes as the legacy leg — ADR-PC-043
+    /// flips only the base URL, never the path).</summary>
     public string? EngineCaSettlementBaseUrl { get; init; }
 
     /// <summary>Max rows drained per poll cycle (the PENDING tail, ORDER BY seq).</summary>

@@ -357,18 +357,24 @@ public sealed class SettlementProcessSagaTests
         }
     }
 
-    [Fact]
-    public void Router_fails_closed_for_an_engine_ca_leg_when_no_engine_ca_base_url_is_configured()
+    [Theory]
+    [InlineData(null)]        // an estate that never stood up the engine-CA surface
+    [InlineData("")]          // configured, but blank
+    [InlineData("   ")]       // configured, but whitespace-only
+    public void Router_fails_closed_for_an_engine_ca_leg_when_no_engine_ca_base_url_is_configured(
+        string? engineCaBaseUrl)
     {
-        // An estate that has not stood up the engine-CA surface leaves EngineCaSettlementBaseUrl null. An
-        // engine-CA-targeted leg then resolves to NO route (fail-closed) rather than silently settling
-        // engine-CA money on the legacy core — the drain surfaces a terminal routing failure.
+        // An estate that has not stood up the engine-CA surface leaves EngineCaSettlementBaseUrl null (or
+        // blank). An engine-CA-targeted leg then resolves to NO route (fail-closed) rather than silently
+        // settling engine-CA money on the legacy core — the drain surfaces a terminal routing failure. This
+        // backs the SettlementCommandRouter.Resolve XML-doc safety claim: it returns null, NOT the legacy
+        // SettlementBaseUrl, so real money never lands on the wrong counterparty.
         var options = new SagaCommandDispatcherOptions
         {
             ConnectionString = "Host=x;Database=y",
             EngineBaseUrl = "http://engine.invalid",
             SettlementBaseUrl = "http://acl.legacy",
-            // EngineCaSettlementBaseUrl deliberately unset.
+            EngineCaSettlementBaseUrl = engineCaBaseUrl,
         };
         var router = new SettlementCommandRouter(options);
 
@@ -376,7 +382,10 @@ public sealed class SettlementProcessSagaTests
         {
             [SettlementCommandRouter.SettlementTargetHeader] = SettlementCommandRouter.EngineCaValue,
         };
-        Assert.Null(router.Resolve(SettlementProcess.ConfirmCredit, engineCa));
+        var route = router.Resolve(SettlementProcess.ConfirmCredit, engineCa);
+        // Fail-closed: NO route at all — and explicitly NOT a silent fall-back to the legacy base URL.
+        Assert.Null(route);
+        Assert.NotEqual("http://acl.legacy", route?.BaseUrl);
         // But the legacy legs still route (the unconfigured engine-CA surface does not break legacy routing).
         Assert.Equal("http://acl.legacy", router.Resolve(SettlementProcess.ConfirmCredit)!.BaseUrl);
     }

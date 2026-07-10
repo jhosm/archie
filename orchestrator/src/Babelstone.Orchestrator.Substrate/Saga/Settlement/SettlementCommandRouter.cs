@@ -96,6 +96,10 @@ public sealed class SettlementCommandRouter(SagaCommandDispatcherOptions options
     // surfaces a routing failure), rather than silently settling engine-CA money on the legacy core.
     private string? ResolveBaseUrl(IReadOnlyDictionary<string, string>? extensionHeaders)
     {
+        // The VALUE compare is Ordinal (exact): the engine relay promotes the closed-enum wire string from the
+        // EngineCaValue constant verbatim, so the value is GUARANTEED lowercase ("engine-ca") — no case folding
+        // is needed on the value. (The header KEY lookup honours whatever comparer the extraction dictionary
+        // was built with; that is the caller's concern, not this value match.)
         if (extensionHeaders is not null
             && extensionHeaders.TryGetValue(SettlementTargetHeader, out var target)
             && string.Equals(target, EngineCaValue, StringComparison.Ordinal))
