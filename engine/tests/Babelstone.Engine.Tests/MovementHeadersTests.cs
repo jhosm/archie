@@ -139,6 +139,62 @@ public sealed class MovementHeadersTests
         Assert.Null(observedEvent.IntegrationHeaders);
     }
 
+    // ---- The ce_settlementtarget counterparty header (ADR-PC-043 slot 1) ------------------------------
+
+    [Fact]
+    public void An_engine_ca_target_promotes_a_settlementtarget_header_alongside_origin_and_directions()
+    {
+        // The counterparty-aware overload (ADR-PC-043 slot 1): a leg settling against the engine-owned CA
+        // promotes ce_settlementtarget = engine-ca so the substrate's router diverts it WITHOUT reading the
+        // payload. The value is the closed-enum wire token — no amount, no account ref, no PII.
+        var headers = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Credit)], SettlementTarget.EngineCa);
+
+        Assert.NotNull(headers);
+        Assert.Equal("Originated", headers![MovementHeaders.OriginKey]);
+        Assert.Equal("Credit", headers[MovementHeaders.DirectionsKey]);
+        Assert.Equal(MovementHeaders.EngineCaValue, headers[MovementHeaders.SettlementTargetKey]);
+        Assert.Equal("engine-ca", headers[MovementHeaders.SettlementTargetKey]);
+        // origin + directions + settlementtarget — exactly three routing discriminators, still no amount/PII.
+        Assert.Equal(3, headers.Count);
+    }
+
+    [Fact]
+    public void A_legacy_dda_target_promotes_no_settlementtarget_header_so_legacy_routing_is_unchanged()
+    {
+        // The default counterparty promotes NO target header — the router falls back to legacy, so a legacy
+        // leg's header shape is byte-identical to the no-target overload (legacy routing UNCHANGED).
+        var legacyTargeted = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Credit)], SettlementTarget.LegacyDda);
+        var noTarget = MovementHeaders.ForOriginatedMovements([Originated(SettlementDirection.Credit)]);
+
+        Assert.NotNull(legacyTargeted);
+        Assert.False(legacyTargeted!.ContainsKey(MovementHeaders.SettlementTargetKey));
+        Assert.Equal(2, legacyTargeted.Count);
+        // Byte-identical maps: same keys, same values.
+        Assert.Equal(noTarget, legacyTargeted);
+    }
+
+    [Fact]
+    public void An_observed_only_event_promotes_no_settlementtarget_header_even_when_engine_ca_targeted()
+    {
+        // No Originated cash leg → no headers at all, target or otherwise (the overload short-circuits on the
+        // no-target result). An Observed movement has no cash leg to route.
+        Assert.Null(MovementHeaders.ForOriginatedMovements(
+            [Observed(SettlementDirection.Credit)], SettlementTarget.EngineCa));
+    }
+
+    [Fact]
+    public void The_engine_ca_and_legacy_dda_wire_values_are_the_router_pinned_literals()
+    {
+        // The PRODUCER↔CONSUMER contract (mirrors MovementHeaderAutoStartContractTests): the wire tokens the
+        // engine promotes are exactly the literals the substrate router matches on. The substrate does not
+        // reference the engine, so the WIRE VALUE is the agreement — pin it here on the producer side.
+        Assert.Equal("engine-ca", MovementHeaders.EngineCaValue);
+        Assert.Equal("legacy-dda", MovementHeaders.LegacyDdaValue);
+        Assert.Equal("settlementtarget", MovementHeaders.SettlementTargetKey);
+    }
+
     /// <summary>
     /// A minimal, family-agnostic stand-in for a real Movement-bearing event (e.g. LoanDisbursed): it carries
     /// the Movement carrier and routes its <see cref="DomainEvent.IntegrationHeaders"/> through the generic

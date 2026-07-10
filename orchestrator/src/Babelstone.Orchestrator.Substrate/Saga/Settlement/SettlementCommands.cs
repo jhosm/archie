@@ -89,11 +89,20 @@ public sealed record ReserveAccountBalanceCommand : SettlementCommandPayload
 /// Core hold reference; no PII.</summary>
 public sealed record ConfirmDebitCommand : SettlementCommandPayload
 {
-    /// <summary>The opaque Core hold reference to confirm (e.g. CORE-HOLD-…). Derived purely from the process
-    /// id, so a RETRY_PERMITTED reissue out of AWAIT_DEBIT_CLEARANCE presents the SAME reference — the
-    /// external_reference the ACL folds into its idempotency key (ADR-IC-012 §P4), so the reissue cannot
-    /// double-debit. NOT minted here.</summary>
+    /// <summary>The opaque Core hold reference to confirm (e.g. CORE-HOLD-…). For an engine-CA leg this is the
+    /// ECONOMIC-INTENT-derived reference (ADR-PC-043 slot 4) — the CA-apply <c>command_id</c> derives from the
+    /// body's <c>IntentId</c>, NOT the HTTP Idempotency-Key — so a saga reissue (byte-identical body, fresh
+    /// dispatch <c>message_id</c>) presents the SAME reference and collapses at <c>command_dedup</c> to one
+    /// append. For the legacy-DDA leg it is the process-id-derived reference (unchanged). NOT minted here.</summary>
     public required string CoreHoldRef { get; init; }
+
+    /// <summary>The amount to land, in integer cents (ADR-PC-043 slot 1) — exactly the source
+    /// <c>Movement.Amount</c>. The only in-band guard against <c>WRONG-AMOUNT</c>, which every identity-keyed
+    /// dedup misses. Money-as-integer-cents on the wire (ADR-PC-004 / ADR-PC-010), never a float; a reference,
+    /// never PII. The substrate carries it as a bare <c>long</c> (it does not reference the engine's
+    /// <c>Money</c> type — the extraction-ready boundary, ADR-PC-019 §P2); the receiver re-hydrates
+    /// <c>Money</c>.</summary>
+    public required long AmountCents { get; init; }
 
     /// <inheritdoc />
     public override string CommandType => SettlementProcess.ConfirmDebit;
@@ -108,10 +117,19 @@ public sealed record ConfirmCreditCommand : SettlementCommandPayload
     /// <c>Movement.Direction</c> is relative to THIS account: <c>Credit</c> = value enters it.</summary>
     public required string AccountRef { get; init; }
 
-    /// <summary>The saga-chosen idempotency reference for THIS credit — derived from the process id, stable
-    /// across re-emit (a not-executed credit-clearance reissues with the SAME reference, so the ACL's
-    /// idempotency key prevents a double-credit). NOT minted here.</summary>
+    /// <summary>The saga-chosen idempotency reference for THIS credit. For an engine-CA leg it is the
+    /// ECONOMIC-INTENT-derived reference (ADR-PC-043 slot 4) — the CA-apply <c>command_id</c> derives from the
+    /// body's <c>IntentId</c>, NOT the HTTP Idempotency-Key — so a reissue (byte-identical body, fresh dispatch
+    /// <c>message_id</c>) presents the SAME reference and the CA's single-guard <c>command_dedup</c> collapses
+    /// it to one credit append. For the legacy-DDA leg it is the process-id-derived reference (unchanged). NOT
+    /// minted here.</summary>
     public required string CreditRef { get; init; }
+
+    /// <summary>The amount to land, in integer cents (ADR-PC-043 slot 1) — exactly the source
+    /// <c>Movement.Amount</c>. The only in-band guard against <c>WRONG-AMOUNT</c>. Money-as-integer-cents on
+    /// the wire (ADR-PC-004 / ADR-PC-010), never a float; a reference, never PII. Carried as a bare
+    /// <c>long</c> so the substrate does not reference the engine's <c>Money</c> type (ADR-PC-019 §P2).</summary>
+    public required long AmountCents { get; init; }
 
     /// <inheritdoc />
     public override string CommandType => SettlementProcess.ConfirmCredit;

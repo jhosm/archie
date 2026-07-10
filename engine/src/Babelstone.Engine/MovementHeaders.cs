@@ -17,7 +17,9 @@ namespace Babelstone.Engine;
 /// <see cref="Movement"/> atom and its two closed enums (<see cref="MovementOrigin"/> /
 /// <see cref="SettlementDirection"/>) — it names no family, so a Movement-bearing event in ANY family gets
 /// the headers for free by routing its <see cref="DomainEvent.IntegrationHeaders"/> override through
-/// <see cref="ForOriginatedMovements"/>. It is the producer counterpart of the substrate's consumer seam
+/// <see cref="ForOriginatedMovements(IReadOnlyList{Movement})"/> (or the counterparty-aware overload,
+/// <see cref="ForOriginatedMovements(IReadOnlyList{Movement}, SettlementTarget)"/>, when the leg settles
+/// against the engine-owned CA — ADR-PC-043). It is the producer counterpart of the substrate's consumer seam
 /// (the settlement module's <c>movementorigin</c> auto-start predicate + the <c>movementdirections</c>
 /// fan-out/substitutor): the same closed-enum strings the saga reads off the headers.
 /// </para>
@@ -82,6 +84,23 @@ public static class MovementHeaders
     /// a value.</summary>
     public const string DirectionsSeparator = ",";
 
+    /// <summary>The extension-attribute key (ce_-stripped, lowercase) carrying the settlement COUNTERPARTY the
+    /// Originated cash leg settles against (ADR-PC-043 slot 1). The relay promotes it to
+    /// <c>ce_settlementtarget</c>; the substrate's <c>SettlementCommandRouter</c> keys the counterparty
+    /// selection on it — <b>header-only</b>, so the substrate stays payload-blind (ADR-IC-018 §D5) and MUST NOT
+    /// read <c>Movement.AccountRef</c> from the body. A closed-enum value (<see cref="EngineCaValue"/> |
+    /// <see cref="LegacyDdaValue"/>), no PII (ADR-PC-004).</summary>
+    public const string SettlementTargetKey = "settlementtarget";
+
+    /// <summary>The <see cref="SettlementTargetKey"/> value routing the leg to the engine-OWNED current-account
+    /// family (ADR-PC-037 / ADR-PC-043 — the single-owner engine-CA settlement counterparty).</summary>
+    public const string EngineCaValue = "engine-ca";
+
+    /// <summary>The <see cref="SettlementTargetKey"/> value routing the leg to the LEGACY demand-deposit core
+    /// over the ACL (the pre-ADR-PC-043 path — ADR-PC-016). The DEFAULT when no target is promoted, so a family
+    /// that does not opt into engine-CA settlement keeps legacy routing UNCHANGED.</summary>
+    public const string LegacyDdaValue = "legacy-dda";
+
     /// <summary>
     /// Derive the <c>movementorigin</c> / <c>movementdirections</c> extension headers for a Movement-bearing
     /// event from its movements, or <c>null</c> when there is nothing to promote. Route a Movement-bearing
@@ -136,4 +155,66 @@ public static class MovementHeaders
             [DirectionsKey] = string.Join(DirectionsSeparator, directions.Select(static d => d.ToString())),
         };
     }
+
+    /// <summary>
+    /// Derive the <c>movementorigin</c> / <c>movementdirections</c> headers AND promote the settlement
+    /// COUNTERPARTY as <c>settlementtarget</c> (ADR-PC-043 slot 1), or <c>null</c> when there is no Originated
+    /// cash leg to drive. Use this overload from a family whose Originated movement settles against the
+    /// engine-owned current account (<see cref="SettlementTarget.EngineCa"/>); the substrate's router then
+    /// keys the counterparty selection on the promoted header ALONE (never <see cref="Movement.AccountRef"/> —
+    /// the payload-blind boundary, ADR-IC-018 §D5).
+    /// </summary>
+    /// <param name="movements">The event's recorded movements (the carrier list). May be empty.</param>
+    /// <param name="target">The settlement counterparty the cash leg settles against. <see cref="SettlementTarget.LegacyDda"/>
+    /// promotes no target header (the router defaults to legacy — so this overload with the legacy target is
+    /// byte-identical to the no-target overload, keeping legacy routing UNCHANGED);
+    /// <see cref="SettlementTarget.EngineCa"/> adds <c>settlementtarget = engine-ca</c>.</param>
+    /// <returns><c>null</c> for an Observed-only / movement-free event (as the no-target overload); otherwise
+    /// the origin + directions map PLUS a <c>settlementtarget</c> entry when <paramref name="target"/> is
+    /// <see cref="SettlementTarget.EngineCa"/>. The values stay closed-enum tokens — no amount, no account ref,
+    /// no PII (ADR-PC-004).</returns>
+    public static IReadOnlyDictionary<string, string>? ForOriginatedMovements(
+        IReadOnlyList<Movement> movements, SettlementTarget target)
+    {
+        var headers = ForOriginatedMovements(movements);
+        if (headers is null)
+        {
+            return null;
+        }
+
+        // Legacy-DDA is the DEFAULT the router falls back to when no target header is present, so promoting it
+        // would be redundant wire weight — a legacy leg stays byte-identical to the no-target shape (legacy
+        // routing UNCHANGED). Only the engine-CA counterparty needs the explicit header to divert the router.
+        if (target == SettlementTarget.LegacyDda)
+        {
+            return headers;
+        }
+
+        var withTarget = new Dictionary<string, string>(headers, StringComparer.Ordinal)
+        {
+            [SettlementTargetKey] = EngineCaValue,
+        };
+        return withTarget;
+    }
+}
+
+/// <summary>
+/// The CLOSED set of settlement counterparties an Originated <see cref="Movement"/> can settle against
+/// (ADR-PC-043 slot 1). Exactly two members — the engine either settles the cash leg against a current
+/// account it OWNS, or against the LEGACY demand core over the ACL; there is no third counterparty. The
+/// member maps to the closed-enum wire value the relay promotes as <c>ce_settlementtarget</c>
+/// (<see cref="MovementHeaders.EngineCaValue"/> / <see cref="MovementHeaders.LegacyDdaValue"/>), which the
+/// substrate's router keys on — never the payload's <see cref="Movement.AccountRef"/>.
+/// </summary>
+public enum SettlementTarget
+{
+    /// <summary>Settle against the LEGACY demand-deposit core over the ACL (ADR-PC-016). The DEFAULT — a family
+    /// that has not migrated a leg to engine-CA settlement stays here, and the router routes it exactly as
+    /// before (UNCHANGED).</summary>
+    LegacyDda,
+
+    /// <summary>Settle against the engine-OWNED current-account family (ADR-PC-037 / ADR-PC-043). The
+    /// single-owner counterparty the router diverts the leg to on the promoted <c>ce_settlementtarget</c>
+    /// header.</summary>
+    EngineCa,
 }

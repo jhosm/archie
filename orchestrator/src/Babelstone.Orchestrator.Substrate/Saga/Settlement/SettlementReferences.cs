@@ -51,6 +51,17 @@ public static class SettlementReferences
     /// <c>QueryCoreCreditStatus</c> clearance's target — the external_reference the ACL keys the credit on).</summary>
     public const string CreditPrefix = "CREDIT-";
 
+    /// <summary>The economic-intent reference prefix (the ADR-PC-043 slot-4 exactly-once key). The engine-CA
+    /// settlement leg's append <c>command_id</c> is derived from THIS token, NOT the HTTP Idempotency-Key — the
+    /// deliberate, single-owner slot-4 inversion of ADR-PC-029/ADR-PC-032, legitimate because the engine owns
+    /// both sides of the CA contract.</summary>
+    public const string IntentPrefix = "INTENT-";
+
+    /// <summary>The resolution-intent reference prefix (ADR-PC-043 §Idempotency). An operator re-target / retry
+    /// of an undeliverable credit derives its <c>ResolutionIntentId</c> from the SAME <see cref="IntentPrefix"/>
+    /// token — never fresh — so a late original apply and the resolution collapse to exactly one landing.</summary>
+    public const string ResolutionPrefix = "RESOLVE-";
+
     /// <summary>
     /// Derive a DETERMINISTIC reference for one settlement leg: <paramref name="prefix"/> + the process id's
     /// hex (<c>"N"</c> format). Stable across re-emission AND across the sagas that compose the same leg, so
@@ -62,5 +73,57 @@ public static class SettlementReferences
     {
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         return prefix + processId.ToString("N");
+    }
+
+    /// <summary>
+    /// Derive the ADR-PC-043 slot-4 economic-intent id <c>IntentId = f(source_id, occurrence)</c> — the
+    /// PER-PAYOUT exactly-once key (e.g. <c>f(deposit_id, "maturity")</c>, <c>f(loan_id, "installment-3")</c>),
+    /// distinct from the per-occurrence saga <c>process_id</c>. In plain English: it names WHICH economic
+    /// event this payout is, from the source aggregate and its occurrence, so a saga reissue (byte-identical
+    /// body, fresh dispatch <c>message_id</c>) and a re-route both derive the SAME intent — the CA-apply
+    /// <c>command_id</c> the settlement reference carries then collapses at <c>command_dedup</c> to one append.
+    /// DETERMINISTIC (ADR-PC-010 §P5 — no clock, no mint): the same <paramref name="sourceId"/> +
+    /// <paramref name="occurrence"/> always yield the same intent id.
+    /// </summary>
+    /// <param name="sourceId">The source aggregate the payout belongs to (the deposit / loan). A structural
+    /// reference, never PII (ADR-PC-004 §P2).</param>
+    /// <param name="occurrence">The stable occurrence key on that source (<c>"maturity"</c>,
+    /// <c>"installment-3"</c>, <c>"coupon-2"</c>) — the source-family payout's <c>LifecycleCommandKey</c>
+    /// occurrence, never a wall-clock date or a fresh value (ADR-PC-036).</param>
+    public static string DeriveIntentId(Guid sourceId, string occurrence)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(occurrence);
+        return IntentPrefix + sourceId.ToString("N") + "|" + occurrence;
+    }
+
+    /// <summary>
+    /// Derive a settlement reference (the CA-apply <c>command_id</c> the body carries) from the economic-INTENT
+    /// id, NOT the process id — the ADR-PC-043 slot-4 rule. <paramref name="prefix"/> namespaces the leg
+    /// (credit / debit) and the intent id is the exactly-once axis, so the debit and the credit for the same
+    /// intent are distinct references while a reissue of EITHER leg for the same intent presents the identical
+    /// token. Byte-stable (ADR-PC-010 §P5); NEVER a minted GUID, NEVER the HTTP Idempotency-Key.
+    /// </summary>
+    /// <param name="prefix">The leg-namespacing prefix (<see cref="CreditPrefix"/> / <see cref="CoreHoldPrefix"/>).</param>
+    /// <param name="intentId">The economic-intent id from <see cref="DeriveIntentId"/>.</param>
+    public static string DeriveFromIntent(string prefix, string intentId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(prefix);
+        ArgumentException.ThrowIfNullOrWhiteSpace(intentId);
+        return prefix + intentId;
+    }
+
+    /// <summary>
+    /// Derive the RESOLUTION-intent reference for an undeliverable-credit re-target / retry (ADR-PC-043
+    /// §Idempotency): <c>ResolutionIntentId = g(IntentId)</c>, derived from the SAME original intent id, never
+    /// fresh. So a late original apply and the operator resolution collapse to exactly one landing by
+    /// construction, and a second <c>CreditReapplied</c> for a resolved intent is a reconciliation signal, not
+    /// a double-pay. DETERMINISTIC and byte-stable (ADR-PC-010 §P5).
+    /// </summary>
+    /// <param name="intentId">The ORIGINAL economic-intent id from <see cref="DeriveIntentId"/> — the resolution
+    /// key is a pure function of it, so a fresh id fails the intent-derived check (the double-pay guard).</param>
+    public static string DeriveResolutionIntentId(string intentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(intentId);
+        return ResolutionPrefix + intentId;
     }
 }
