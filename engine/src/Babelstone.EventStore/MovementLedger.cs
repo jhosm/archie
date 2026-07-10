@@ -49,6 +49,16 @@ public sealed record MovementLedgerEntry(
     Guid CommandId);
 
 /// <summary>
+/// One overdrawn account, as read by <see cref="IMovementLedgerStore.GetOverdrawnAccountsAsync"/>: the
+/// opaque <see cref="AccountRef"/> and its strictly-negative accounting balance in integer cents. A
+/// family-agnostic read shape over the balance fold — no family type, no PII (ADR-PC-004), just the
+/// account key and the drawn balance the overdraft-accrual driver keys its per-account accrual on.
+/// </summary>
+/// <param name="AccountRef">The opaque account whose balance is below zero — never PII (ADR-PC-004).</param>
+/// <param name="BalanceCents">The account's accounting balance in integer cents, always &lt; 0 here.</param>
+public sealed record OverdrawnAccount(string AccountRef, long BalanceCents);
+
+/// <summary>
 /// The generic, family-agnostic storage boundary for the spine-owned <c>account_ref</c>-keyed movement
 /// ledger (ADR-PC-032 §A1). The read side the ADR named but deferred: an account statement and its
 /// balance fold, materialised off every Movement-bearing event the engine appends. Family-agnostic by
@@ -75,6 +85,17 @@ public interface IMovementLedgerStore
     /// Debit negative. Zero for an account with no recorded movements.
     /// </summary>
     Task<long> GetBalanceCentsAsync(string accountRef, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every account whose accounting balance is strictly negative — the ledger-wide "who is overdrawn?"
+    /// read (ADR-PC-032 read side / ADR-PC-037 §D5): one row per <c>account_ref</c> whose signed sum is
+    /// below zero, with that (negative) balance in integer cents. Family-agnostic by construction — it
+    /// keys only on the opaque <c>account_ref</c>, so it names no family (the overdraft-accrual driver
+    /// applies the "which product" policy, ADR-PC-037). The set is a projection-derived read, never a
+    /// clock read, so an accrual decided from it stays replay-deterministic. Empty when no account is
+    /// overdrawn.
+    /// </summary>
+    Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default);
 
     /// <summary>
     /// The account's statement: every recorded line for <paramref name="accountRef"/> in stable
@@ -156,6 +177,36 @@ public sealed class PostgresMovementLedgerStore(string connectionString) : IMove
         // Hard unbox: COALESCE guarantees a non-null value and ::bigint guarantees Int64, so any
         // other shape is schema/query drift — throw (InvalidCastException), never mask it as 0.
         return (long)(await command.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default)
+    {
+        // The ledger-wide overdraft read (ADR-PC-037 §D5): group the signed lines by account and keep only
+        // the accounts whose net balance is below zero. Same signed-sum expression as GetBalanceCentsAsync
+        // (Credit adds, Debit subtracts); the ::bigint cast keeps SUM(bigint)'s NUMERIC surfacing as Int64.
+        // No per-account index yet — a full scan is the coarse-start (a (account_ref) grouped-balance index
+        // is a pre-production perf follow-up under the ADR-PC-011 load proof).
+        const string sql = """
+            SELECT account_ref,
+                   SUM(CASE WHEN direction = 'Credit' THEN amount_cents ELSE -amount_cents END)::bigint AS balance_cents
+            FROM movement_ledger
+            GROUP BY account_ref
+            HAVING SUM(CASE WHEN direction = 'Credit' THEN amount_cents ELSE -amount_cents END) < 0
+            ORDER BY account_ref;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        var overdrawn = new List<OverdrawnAccount>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            overdrawn.Add(new OverdrawnAccount(AccountRef: reader.GetString(0), BalanceCents: reader.GetInt64(1)));
+        }
+
+        return overdrawn;
     }
 
     public async Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(

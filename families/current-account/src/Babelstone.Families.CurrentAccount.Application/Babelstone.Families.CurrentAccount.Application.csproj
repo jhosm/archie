@@ -31,6 +31,12 @@
     <!-- VerifiedPack — the pinned pack the lifecycle service stamps onto each EventEnvelope (ADR-PC-009). -->
     <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <!-- The overdraft-interest accrual (ADR-PC-037 §D5): Accrual.DailyBalanceInterest computes the fee over
+         the drawn (negative) balance command-side (Babelstone.FinancialMath), and IRateSheetStore resolves
+         the overdraft TAN at accrual time (Babelstone.RateSheets, ADR-PC-008) — the same rate-sheet seam
+         the deposit constitution service consumes. Both are family→engine references (ADR-PC-021 §P1). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -136,7 +136,28 @@ public sealed class CurrentAccountProductConfigStore
             // velocity caps all flow from transaction_limits onto the stage-4 rules (ADR-PC-037 §D5).
             PerTransactionLimitCents: yaml.TransactionLimits?.PerTransactionMaxCents,
             DailyVelocityLimitCents: yaml.TransactionLimits?.DailyVelocityCents,
-            MonthlyVelocityLimitCents: yaml.TransactionLimits?.MonthlyVelocityCents);
+            MonthlyVelocityLimitCents: yaml.TransactionLimits?.MonthlyVelocityCents,
+            // Absent rate block ⇒ null (the product accrues no overdraft interest — a ca_pt_basic account).
+            // A well-formed block needs BOTH coordinates; a half-declared rate is a config error the family
+            // rejects loud rather than resolving against a silent default (ADR-PC-008 / ADR-PC-037 §D5).
+            OverdraftRate: ToOverdraftRateRef(yaml.Rate, path));
+    }
+
+    private static OverdraftRateRef? ToOverdraftRateRef(RateRefYaml? rate, string path)
+    {
+        if (rate is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(rate.Sheet) || string.IsNullOrWhiteSpace(rate.RoleSelector))
+        {
+            throw new InvalidOperationException(
+                $"current_account product config '{path}' declares a 'rate' block missing 'sheet' or "
+                + "'role_selector'; an overdraft-interest rate reference needs both coordinates (ADR-PC-008).");
+        }
+
+        return new OverdraftRateRef(rate.Sheet, rate.RoleSelector);
     }
 
     // Walk up from the running binary to the repo's product-configs/current-account/ tree — the same
@@ -157,13 +178,15 @@ public sealed class CurrentAccountProductConfigStore
                 $"product-configs/current-account/ not found from {AppContext.BaseDirectory}; set Engine:CurrentAccountConfigsDir.");
     }
 
-    // The subset of the current-account config YAML this store reads — the LIMIT fields. Every other key
-    // the config carries is ignored (see the deserializer above). Mutable, public-settable: YamlDotNet binds.
+    // The subset of the current-account config YAML this store reads — the LIMIT fields plus the overdraft
+    // rate REFERENCE. Every other key the config carries is ignored (see the deserializer above). Mutable,
+    // public-settable: YamlDotNet binds.
     private sealed class CurrentAccountConfigYaml
     {
         public string? VariantId { get; set; }
         public long? ArrangedOverdraftLimit { get; set; }
         public TransactionLimitsYaml? TransactionLimits { get; set; }
+        public RateRefYaml? Rate { get; set; }
     }
 
     // The transaction_limits sub-block. Every cap is a nullable long-cents — absent ⇒ null. All three
@@ -173,5 +196,13 @@ public sealed class CurrentAccountProductConfigStore
         public long? PerTransactionMaxCents { get; set; }
         public long? DailyVelocityCents { get; set; }
         public long? MonthlyVelocityCents { get; set; }
+    }
+
+    // The rate sub-block — the overdraft-interest rate REFERENCE (ADR-PC-008 #RateRef shape). Absent ⇒ the
+    // product accrues no overdraft interest. The numeric TAN is never here — it lives in the rate sheet.
+    private sealed class RateRefYaml
+    {
+        public string? Sheet { get; set; }
+        public string? RoleSelector { get; set; }
     }
 }

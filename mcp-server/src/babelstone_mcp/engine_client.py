@@ -15,11 +15,13 @@ identity always originates from the gateway-attested token ``sub``, never a tool
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 
 import httpx
 
+from .internal_mtls import build_client_ssl_context
 from .sanitize import sanitize_free_text
 
 # The gateway-attested caller header the MCP server forwards to the engine (ADR-IC-010 §P3).
@@ -113,7 +115,18 @@ class EngineClient:
 
     def __init__(self, base_url: str, client: httpx.AsyncClient | None = None) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client = client or httpx.AsyncClient(timeout=30.0)
+        # Caller-side internal mTLS on the outbound engine hop (bd babelstone-zla1.12.10; ADR-IC-006 §P5
+        # Boundary 2 / ADR-IC-016 plane (i)). Only the DEFAULT-construction path pins the internal CA +
+        # presents the client cert, gated on BABELSTONE_INTERNAL_CA_CERTS (staging mounts /certs/ca.crt
+        # and sets it); with it unset the client dials plain HTTP exactly as before. An INJECTED client
+        # (tests, a configured host) is respected verbatim — the context is never forced onto it.
+        if client is not None:
+            self._client = client
+        else:
+            ssl_context = build_client_ssl_context(os.environ)
+            self._client = httpx.AsyncClient(
+                timeout=30.0, verify=ssl_context if ssl_context is not None else True
+            )
 
     async def constitute(
         self, request: dict[str, Any], client_id: str | None = None

@@ -14,11 +14,12 @@
 // #CurrentAccount is a closed definition: a variant carrying a field this schema does not declare
 // fails depth 1 (no DSL escape hatch, ADR-PC-006 Decision).
 //
-// The arranged-overdraft and velocity/transaction-limit constructs land here with the family wiring
-// (ADR-PC-037). They are DECLARATIVE grammar only: the pack VALUES that populate a concrete limit,
-// the overdraft-interest ACCRUAL math (run command-side), and the within-limit / unarranged-overdraft
-// authorize decision are the sibling arranged-overdraft change (the ARRANGED_OVERDRAFT_PACK_BOUNDED
-// commitment lands its test there). The pack owns the values; the decider evaluates them.
+// The arranged-overdraft, velocity/transaction-limit, and overdraft-rate constructs are DECLARATIVE
+// grammar only (ADR-PC-037): the pack VALUES that populate a concrete limit, the overdraft-interest
+// ACCRUAL math (run command-side), and the within-limit / unarranged-overdraft authorize decision live
+// in the engine. The `rate` construct is the overdraft-interest rate REFERENCE (a #RateRef) the accrual
+// resolves its TAN from at accrual time — the numeric rate lives in the rate sheet, never inline. The
+// pack owns the values; the decider evaluates them.
 package family
 
 #CurrentAccount: {
@@ -37,10 +38,19 @@ package family
 	// within this limit is authorized, extending the available-balance identity to
 	// `available = accounting − Σ active holds + arranged_overdraft_limit`; a debit beyond it — an
 	// unarranged overdraft (ultrapassagem) — is refused. OPTIONAL and defaults to absent (0-equivalent):
-	// a v1 basic account carries no arranged overdraft. The overdraft-interest accrual rate is resolved
-	// from the rate sheet, not inline — added with the accrual math (the sibling arranged-overdraft
-	// change), so this construct is the declarative LIMIT only.
+	// a v1 basic account carries no arranged overdraft. This construct is the declarative LIMIT only; the
+	// overdraft-interest RATE the used overdraft accrues at is the `rate` reference below, resolved from
+	// the rate sheet (never inline).
 	arranged_overdraft_limit?: #Cents
+
+	// --- overdraft-interest rate reference (descoberto accrual, ADR-PC-037 §D5; ADR-PC-008) ----
+	// The reference into the rate sheet the overdraft-interest ACCRUAL resolves its `tan_basis_points`
+	// from at accrual time — the SAME #RateRef shape term-deposit and personal-loan use, so a variant that
+	// prices an overdraft rate declares `rate: { sheet, role_selector }` and the pack must carry a
+	// rate-sheet ref for the family (pack-validate depth-3 fires on the PRESENCE of this block). OPTIONAL:
+	// a basic account with no arranged overdraft prices no overdraft rate and omits it (then depth-3 stays
+	// silent for that variant). The numeric TAN is never inline — it lives in /rate-sheets on its own cadence.
+	rate?: #RateRef
 
 	// --- velocity / transaction limits (ADR-PC-037) ---------------------
 	// Declarative caps the authorize decider reads at stage 4 (ADR-PC-030), alongside the arranged

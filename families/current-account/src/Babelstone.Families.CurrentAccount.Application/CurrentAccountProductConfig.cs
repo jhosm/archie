@@ -31,12 +31,17 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// <param name="PerTransactionLimitCents">The per-transaction ceiling in integer cents, or <c>null</c> ⇒ no ceiling.</param>
 /// <param name="DailyVelocityLimitCents">The rolling daily debit cap in integer cents, or <c>null</c> ⇒ no daily cap.</param>
 /// <param name="MonthlyVelocityLimitCents">The rolling monthly debit cap in integer cents, or <c>null</c> ⇒ no monthly cap.</param>
+/// <param name="OverdraftRate">The reference into the rate sheet the overdraft-interest accrual resolves its
+/// TAN from (ADR-PC-008 / ADR-PC-037 §D5), or <c>null</c> ⇒ the product accrues no overdraft interest (a
+/// <c>ca_pt_basic</c> account with no overdraft). A price, never declared inline — the config carries only
+/// the REFERENCE, the numeric rate lives on its own cadence in the rate sheet.</param>
 public sealed record CurrentAccountProductConfig(
     string ProductCode,
     long ArrangedOverdraftLimitCents,
     long? PerTransactionLimitCents,
     long? DailyVelocityLimitCents,
-    long? MonthlyVelocityLimitCents)
+    long? MonthlyVelocityLimitCents,
+    OverdraftRateRef? OverdraftRate = null)
 {
     /// <summary>
     /// The zero-overdraft, no-ceiling degenerate: the rules for a product that declares no overdraft and
@@ -57,3 +62,15 @@ public sealed record CurrentAccountProductConfig(
     public AuthorizationRules ToAuthorizationRules() =>
         new(ArrangedOverdraftLimitCents, PerTransactionLimitCents, DailyVelocityLimitCents, MonthlyVelocityLimitCents);
 }
+
+/// <summary>
+/// A current_account product's overdraft-interest rate reference (ADR-PC-008 <c>#RateRef</c> shape / ADR-PC-037
+/// §D5): the two coordinates the accrual command shell resolves a concrete <c>tan_basis_points</c> from at
+/// accrual time. The config carries the REFERENCE, never the numeric rate — the rate lives on its own cadence
+/// in the rate sheet (the same posture term-deposit takes). A price is never inline in a product config.
+/// </summary>
+/// <param name="Sheet">The rate-sheet binding name (<c>live</c> by convention) — the declarative link the pack
+/// grammar and pack-validate depth-3 gate read; resolution itself is by product family + as-of date.</param>
+/// <param name="RoleSelector">The pricing role the overdraft sheet keys on (e.g. <c>overdraft</c>) — the
+/// <c>role</c> the accrual passes to <c>RateSheetResolution.ResolveTanBasisPoints(productCode, role, drawn)</c>.</param>
+public sealed record OverdraftRateRef(string Sheet, string RoleSelector);

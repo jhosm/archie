@@ -34,6 +34,7 @@ internal static class SkeletonPack
         "parameters/constants.yaml",
         "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
+        "rate-sheet-refs/current-account-pt.yaml",
     ];
 
     public static VerifiedPack LoadPt2026()

@@ -117,6 +117,7 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ErasePersonalDataRequest", typeof(Account.ErasePersonalDataRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeRequest", typeof(Account.AuthorizeRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ExpireHoldRequest", typeof(Account.ExpireHoldRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "OverdraftAccrualRequest", typeof(Account.OverdraftAccrualRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AccountCommandResponse", typeof(Account.AccountCommandResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeResponse", typeof(Account.AuthorizeResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "AccountResponse", typeof(Account.AccountResponse), Mode.Response },

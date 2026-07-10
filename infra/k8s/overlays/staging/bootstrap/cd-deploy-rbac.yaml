@@ -60,9 +60,9 @@ metadata:
     app.kubernetes.io/part-of: babelstone
 rules:
   # Core kinds the render carries: Services, ConfigMaps (generated kong/otel/rules
-  # configs), PersistentVolumeClaims, and the volume-snapshotter ServiceAccount.
+  # configs), and PersistentVolumeClaims.
   - apiGroups: [""]
-    resources: ["services", "configmaps", "persistentvolumeclaims", "serviceaccounts"]
+    resources: ["services", "configmaps", "persistentvolumeclaims"]
     verbs: ["get", "list", "create", "patch", "update"]
   # Secrets: GET only, and only the two named operator-provisioned Secrets — the
   # placeholder-vs-real preflight (scripts/cd-secret-preflight.sh --live,
@@ -79,7 +79,7 @@ rules:
     resources: ["deployments", "statefulsets"]
     verbs: ["get", "list", "create", "patch", "update"]
   # Jobs (event-store migration, logto db init/alteration) + CronJobs (backups,
-  # volume snapshots, logto key rotation). Jobs additionally need DELETE: a Job's
+  # logto key rotation). Jobs additionally need DELETE: a Job's
   # template is immutable, so promoting a changed migration/init Job requires
   # delete-and-recreate (the previous run is usually already TTL-reaped).
   - apiGroups: ["batch"]
@@ -95,17 +95,10 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses", "networkpolicies"]
     verbs: ["get", "list", "create", "patch", "update"]
-  # The overlay renders the volume-snapshotter Role/RoleBinding
-  # (volume-snapshot-cronjob.yaml), so the deployer must be able to apply RBAC…
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "create", "patch", "update"]
-  # …and RBAC escalation-prevention requires the grantor to HOLD every permission it
-  # grants: this mirrors the volume-snapshotter Role's rules exactly (the deployer
-  # never creates snapshots itself; without this, applying that Role is Forbidden).
-  - apiGroups: ["snapshot.storage.k8s.io"]
-    resources: ["volumesnapshots"]
-    verbs: ["create", "get", "list", "delete"]
+  # (The overlay used to render a volume-snapshotter Role/RoleBinding + a
+  # snapshot.storage.k8s.io grant for RBAC escalation-prevention; both were retired
+  # with the Hetzner CSI volume-snapshot machinery — bd babelstone-zla1.12.24 — so
+  # the deployer no longer needs rbac.authorization.k8s.io or snapshot.storage.k8s.io.)
   # Kong Admin tunnel for cd.yml's deck sync (bd babelstone-zla1.12.12 — the follow-up
   # named in ../kong-admin-localhost.patch.yaml's header): staging binds Kong's Admin
   # API to the pod loopback, so the CI leg reaches it only via `kubectl port-forward

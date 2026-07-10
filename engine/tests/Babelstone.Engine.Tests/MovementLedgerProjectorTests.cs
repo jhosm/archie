@@ -193,6 +193,33 @@ public sealed class MovementLedgerProjectorTests
         Assert.Equal(0, await store.GetBalanceCentsAsync("acct-1"));
     }
 
+    [Fact]
+    public async Task GetOverdrawnAccounts_returns_only_the_accounts_folded_strictly_below_zero()
+    {
+        var store = new InMemoryMovementLedgerStore();
+        var projector = new MovementLedgerProjector(store);
+
+        // acct-drawn: a EUR 500 debit over a EUR 100 credit → net −400 (overdrawn).
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-drawn", SettlementDirection.Credit, 10_000)]));
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-drawn", SettlementDirection.Debit, 50_000)]));
+        // acct-positive: a plain EUR 300 credit → net +30 000 (not overdrawn).
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-positive", SettlementDirection.Credit, 30_000)]));
+        // acct-flat: a credit exactly cancelled by a debit → net 0 (NOT overdrawn — the filter is strictly < 0).
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-flat", SettlementDirection.Credit, 7_000)]));
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-flat", SettlementDirection.Debit, 7_000)]));
+        // acct-cent: a single 1-cent debit → net −1 (overdrawn — any negative balance counts).
+        await projector.ApplyAsync(Guid.NewGuid(), 0, new TestMoneyMover([Move("acct-cent", SettlementDirection.Debit, 1)]));
+
+        var overdrawn = await store.GetOverdrawnAccountsAsync();
+
+        // Only the strictly-negative accounts, each with its (negative) balance, ordered by account_ref — a
+        // positive and a zero balance are excluded: the GROUP BY ... HAVING SUM(...) < 0 semantics the
+        // PostgresMovementLedgerStore query has, which the overdraft-accrual driver reads (ADR-PC-037 §D5).
+        Assert.Equal(
+            new[] { new OverdrawnAccount("acct-cent", -1), new OverdrawnAccount("acct-drawn", -40_000) },
+            overdrawn);
+    }
+
     /// <summary>
     /// An in-memory <see cref="IMovementLedgerStore"/> test double, mirroring the
     /// <see cref="PostgresMovementLedgerStore"/> contract: idempotent append on the
@@ -227,6 +254,18 @@ public sealed class MovementLedgerProjectorTests
                 .Where(e => e.AccountRef == accountRef)
                 .Sum(e => e.Direction == "Credit" ? e.AmountCents : -e.AmountCents);
             return Task.FromResult(balance);
+        }
+
+        public Task<IReadOnlyList<OverdrawnAccount>> GetOverdrawnAccountsAsync(CancellationToken ct = default)
+        {
+            IReadOnlyList<OverdrawnAccount> overdrawn = _entries
+                .GroupBy(e => e.AccountRef, StringComparer.Ordinal)
+                .Select(g => new OverdrawnAccount(
+                    g.Key, g.Sum(e => e.Direction == "Credit" ? e.AmountCents : -e.AmountCents)))
+                .Where(a => a.BalanceCents < 0)
+                .OrderBy(a => a.AccountRef, StringComparer.Ordinal)
+                .ToList();
+            return Task.FromResult(overdrawn);
         }
 
         public Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(

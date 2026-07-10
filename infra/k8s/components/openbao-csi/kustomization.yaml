@@ -1,0 +1,40 @@
+# Secrets Store CSI + OpenBao — self-contained kustomize COMPONENT
+# (bd babelstone-zla1.12.13).
+#
+# Plain English: this bundles the two pieces that let app pods read secrets
+# straight from OpenBao instead of from a plain Kubernetes Secret — (1) the
+# upstream Secrets Store CSI driver install (vendored, pinned to v1.6.0), and
+# (2) the babelstone SecretProviderClass that maps the app-tier secrets (Postgres
+# password, Logto KEK + OIDC signing key + the engine's OpenBao-auth anchor
+# (AppRole role-id/secret-id + transit token)) out of OpenBao via its Kubernetes
+# auth method. It is a COMPONENT (kustomize `kind: Component`) so an overlay opts into
+# it with one `components:` line — this run does NOT register it (see the PR's
+# deferred-registration note and README.md), to avoid colliding with in-flight
+# staging-overlay work.
+#
+# WHY it is NOT in the strict overlay render yet: the driver install carries CRDs
+# (SecretProviderClass, SecretProviderClassPodStatus) + a CSIDriver, and the
+# SecretProviderClass instance is a custom resource — none of which the CI
+# kubeconform -strict gate has a vendored schema for. Registering this in the
+# staging overlay would therefore need the driver install moved to the
+# out-of-band bootstrap layer (like cert-manager / the CSI snapshot controller,
+# see overlays/staging/bootstrap/README.md) and the component reduced to just the
+# SecretProviderClass, validated with -ignore-missing-schemas. That wiring is the
+# deferred follow-up; this component is authored + validated standalone here.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  # Upstream Secrets Store CSI driver install, vendored + pinned to v1.6.0
+  # (kubernetes-sigs/secrets-store-csi-driver). Cluster-scoped, lands in
+  # kube-system: the two CRDs, the CSIDriver, the node DaemonSet + its RBAC.
+  # Vendored (not a remote kustomize ref) so the build is hermetic/offline and
+  # every line is reviewable; re-vendor from the pinned tag to bump (README.md).
+  - upstream/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
+  - upstream/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
+  - upstream/rbac-secretproviderclass.yaml
+  - upstream/rbac-secretprovidersyncing.yaml
+  - upstream/csidriver.yaml
+  - upstream/secrets-store-csi-driver.yaml
+  # The babelstone SecretProviderClass — maps app-tier secrets out of OpenBao.
+  - secret-provider-class.yaml

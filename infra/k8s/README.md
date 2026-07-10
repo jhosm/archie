@@ -97,7 +97,7 @@ infra/k8s/
         ├── ingress.yaml              # public Traefik Ingress (Kong edge + Backstage + Mission Control + Logto), cert-manager TLS
         ├── logto.yaml                # Logto OAuth/OIDC AS (ADR-IC-021): Service + Deployment — the auth.babelstone.dev issuer
         ├── logto-jobs.yaml           # Logto DB lifecycle: init/seed Job + alteration-deploy upgrade Job + annual key-rotation CronJob
-        ├── storageclass.patch.yaml   # JSON6902: pin hcloud-volumes on the stateful VCTs
+        ├── storageclass.patch.yaml   # JSON6902: pin k3s local-path on the stateful VCTs (node-local)
         └── bootstrap/                # cluster-scoped, account-gated, applied ONCE (NOT kustomized)
             ├── clusterissuer-letsencrypt.yaml # Let's Encrypt ClusterIssuer (cert-manager CRD)
             └── README.md             # bootstrap apply order + prereqs
@@ -276,26 +276,28 @@ staging environment: one CPX42 x86 node running single-node k3s in Hetzner
 Helsinki, on the domain `babelstone.dev`. It diverges from **`base`** — the *same*
 seam the `ha` overlay does — but in the **staging** direction, not the HA one. It
 runs one copy of everything (HA would not fit a single node — do **not** promote
-`overlays/ha` here), but adds two things `base` deliberately omits:
-**durable storage** and a **public TLS edge**.
+`overlays/ha` here). It pins storage explicitly (node-local `local-path`) and adds
+what `base` deliberately omits: a **public TLS edge**.
 
 | Concern | base (single-node) | staging overlay |
 |---|---|---|
 | Namespace | `babelstone-dev` | `babelstone-staging` |
-| Storage | unset → k3s `local-path` (node-local, ephemeral) | `hcloud-volumes` (Hetzner CSI block — survives node rebuild, **snapshot-able**) |
+| Storage | unset → k3s `local-path` (inherited default, node-local) | k3s `local-path` **pinned** explicitly (node-local; survives a pod restart, not node loss — DR out of scope; no CSI) |
 | Public access | `ClusterIP` + `kubectl port-forward` | a Traefik `Ingress` + cert-manager/Let's Encrypt TLS |
 
-**Storage — durable by choice.** The base `volumeClaimTemplates` carry no
-`storageClassName`, so on stock k3s they bind to the ephemeral `local-path`
-provisioner. The staging overlay pins **`hcloud-volumes`** (the Hetzner CSI block
-class) on the Postgres / Redpanda / registry claims and gives the Backstage DB its
-own PVC, so the always-on box's data survives a node rebuild and is snapshot-able
-for the Phase-6 backups (bd babelstone-zla1.7). This honours the locked
-staging-env decision. The pin is a JSON6902 add-op (`storageclass.patch.yaml`) —
-`volumeClaimTemplates` has no strategic-merge key, so a merge patch would *replace*
-the whole VCT list and drop the base storage request. At `kustomize build` /
-`kubeconform` time `storageClassName` is just a string; it binds to a real driver
-only at apply, once Phase-1 [`hetzner-k3s`](../hetzner-k3s/) installs the Hetzner CCM + CSI.
+**Storage — node-local.** The base `volumeClaimTemplates` carry no
+`storageClassName`, so on stock k3s they bind to the built-in `local-path`
+provisioner as an inherited default. The staging overlay pins **`local-path`**
+explicitly on the Postgres / Redpanda / registry claims. Storage is node-local:
+data survives a pod restart but **not** node loss — DR is out of scope on the
+single-node staging tier, and the Hetzner CSI that once backed durable,
+snapshot-able `hcloud-volumes` is disabled in
+[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (no in-cluster Hetzner
+API token — bd babelstone-zla1.12.20). The pin is a JSON6902 add-op
+(`storageclass.patch.yaml`) — `volumeClaimTemplates` has no strategic-merge key,
+so a merge patch would *replace* the whole VCT list and drop the base storage
+request. At `kustomize build` / `kubeconform` time `storageClassName` is just a
+string; it binds to the k3s local-path provisioner at apply (no cloud API call).
 
 **Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
 `Ingress` (the `traefik` `IngressClass` is provided by the Traefik controller

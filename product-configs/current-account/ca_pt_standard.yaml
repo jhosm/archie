@@ -7,8 +7,9 @@
 # answer "can this debit go through?": a debit that overdraws within the EUR 500 arranged limit is
 # authorized; one beyond it (ultrapassagem) is refused (declined: OVERDRAFT_LIMIT_EXCEEDED); one above
 # the per-transaction cap, or one that would push the day's / month's debit total past a velocity cap,
-# is refused (declined: LIMIT_EXCEEDED). The overdraft-interest rate is resolved from the rate sheet,
-# not declared here (this file carries the declarative LIMITS, never a price).
+# is refused (declined: LIMIT_EXCEEDED). The overdraft-interest RATE the used overdraft accrues at is
+# REFERENCED via the `rate` block (a rate-sheet ref, ADR-PC-008), never declared inline — the numeric TAN
+# lives in the rate sheet on its own cadence, and this file carries only the LIMITS and that reference.
 #
 # It is validated against the #CurrentAccount schema (contracts/cue/families/current-account.cue) by
 # pack-validate depths 1–4 (ADR-PC-006). It lives in product-configs/current-account/ — a subdirectory
@@ -19,6 +20,13 @@ schema: current_account@2026.1
 pack: pt.2026.1
 currency: EUR
 arranged_overdraft_limit: 50000
+# The overdraft-interest rate reference (ADR-PC-037 §D5; ADR-PC-008): the used-overdraft accrual resolves
+# its TAN from the `live` current_account rate sheet under role `overdraft`. Referenced, never inline — the
+# numeric rate is in rate-sheets/current_account/. Its presence makes pack-validate depth-3 require the pack
+# to carry a current_account rate-sheet ref (which pt.2026.1 now does).
+rate:
+  sheet: live
+  role_selector: overdraft
 transaction_limits:
   # All three caps are enforced at stage 4 (ADR-PC-037 §D5, VELOCITY_LIMIT_PACK_BOUNDED).
   per_transaction_max_cents: 500000

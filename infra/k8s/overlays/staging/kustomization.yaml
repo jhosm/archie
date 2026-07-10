@@ -2,15 +2,19 @@
 #
 # Plain English: this is the single, public, always-on box. It takes the same
 # `base` backing-infra stack, runs ONE copy of everything
-# (a single CPX42 x86 node, 8 vCPU / 16 GB — HA would not fit), pins DURABLE Hetzner CSI block
-# storage so data survives a node rebuild and is snapshot-able, and puts a public
-# HTTPS front door (Traefik Ingress + cert-manager/Let's Encrypt TLS) in front of
-# the Kong edge and the Backstage portal.
+# (a single CPX42 x86 node, 8 vCPU / 16 GB — HA would not fit), pins node-local k3s
+# local-path storage (survives a pod restart, not node loss — DR is out of scope on
+# the single node; the Hetzner CSI that once backed durable snapshot-able volumes is
+# disabled), and puts a public HTTPS front door (Traefik Ingress + cert-manager/Let's
+# Encrypt TLS) in front of the Kong edge and the Backstage portal.
 #
 # Diverges from the SAME `base` the `overlays/ha` overlay does, in the
 # staging direction:
 #   1. namespace      babelstone-dev → babelstone-staging
-#   2. storage        unset (k3s local-path) → hcloud-volumes (durable, snapshot-able)
+#   2. storage        unset (k3s local-path, an inherited default) → local-path
+#                     PINNED explicitly (node-local; survives a pod restart, NOT
+#                     node loss — DR is out of scope on the single node, and the
+#                     Hetzner CSI that once backed durable hcloud-volumes is disabled)
 #   3. public edge    ClusterIP-only → a Traefik Ingress + cert-manager TLS
 #                     fronting Kong (the ADR-IC-006 authz edge stays in force,
 #                     now BEHIND Traefik) and the Backstage subdomain
@@ -26,7 +30,7 @@
 # allow-grafana-lgtm-ingress NetworkPolicy (§P1 amendment 2026-07-09); no PII crosses the bus (ADR-PC-004).
 #
 # CI VALIDATES ONLY (kustomize build + kubeconform, the same gate as base/ha).
-# Provisioning the node, installing the Hetzner CSI driver + cert-manager + the
+# Provisioning the node, installing cert-manager + the
 # Let's Encrypt ClusterIssuer (bootstrap/), pointing DNS at the node, and applying
 # this overlay are the account-gated Phase 0–2 steps (cd.yml promotes it).
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -64,10 +68,11 @@ resources:
   - logto.yaml
   - logto-jobs.yaml
   # Ops baseline (bd babelstone-zla1.7): scheduled logical DB backups → Hetzner Object
-  # Storage, and CSI VolumeSnapshots of the data PVCs. (k3s auto-upgrade + the
-  # VolumeSnapshotClass are cluster CRDs in bootstrap/; the runbook is infra/runbooks/.)
+  # Storage. (The former CSI VolumeSnapshot CronJob + its VolumeSnapshotClass were
+  # retired with the Hetzner CSI driver — bd babelstone-zla1.12.24; local-path claims
+  # are not CSI-snapshottable and DR is out of scope on the single node. k3s
+  # auto-upgrade is a cluster CRD in bootstrap/; the runbook is infra/runbooks/.)
   - backup-cronjobs.yaml
-  - volume-snapshot-cronjob.yaml
   # In-cluster network walls (bd babelstone-zla1.12.8; ADR-IC-006 §P5 /
   # ADR-IC-016 plane (i)): default-deny ingress on every pod + one targeted
   # allow per real traffic edge, so no arbitrary pod can reach the engine
@@ -85,8 +90,6 @@ resources:
 # `:latest` tag is kept only as a legibility/provenance label; the digest is what actually pulls).
 # Reproducibility / supply-chain, NOT cosign-verified (ADR-PC-007 §A2 covers the signed
 # first-party images). Bumped deliberately by the scheduled cd-thirdparty-digest-audit workflow.
-# NOT pinned here — bitnami/kubectl:1.31 in volume-snapshot-cronjob.yaml: that tag was withdrawn
-# in Bitnami's 2025 catalog sunset and needs a maintained replacement first (bd babelstone-2t16.31.3).
 # Digests resolved 2026-07-09 via `mise exec -- crane digest`.
 images:
   - name: postgres
@@ -133,12 +136,15 @@ patches:
       version: v1
       kind: Secret
       name: babelstone-dev-secrets
-  # Pin durable Hetzner CSI block storage (hcloud-volumes) on every stateful
-  # volume. JSON6902 add-ops — volumeClaimTemplates has no strategic-merge key, so
-  # a merge patch would REPLACE the whole VCT list (dropping the base 5Gi request);
-  # one shared ops file, three targets (each StatefulSet has a single VCT at index
-  # 0). At apply time these bind to the CSI driver Phase-1 hetzner-k3s installs; at
-  # build/kubeconform time storageClassName is just an opaque string.
+  # Pin the k3s built-in local-path storage class on every stateful volume
+  # (node-local; survives a pod restart, NOT node loss — DR is out of scope on the
+  # single node, and the Hetzner CSI that once backed durable hcloud-volumes is
+  # disabled, bd babelstone-zla1.12.20/.24). JSON6902 add-ops — volumeClaimTemplates
+  # has no strategic-merge key, so a merge patch would REPLACE the whole VCT list
+  # (dropping the base 5Gi request); one shared ops file, three targets (each
+  # StatefulSet has a single VCT at index 0). At apply time these bind to the k3s
+  # local-path provisioner (no cloud API token needed); at build/kubeconform time
+  # storageClassName is just an opaque string.
   - path: storageclass.patch.yaml
     target:
       group: apps
