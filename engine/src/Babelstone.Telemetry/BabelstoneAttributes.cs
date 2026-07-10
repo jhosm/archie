@@ -460,4 +460,43 @@ public static class BabelstoneAttributes
     /// </summary>
     public const string NotificationExhaustedPublishedMetric =
         "notification_delivery_exhausted_published_total";
+
+    /// <summary>
+    /// Payout-landing RECONCILIATION SIGNALS (bd babelstone-qa92.2; ADR-PC-043): a monotonic counter
+    /// incremented once per NON-matched <c>ReconciliationSignal</c> the scheduled payout-landing reconciler
+    /// pass surfaces — the operational face of "did a payout drop, double, or land at the wrong amount?".
+    /// The reconciler classifies each source payout against its CA landing and this counts every case that
+    /// needs a human (Drop / Double / WrongAmount / OrphanLanding); a Matched pair increments nothing and an
+    /// in-SLA InFlight is not yet signalled. Tagged by <see cref="PayoutReconciliationClassTag"/> (the closed
+    /// <c>ReconciliationClass</c> code — a structural verdict, never PII, ADR-PC-004 / OBS_NO_PII_ATTRS), so
+    /// the <c>payout-landing-reconciliation</c> alert group can fire per class. snake_case-with-unit-suffix
+    /// (the <c>_total</c> the OTLP cumulative convention bakes into the emitted name), read by the alert rules
+    /// by this exact string — never a <c>babelstone.*</c> span key. The reconciler NEVER moves money: it
+    /// SURFACES the fact (ADR-PC-043 reconcile-signals-only), and this counter is that surface.
+    /// </summary>
+    public const string PayoutReconciliationSignalMetric = "payout_reconciliation_signal_total";
+
+    /// <summary>
+    /// Payout-reconciliation TICK-LIVENESS gauge (bd babelstone-qa92.2): an observable gauge of the
+    /// Unix-epoch SECONDS of the most recent payout-landing reconciliation pass that ran to COMPLETION. This
+    /// is the scheduled reconciler's heartbeat — the safety-net's own health surface, the same
+    /// freshness-plus-<c>absent()</c> posture as <see cref="LifecyclePassFreshnessMetric"/> and the
+    /// <c>EngineMetricsAbsent</c> staging-liveness rule: a reconciler that stops ticking would let a DROP go
+    /// unnoticed, so <c>time() − this</c> going stale (or <c>absent()</c> before the first pass) is itself an
+    /// alert. Emits nothing until the first completed pass. snake_case-with-unit-suffix, read by the alert
+    /// rules by this exact string.
+    /// </summary>
+    public const string PayoutReconciliationPassFreshnessMetric =
+        "payout_reconciliation_pass_last_success_timestamp_seconds";
+
+    /// <summary>
+    /// The RECONCILIATION-CLASS dimension the payout-reconciliation signal counter is tagged with — the
+    /// closed <c>ReconciliationClass</c> verdict code (<c>drop</c> / <c>double</c> / <c>wrong_amount</c> /
+    /// <c>orphan_landing</c> / <c>in_flight</c> / <c>matched</c>). A structural reference, never PII
+    /// (ADR-PC-004 / OBS_NO_PII_ATTRS). The metric label key is the bare <c>reconciliation_class</c> string
+    /// the alert rules group by — a metric dimension, not a <c>babelstone.*</c> span-attribute key, so it
+    /// does not carry the span-key prefix (the same register split as <see cref="LifecycleCommandKindTag"/>
+    /// and <see cref="ProjectionKind"/>).
+    /// </summary>
+    public const string PayoutReconciliationClassTag = "reconciliation_class";
 }

@@ -527,6 +527,161 @@ groups:
           runbook: ../../runbooks/lifecycle-driver-ops.md
 
   # ---------------------------------------------------------------------------
+  # PAYOUT-LANDING RECONCILIATION (bd babelstone-qa92.2; ADR-PC-043). The
+  # engine↔engine-CA payout-landing safety net: PayoutLandingReconciler classifies
+  # each source Originated payout against its CA AccountCredited/AccountDebited
+  # landing and SURFACES a signal for every non-matched case — a DROP (source paid,
+  # nothing landed past the interim SLA), a DOUBLE (two landings for one payout), a
+  # WRONG-AMOUNT (landing amount ≠ source amount), or an ORPHAN landing (money
+  # landed the engine never sourced). Until bd qa92.2 nothing RAN it in production;
+  # now a scheduled Cadence worker in the orchestrator host runs it on a poll
+  # interval and emits every non-matched signal to this operator surface.
+  #
+  # These rules read the PayoutReconciliationMetrics surface (the shared
+  # Babelstone.Engine meter): the per-class signal counter
+  # (payout_reconciliation_signal_total{reconciliation_class}) is the alertable
+  # rate, and the tick-liveness heartbeat gauge
+  # (payout_reconciliation_pass_last_success_timestamp_seconds) is the reconciler's
+  # own health signal (freshness + absent(), the same posture as the lifecycle
+  # driver's heartbeat and the EngineMetricsAbsent staging-liveness rule — a
+  # reconciler that stops ticking would let a DROP go unnoticed). The reconciler
+  # moves NO money: a signal is advisory, for a human/operator reconciliation
+  # process (ADR-PC-043 reconcile-signals-only). Runbook:
+  # infra/runbooks/payout-landing-reconciliation-alerts.md.
+  #
+  # Thresholds assume the default 1h poll interval
+  # (Reconciler:PayoutLanding:PollIntervalSeconds) — retune alongside it
+  # (thresholds are deployment-time decisions, ADR-IC-004 §P4). The interim DROP
+  # SLA (DefaultDropSlaDays=3) is baked into the reconciler, NOT this file; Q-AG
+  # calibration of the real horizon is pending (ADR-PC-043 §Residual risks).
+  # ---------------------------------------------------------------------------
+  - name: payout-landing-reconciliation
+    rules:
+      - alert: PayoutReconciliationDropDetected
+        # A DROP is money the source paid that never landed on the CA past the
+        # interim SLA — the highest-consequence mismatch (funds owed a customer are
+        # in limbo). Any DROP in a day pages: the source holds the funds via the
+        # payout-pending marker, so it is safe, but a human MUST reconcile it.
+        expr: increase(payout_reconciliation_signal_total{reconciliation_class="drop"}[1d]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: payout_reconciliation_drop
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing DROP detected (source paid, nothing landed)"
+          description: >-
+            The payout-landing reconciler found a source payout with no matching CA
+            landing past the interim DROP SLA (DefaultDropSlaDays=3) — a dropped
+            payout. The source holds the funds (payout-pending marker), so nothing
+            is lost, but the credit owed the customer has not landed. This is a
+            SIGNAL for an operator reconciliation process — the reconciler never
+            re-pays (ADR-PC-043). Page on-call and follow the DROP triage.
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+      - alert: PayoutReconciliationDoubleDetected
+        # A DOUBLE is two CA landings for one source payout — the customer was
+        # (or is about to be) credited twice. High-consequence the OTHER direction
+        # (money the bank must claw back), so any occurrence pages.
+        expr: increase(payout_reconciliation_signal_total{reconciliation_class="double"}[1d]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: payout_reconciliation_double
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing DOUBLE detected (two landings for one payout)"
+          description: >-
+            The payout-landing reconciler found two or more CA landings for a
+            single source payout — a double landing. The customer may have been
+            credited twice for one economic intent. The reconciler NEVER nets it
+            out (ADR-PC-043 signal-only); an operator must reconcile the duplicate.
+            Page on-call and follow the DOUBLE triage.
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+      - alert: PayoutReconciliationWrongAmountDetected
+        # A WRONG-AMOUNT is one landing whose amount differs from the source
+        # payout — the customer got the wrong sum. Any occurrence pages.
+        expr: increase(payout_reconciliation_signal_total{reconciliation_class="wrong_amount"}[1d]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: payout_reconciliation_wrong_amount
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing WRONG-AMOUNT detected (landing amount ≠ source)"
+          description: >-
+            The payout-landing reconciler found a CA landing whose amount differs
+            from the source payout for the same economic intent — a wrong-amount
+            landing. The in-band guard on the CA event is the first line; this is
+            the reconciliation backstop. The reconciler NEVER adjusts it
+            (ADR-PC-043 signal-only); an operator must reconcile the gap. Page
+            on-call and follow the WRONG-AMOUNT triage.
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+      - alert: PayoutReconciliationOrphanLandingDetected
+        # An ORPHAN landing is money that landed on the CA for an intent the engine
+        # never sourced — a warning, not a page: it is a reconciliation curiosity
+        # (a mis-keyed reference or an out-of-band credit) that needs investigation
+        # but does not owe a customer money the way a DROP does.
+        expr: increase(payout_reconciliation_signal_total{reconciliation_class="orphan_landing"}[1d]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          sli: payout_reconciliation_orphan
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing ORPHAN landing detected (no source payout)"
+          description: >-
+            The payout-landing reconciler found a CA landing whose economic intent
+            has no source payout — money landed the engine never sourced. Usually a
+            mis-keyed reference or an out-of-band credit; investigate before it is
+            absorbed silently. Signal-only (ADR-PC-043) — the reconciler never
+            reverses it.
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+      - alert: PayoutReconciliationTickStale
+        # No COMPLETED reconciliation pass for >2.5 poll intervals: the safety net
+        # is not running — a wedged loop, a crash-loop, or max-backoff against a
+        # dead read surface. A silent reconciler is exactly how a DROP goes
+        # unnoticed. 2.5x leaves room for one exponential-backoff recovery.
+        expr: time() - payout_reconciliation_pass_last_success_timestamp_seconds > 9000
+        for: 5m
+        labels:
+          severity: critical
+          sli: payout_reconciliation_tick_liveness
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing reconciler has not completed a pass in >2.5h"
+          description: >-
+            payout_reconciliation_pass_last_success_timestamp_seconds is stale: no
+            reconciliation pass has run to completion for more than 2.5 poll
+            intervals. The payout-landing safety net is not running — a DROP,
+            DOUBLE, or WRONG-AMOUNT would currently go unnoticed. Check the
+            orchestrator host's logs (Cadence backoff warnings), its source read
+            surface (the movement ledger + CA landing read model), and the
+            reconciler config (Reconciler:PayoutLanding:Enabled).
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+      - alert: PayoutReconciliationMetricsAbsent
+        # The heartbeat gauge emits only after the FIRST completed pass, so an
+        # absent series on a host that ENABLED the reconciler means it is down,
+        # crash-looping before its first tick, or its telemetry is broken. On a
+        # stack that deliberately runs no payout reconciler
+        # (Reconciler:PayoutLanding:Enabled=false), silence this at the route.
+        expr: absent(payout_reconciliation_pass_last_success_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: warning
+          sli: payout_reconciliation_tick_liveness
+          adr: ADR-PC-043
+        annotations:
+          summary: "Payout-landing reconciler is not reporting its tick heartbeat"
+          description: >-
+            The payout-landing reconciler's tick-liveness gauge has been ABSENT for
+            30m — the host is down, has never completed a pass since deploy, its
+            telemetry is not reaching the collector, OR the reconciler is
+            deliberately disabled on this stack (Reconciler:PayoutLanding:Enabled).
+            The engine keeps recording facts correctly; what is missing is the
+            actor that reconciles payouts against landings.
+          runbook: ../../runbooks/payout-landing-reconciliation-alerts.md
+
+  # ---------------------------------------------------------------------------
   # BACKUP HEALTH (bd babelstone-zla1.12.5; ADR-PC-005 §P2 — off-site backups,
   # restore not assumed). A backup you cannot see failing is a backup you do
   # not have: the one copy of the data that survives losing the whole box is

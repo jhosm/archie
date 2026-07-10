@@ -102,9 +102,16 @@
          its discovery mechanics to — the same scan the engine/notification/lifecycle hosts use.
          Babelstone.Composition is generic by construction (no families/**, no engine-kernel reference,
          no packages at all; the arrows point INTO it), so the orchestrator subtree stays
-         extraction-ready (ADR-PC-019 §P2). The orchestrator runs no Cadence poll loop, so this is its
-         only shared-library reference. -->
+         extraction-ready (ADR-PC-019 §P2). -->
     <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
+    <!-- The shared CADENCE machinery (ADR-IC-019 mechanism reuse; bd babelstone-qa92.2): the
+         clock-owning CadenceWorker + ISchedulePass the scheduled PAYOUT-LANDING RECONCILER runs inside
+         (PayoutLandingReconciliationWorker/…SchedulePass), the same poll loop the notification scheduler
+         and the lifecycle driver reuse. It finally RUNS the ADR-PC-043 PayoutLandingReconciler on a
+         cadence and surfaces its non-matched signals to an operator sink. Babelstone.Cadence is generic
+         by construction (no families/**, no engine-kernel reference, framework packages only; the arrows
+         point INTO it), so referencing it keeps the orchestrator subtree extraction-ready (ADR-PC-019 §P2). -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
     <!-- The term-deposit family's saga module (ADR-IC-018 §D4): the host is the §D4 composition
          root — the standing, intended exemption (ADR-PC-021 §A2's pattern) that MAY reference a
          family/** project so it can compose the modules. The substrate may NOT. -->

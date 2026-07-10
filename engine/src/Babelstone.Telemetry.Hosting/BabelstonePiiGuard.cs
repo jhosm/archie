@@ -114,7 +114,8 @@ public static class BabelstonePiiGuard
     /// EXACT-key allowlist (no prefix matching), so this enumerates every admitted dimension the
     /// <c>Babelstone.Engine</c> meter instruments actually carry: the inbox/outbox topic dimensions
     /// (<c>babelstone.source_topic</c>, <c>babelstone.aggregate_type</c>), the reconciliation references
-    /// (<c>consumer</c>, <c>projection_kind</c>), the saga-dispatch <c>command_type</c>, and this guard's own
+    /// (<c>consumer</c>, <c>projection_kind</c>), the saga-dispatch <c>command_type</c>, the lifecycle-driver
+    /// <c>command_kind</c>, the payout-landing reconciliation <c>reconciliation_class</c>, and this guard's own
     /// <see cref="TelemetrySignalTagKey"/>. A dimension whose key is not here is dropped at emit — a PII-shaped
     /// metric label never reaches the metrics backend.
     /// </summary>
@@ -126,6 +127,7 @@ public static class BabelstonePiiGuard
         BabelstoneAttributes.ProjectionKind,         // projection_kind (reconciliation counters / gauge)
         SagaDispatchCommandTypeTagKey,               // command_type    (saga dispatch counters)
         BabelstoneAttributes.LifecycleCommandKindTag, // command_kind   (lifecycle-driver counters/histogram)
+        BabelstoneAttributes.PayoutReconciliationClassTag, // reconciliation_class (payout-landing reconciliation signal counter)
         BabelstoneAttributes.HoldReleaseAnomalyKindTag, // babelstone.hold_release_anomaly (active-hold projector counter)
         TelemetrySignalTagKey,                       // this guard's own strip-counter dimension
     ];
