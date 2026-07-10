@@ -65,7 +65,7 @@ public sealed class CurrentAccountCreditAdmissionTests
         Assert.Equal(AccountRef, movement.AccountRef);
         Assert.Equal(SettlementDirection.Credit, movement.Direction);
         Assert.Equal(10_000, movement.Amount.Cents);
-        Assert.Equal(MovementOperation.PayMaturity, movement.Operation); // generic money-IN verb (a dedicated CA verb is a later change)
+        Assert.Equal(MovementOperation.ReceiveCredit, movement.Operation); // dedicated CA credit-receive verb (ADR-PC-043, bd 98mj.8; re-pointed from the PayMaturity stopgap)
         Assert.Equal(MovementOrigin.Observed, movement.Origin); // engine-internal-already-effected loop-breaker
         Assert.Equal(CommandId, movement.CommandId);
     }

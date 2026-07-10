@@ -102,7 +102,7 @@ public sealed class SettlementMovementFoldTests
         var accountRef = accountId.ToString();
         var movement = new Movement(
             accountRef, SettlementDirection.Credit, new Money(10_000), new DateOnly(2026, 3, 5),
-            MovementOperation.PayMaturity, MovementOrigin.Observed, Guid.NewGuid());
+            MovementOperation.ReceiveCredit, MovementOrigin.Observed, Guid.NewGuid());
         return new AccountCredited(
             accountId, accountRef, new Money(10_000), "INTENT-abc|maturity", new DateOnly(2026, 3, 5), [movement]);
     }
@@ -113,7 +113,7 @@ public sealed class SettlementMovementFoldTests
         var accountRef = accountId.ToString();
         var movement = new Movement(
             accountRef, SettlementDirection.Debit, new Money(25_000), new DateOnly(2026, 3, 5),
-            MovementOperation.CollectInstallment, MovementOrigin.Observed, Guid.NewGuid());
+            MovementOperation.SettleDebit, MovementOrigin.Observed, Guid.NewGuid());
         return new AccountDebited(
             accountId, accountRef, new Money(25_000), "hold-under-test", "INTENT-abc|installment-1",
             new DateOnly(2026, 3, 5), [movement]);

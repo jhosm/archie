@@ -24,7 +24,7 @@ public static class LifecycleTransitions
         FailDisbursement,
 
         /// <summary>Hold the approved disbursement at source when it cannot be delivered —
-        /// <see cref="LoanDisbursementPending"/> (Pending → DisbursementPending). ADR-PC-043 slot 5 / bd
+        /// <see cref="LoanDisbursementHeld"/> (Pending → DisbursementPending). ADR-PC-043 slot 5 / bd
         /// babelstone-98mj.6: the money is held rather than disgorged. A reversible marker, resolved by
         /// <see cref="LandDisbursement"/> once a live destination exists.</summary>
         DisbursePend,

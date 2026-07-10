@@ -49,9 +49,9 @@ public sealed class LoanDisbursementFailedHandler : IEventHandler<LoanPosition, 
 // Same purity contract as the folds above — a single `state with { … }`, no clock/I/O/randomness
 // (BENG001/002/003); each LABELS lifecycle only. Transition legality is LifecycleTransitions.
 
-public sealed class LoanDisbursementPendingHandler : IEventHandler<LoanPosition, LoanDisbursementPending>
+public sealed class LoanDisbursementHeldHandler : IEventHandler<LoanPosition, LoanDisbursementHeld>
 {
-    public HandlerResult<LoanPosition> Apply(LoanPosition state, LoanDisbursementPending @event)
+    public HandlerResult<LoanPosition> Apply(LoanPosition state, LoanDisbursementHeld @event)
         => HandlerResult<LoanPosition>.From(state with
         {
             // Held at source: mark the loan disbursement-pending. The undeliverable credit's attributed IOU

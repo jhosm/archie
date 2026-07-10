@@ -63,6 +63,21 @@ The contract is filled across all six [ADR-PC-000 §D3](./ADR-PC-000-namespace-a
 slots, then three cross-cutting sub-decisions (the credit-admission gate; the
 undeliverable-credit model; the two-ingestion-path asymmetry).
 
+*Revised 2026-07-10 (bd `babelstone-98mj.6`/`.7`/`.8`): the undeliverable-credit model is now
+built. Two rules the Decision named are pinned here as they land, without altering the decision
+above. (a) **Resolution-key derivation** — an undeliverable credit's `ResolutionIntentId = g(IntentId)`
+is derived from the SAME original economic-intent id via `SettlementReferences.DeriveResolutionIntentId`,
+never freshly minted (the structural double-pay guard, §Idempotency); the engine's cross-cutting
+`operations.CreditUnapplied` / `operations.CreditReapplied` carry the attributed IOU, and the CA
+settlement Movements re-point their stopgap verbs to the dedicated `ReceiveCredit` / `SettleDebit`
+`MovementOperation` symbols. (b) **Payout-pending retry gate** — a re-attempt of a held payout fires
+only when BOTH the source reads payout-pending (`DepositLifecycle.PayoutPending` /
+`LoanLifecycle.DisbursementPending`) AND the destination is no longer rejecting (a projection-driven,
+clock-free read); it re-fires the SAME one-shot occurrence, so the driver dedupe + engine
+`command_dedup` + the slot-4 intent key collapse a late original apply and the re-attempt to exactly
+one landing. The now-live §Verifiable-commitments rows migrate to the
+[commitment catalogue](./commitment-catalogue.md) (rows CA-7…CA-13).*
+
 ### 1. Payload shape
 
 - Settlement command bodies are **unchanged** (`ReserveAccountBalance` / `ConfirmDebit` /
@@ -325,11 +340,12 @@ lands with the build.
 | 2 | A redelivered OR reissued `ConfirmDebit`/`ConfirmCredit` against the CA lands exactly one Movement (§Idempotency) | integration | `SETTLEMENT_CA_CASH_LEG_IDEMPOTENT` | Planned |
 | 3 | Settlement-facing decline returns 4xx → `ReserveRefused` → HIR, never 200-with-Declined (§Error model) | integration | `SETTLEMENT_CA_DECLINE_IS_4XX` | Planned |
 | 4 | `422 SCA_REQUIRED` at dispatch is retriable under the same `process_id`, never terminal-FAILED (§Error model) | integration | `SETTLEMENT_CA_SCA_STALE_IS_RETRIABLE` | Planned |
-| 5 | Credit-admission + `AccountCredited` append are one own-stream read-modify-write; credit-receive vs `CloseAccount` at the same version yields exactly one commit + an `ACCOUNT_CLOSED` reject on retry (§The credit-admission gate) | integration | `CREDIT_ADMISSION_OWN_STREAM_OCC` | Planned |
-| 6 | `AccountReactivated` + `AccountCredited` are one atomic append batch (§The credit-admission gate) | unit | `CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH` | Planned |
-| 7 | Admission is decided upstream; the generic fold only ever folds admitted credits (§The credit-admission gate) | architecture | `CREDIT_ADMISSION_UPSTREAM_OF_FOLD` | Planned |
-| 8 | An engine-originated payout to a non-admitting CA leaves the source in payout-pending; no funds disgorged; retried lands exactly once (§Undeliverable credit) | integration | `CREDIT_UNDELIVERABLE_HELD_AT_SOURCE` | Planned |
-| 9 | Every `operations.CreditUnapplied` carries a resolvable beneficiary ref + amount + machine reason; no anonymous/omnibus sink (§Undeliverable credit) | unit | `CREDIT_UNAPPLIED_IS_ATTRIBUTED` | Planned |
-| 10 | `ResolutionIntentId = g(IntentId)`; a fresh-id resolution fails the check (the double-pay guard) (§Idempotency) | integration | `CREDIT_RESOLUTION_KEY_INTENT_DERIVED` | Planned |
-| 11 | A reconciler pairs each source payout occurrence against the CA landing, classifying matched / DROP / DOUBLE / WRONG-AMOUNT (§Residual risks) | integration | `XFAMILY_PAYOUT_LANDING_RECONCILED` | Planned |
+| 5 | Credit-admission + `AccountCredited` append are one own-stream read-modify-write; credit-receive vs `CloseAccount` at the same version yields exactly one commit + an `ACCOUNT_CLOSED` reject on retry (§The credit-admission gate) | integration | `CREDIT_ADMISSION_OWN_STREAM_OCC` | Catalogued (CA-13, Planned) |
+| 6 | `AccountReactivated` + `AccountCredited` are one atomic append batch (§The credit-admission gate) | unit | `CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH` | Catalogued (CA-7, Live) |
+| 7 | Admission is decided upstream; the generic fold only ever folds admitted credits (§The credit-admission gate) | architecture | `CREDIT_ADMISSION_UPSTREAM_OF_FOLD` | Catalogued (CA-8, Live) |
+| 8 | An engine-originated payout to a non-admitting CA leaves the source in payout-pending; no funds disgorged; retried lands exactly once (§Undeliverable credit) | integration | `CREDIT_UNDELIVERABLE_HELD_AT_SOURCE` | Catalogued (CA-10, Live) |
+| 9 | Every `operations.CreditUnapplied` carries a resolvable beneficiary ref + amount + machine reason; no anonymous/omnibus sink (§Undeliverable credit) | unit | `CREDIT_UNAPPLIED_IS_ATTRIBUTED` | Catalogued (CA-11, Live) |
+| 10 | `ResolutionIntentId = g(IntentId)`; a fresh-id resolution fails the check (the double-pay guard) (§Idempotency) | integration | `CREDIT_RESOLUTION_KEY_INTENT_DERIVED` | Catalogued (CA-6, Planned) |
+| 11 | A reconciler pairs each source payout occurrence against the CA landing, classifying matched / DROP / DOUBLE / WRONG-AMOUNT (§Residual risks) | integration | `XFAMILY_PAYOUT_LANDING_RECONCILED` | Catalogued (CA-12, Live) |
 | 12 | Observed-path close/credit race is surfaced (`feed_sequence` gap + flow-2), never invents a balancing Movement (§Two ingestion paths) | integration | `OBSERVED_CREDIT_CLOSE_RACE_DETECTED` | Gap |
+| 13 | A `ConfirmDebit` capture appends `operations.HoldCaptured` + `AccountDebited` (the settle-debit Movement) in ONE batch under the SAME `HoldId`, so the earmark release and the Debit post atomically (§Payload) | unit | `SETTLEMENT_CA_CAPTURE_HOLD_MATCH` | Catalogued (CA-9, Live) |

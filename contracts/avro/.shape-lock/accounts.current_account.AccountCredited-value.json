@@ -1,0 +1,43 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "account_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "account_ref",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "amount_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "intent_reference",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "value_date",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": true,
+      "name": "movements",
+      "optional": false,
+      "type": "array<items:record<rec:Movement:account_ref:string,direction:enum,amount_cents:long,value_date:int@date,operation:enum,origin:enum,command_id:string@uuid>>"
+    }
+  ],
+  "name": "AccountCredited",
+  "namespace": "accounts.current_account",
+  "subject": "accounts.current_account.AccountCredited-value"
+}

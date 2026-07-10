@@ -74,10 +74,15 @@ public enum MovementOrigin
     /// a durable record, never a precondition of the append.</summary>
     Originated,
 
-    /// <summary>An already-cleared movement (a card capture, a Core-side posting) arrived via the
-    /// capture/settlement feed (ADR-PC-030). The engine RECORDS it and folds it into the balance;
-    /// there is no cash leg to drive (the money already moved upstream). v1 has no Observed producer; the
-    /// path is specified but not yet exercised (ADR-PC-032).</summary>
+    /// <summary>An already-effected movement the engine RECORDS and folds into the balance with NO cash leg
+    /// to drive. TWO senses share this posture: (1) ADR-PC-042's "cleared upstream" — an already-cleared
+    /// movement (a card capture, a Core-side posting) that arrived via the capture/settlement feed
+    /// (ADR-PC-030), the money having moved upstream; and (2) ADR-PC-043's "engine-internal
+    /// already-effected" — a movement the engine posts directly onto its OWN account's balance in one append
+    /// (a current-account settlement credit/capture-debit, an overdraft-interest accrual), where there is no
+    /// external counterparty and no settlement saga to start (the loop-breaker: <c>MovementHeaders</c> emits
+    /// no Originated header on the CA's own event). Either way the engine records the effect; it never
+    /// originates a cash leg for an Observed movement (ADR-PC-032 / ADR-PC-043).</summary>
     Observed,
 }
 
@@ -120,4 +125,18 @@ public enum MovementOperation
     /// balance (ADR-PC-037 §D5), a Debit that makes the balance more negative. Added at the END so the
     /// existing ordinals are stable (forward-only schema evolution, ADR-IC-002).</summary>
     AccrueOverdraftInterest,
+
+    /// <summary>A current-account settlement CREDIT-in — money RECEIVED onto an engine-owned demand account
+    /// (ADR-PC-043; bd babelstone-98mj.8). The dedicated CA credit-receive verb the <c>AccountCredited</c>
+    /// event carries, REPLACING the <c>PayMaturity</c> stopgap it borrowed before it had its own governed
+    /// label (the direction Credit was always correct; only the operation label was a placeholder). Added at
+    /// the END so existing ordinals are stable (forward-only schema evolution, ADR-IC-002).</summary>
+    ReceiveCredit,
+
+    /// <summary>A current-account settlement DEBIT-capture — money that truly LEFT an engine-owned demand
+    /// account when a reservation was captured (ADR-PC-043; bd babelstone-98mj.8). The dedicated CA
+    /// settle-debit verb the <c>AccountDebited</c> event carries, REPLACING the <c>CollectInstallment</c>
+    /// stopgap it borrowed before it had its own governed label. Added at the END so existing ordinals are
+    /// stable (forward-only schema evolution, ADR-IC-002).</summary>
+    SettleDebit,
 }

@@ -93,9 +93,9 @@ public sealed class DepositMaturedHandler : IEventHandler<DepositPosition, Depos
 // purity contract as the folds above — a single `state with { … }`, no clock/I/O/randomness
 // (BENG001/002/003); each LABELS lifecycle only. Transition legality is F.3 (LifecycleTransitions).
 
-public sealed class DepositPayoutPendingHandler : IEventHandler<DepositPosition, DepositPayoutPending>
+public sealed class DepositPayoutHeldHandler : IEventHandler<DepositPosition, DepositPayoutHeld>
 {
-    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositPayoutPending @event)
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositPayoutHeld @event)
         => HandlerResult<DepositPosition>.From(state with
         {
             // Held at source: mark the deposit payout-pending. The undeliverable credit's attributed IOU

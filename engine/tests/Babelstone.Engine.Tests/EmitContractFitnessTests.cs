@@ -165,8 +165,11 @@ public sealed class EmitContractFitnessTests
         // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
         // subset (many are store-only with no .avsc, so a regex that silently dropped one would leave
         // a schemaless event unguarded). If a family adds/removes an event, update this count knowingly.
-        // Current total = 26: 11 from term_deposit + 6 from personal_loan (LoanDisbursed,
-        // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff) +
+        // Current total = 30: 13 from term_deposit (the 11 original + the ADR-PC-043 slot-5 undeliverable-
+        // payout pair DepositPayoutHeld / DepositPayoutLanded, bd babelstone-98mj.6 — past-participle FACT
+        // names, NOT clock-driven "about-to-happen" signals) + 8 from personal_loan (LoanDisbursed,
+        // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff, plus the
+        // undeliverable-disbursement pair LoanDisbursementHeld / LoanDisbursementLanded) +
         // 9 from current_account (AccountOpened, AccountOpeningFailed, AccountMarkedDormant,
         // AccountReactivated, AccountClosed, AuthorizationDeclined — the ADR-PC-037 §D6 authorize refusal fact —
         // OverdraftInterestAccrued, the ADR-PC-037 §D5 store-only descoberto accrual fact carrying the fee
@@ -177,7 +180,7 @@ public sealed class EmitContractFitnessTests
         // (CrossCuttingEvents.cs), not families/**/Events.cs, and is not counted by this family scan.
         // Holds/movements are likewise cross-cutting operations.* records, not current_account events —
         // an APPROVED authorize appends operations.HoldPlaced, so only the DECLINED fact is family-owned.
-        Assert.Equal(26, eventTypes.Count);
+        Assert.Equal(30, eventTypes.Count);
 
         var violations = eventTypes
             .Select(name => (name, suffix: MatchedClockDrivenSuffix(name)))
