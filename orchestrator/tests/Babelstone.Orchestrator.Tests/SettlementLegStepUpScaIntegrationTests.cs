@@ -13,14 +13,17 @@ using Xunit;
 namespace Babelstone.Orchestrator.Tests;
 
 /// <summary>
-/// SETTLEMENT_LEG_SCA_GATE_CANNOT_BYPASS (bd babelstone-t7o3.19; ADR-PC-032 §A7/§A8; ADR-IC-010 §A11–A12;
-/// ADR-IC-006 §P2). In plain English: when a saga matures a deposit or pays a coupon — money the bank can
-/// never claw back — it must confirm the customer recently passed strong authentication (SCA) right before the
-/// cash actually moves. This proves the gate end-to-end against an in-process Core ACL stub (the lane's
-/// sanctioned <c>RecordingHttpServer</c>, the same stand-in the saga SCA + dispatcher tests use) that
-/// REPRODUCES the receiver's fail-closed SCA check: a saga-driven maturity money-mover with no / stale SCA is REFUSED at the settlement
-/// leg (422 SCA_REQUIRED) before any cash moves and the leg is terminal FAILED; with FRESH attested SCA the
-/// dispatcher forwarded the claims and the leg settled.
+/// SETTLEMENT_LEG_SCA_GATE_CANNOT_BYPASS + SETTLEMENT_CA_SCA_STALE_IS_RETRIABLE (bd babelstone-t7o3.19,
+/// babelstone-98mj.5; ADR-PC-032 §A7/§A8; ADR-IC-010 §A11–A12; ADR-IC-006 §P2; ADR-PC-043). In plain English:
+/// when a saga matures a deposit or pays a coupon — money the bank can never claw back — it must confirm the
+/// customer recently passed strong authentication (SCA) right before the cash actually moves. If the proof is
+/// missing or stale the receiver refuses (422 SCA_REQUIRED) and the cash does NOT move — but that refusal is
+/// NOT a terminal failure: it is RETRIABLE. The leg stays PENDING under the SAME <c>process_id</c> so that a
+/// fresh SCA proof re-drives the SAME cash leg to settlement, never dropping the payout (terminal-FAILED) and
+/// never starting a second occurrence (a double move). This proves both halves end-to-end against an in-process
+/// Core ACL stub (the lane's sanctioned <c>RecordingHttpServer</c>) that REPRODUCES the receiver's fail-closed
+/// SCA check: a saga-driven money-mover with no / stale SCA is refused at the settlement leg and the leg stays
+/// retriable-PENDING; then a fresh attested proof on the SAME row re-drives it and the leg settles PUBLISHED.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -69,51 +72,102 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
     public async Task DisposeAsync() => await _pg.DisposeAsync();
 
     [Fact]
-    public async Task A_saga_maturity_with_NO_SCA_is_refused_at_the_settlement_leg_before_cash_moves()
+    public async Task A_saga_maturity_with_NO_SCA_stays_retriable_PENDING_then_a_fresh_proof_re_drives_it()
     {
         // A maturity is an Originated CREDIT; auto-start the settlement saga off the Movement-bearing event but
         // with NO SCA claims on its headers (the absent-proof case). The leg emits ConfirmCredit carrying no
-        // SCA; the receiver fail-closes 422 SCA_REQUIRED before the credit lands.
+        // SCA; the receiver fail-closes 422 SCA_REQUIRED before the credit lands. Under ADR-PC-043 that 422 is
+        // RETRIABLE, not terminal — the row stays PENDING for a re-drive on a fresh proof.
         var processId = Guid.NewGuid();
         var occurrenceId = await AutoStartMaturityAsync(processId, scaAcr: null, scaAuthTime: null);
         var creditId = await OutboxMessageIdAsync(occurrenceId, SettlementProcess.ConfirmCredit);
 
         await using var acl = new RecordingHttpServer(ScaGatedResponder);
-        await DrainUntilTerminalAsync(acl, creditId);
+        using var host = BuildHost(acl.BaseUrl);
+        await host.StartAsync();
+        try
+        {
+            // The receiver was hit with an absent proof — 422 SCA_REQUIRED — but the leg is NOT flipped
+            // terminal: it stays PENDING (retriable), never FAILED, never a dropped payout.
+            await WaitUntilAsync(
+                () => Task.FromResult(acl.Requests.Any(r => r.Path == "/v1/credits")),
+                TimeSpan.FromSeconds(30),
+                "the dispatcher never delivered the credit leg to the receiver");
+            Assert.Equal("PENDING", await StatusAsync(creditId));
+            Assert.Null(await FailureStatusCodeAsync(creditId));
 
-        // Refused at the leg → terminal FAILED with the receiver's 422, the saga's compensation/escalation
-        // trigger (ADR-PC-029 slot 5). The credit did NOT confirm.
-        Assert.Equal("FAILED", await StatusAsync(creditId));
-        Assert.Equal(422, await FailureStatusCodeAsync(creditId));
+            // The FIRST delivery reached the receiver carrying NEITHER SCA header — the gate saw an absent
+            // proof, exactly as the engine-direct path does.
+            var absent = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
+            Assert.Null(absent.ScaAcr);
+            Assert.Null(absent.ScaAuthTime);
 
-        // The cash leg reached the receiver's credit route carrying NEITHER SCA header — the gate saw an absent
-        // proof, exactly as the engine-direct path does.
-        var hit = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
-        Assert.Null(hit.ScaAcr);
-        Assert.Null(hit.ScaAuthTime);
+            // A fresh SCA proof arrives: re-stamp the SAME outbox row (same process_id, same seq) with fresh
+            // attested claims — modelling the re-attestation that unblocks the leg. The dispatcher re-drives
+            // the SAME row and the receiver now lets the credit through → PUBLISHED. No second occurrence.
+            var fresh = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await RestampRowScaAsync(creditId, "urn:bank:sca:psd2", fresh);
+
+            await WaitUntilAsync(
+                async () => await StatusAsync(creditId) == "PUBLISHED",
+                TimeSpan.FromSeconds(30),
+                "the re-driven credit leg did not settle after a fresh SCA proof");
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+
+        // The leg settled under the SAME process_id / SAME row — a re-drive, never a fresh occurrence.
+        Assert.Equal("PUBLISHED", await StatusAsync(creditId));
+        var settled = acl.Requests.Last(r => r.Path == "/v1/credits");
+        Assert.Equal("urn:bank:sca:psd2", settled.ScaAcr);
     }
 
     [Fact]
-    public async Task A_saga_maturity_with_a_STALE_SCA_is_refused_at_the_settlement_leg()
+    public async Task A_saga_maturity_with_a_STALE_SCA_stays_retriable_PENDING_then_a_fresh_proof_re_drives_it()
     {
         // SCA happened, but too long ago — auth_time beyond the window at the DISPATCH instant. The claims ARE
-        // forwarded (the substrate attests); the RECEIVER re-checks freshness at dispatch and refuses.
+        // forwarded (the substrate attests); the RECEIVER re-checks freshness at dispatch and refuses (422
+        // SCA_REQUIRED). Under ADR-PC-043 that refusal is RETRIABLE — the leg stays PENDING for a re-drive.
         var processId = Guid.NewGuid();
         var stale = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (ScaMaxAgeSeconds + 60);
         var occurrenceId = await AutoStartMaturityAsync(processId, scaAcr: "urn:bank:sca:psd2", scaAuthTime: stale);
         var creditId = await OutboxMessageIdAsync(occurrenceId, SettlementProcess.ConfirmCredit);
 
         await using var acl = new RecordingHttpServer(ScaGatedResponder);
-        await DrainUntilTerminalAsync(acl, creditId);
+        using var host = BuildHost(acl.BaseUrl);
+        await host.StartAsync();
+        try
+        {
+            // The stale claims WERE forwarded (the gate saw them and judged auth_time stale, ADR-PC-032 §A7)
+            // — but the 422 leaves the leg PENDING (retriable), not terminal-FAILED.
+            await WaitUntilAsync(
+                () => Task.FromResult(acl.Requests.Any(r => r.Path == "/v1/credits")),
+                TimeSpan.FromSeconds(30),
+                "the dispatcher never delivered the credit leg to the receiver");
+            Assert.Equal("PENDING", await StatusAsync(creditId));
+            Assert.Null(await FailureStatusCodeAsync(creditId));
 
-        Assert.Equal("FAILED", await StatusAsync(creditId));
-        Assert.Equal(422, await FailureStatusCodeAsync(creditId));
+            var staleHit = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
+            Assert.Equal("urn:bank:sca:psd2", staleHit.ScaAcr);
+            Assert.Equal(stale.ToString(System.Globalization.CultureInfo.InvariantCulture), staleHit.ScaAuthTime);
 
-        // The claims WERE forwarded (the gate saw them and judged auth_time stale) — proving the substrate
-        // attests and the RECEIVER is the freshness authority at the dispatch instant (ADR-PC-032 §A7).
-        var hit = Assert.Single(acl.Requests, r => r.Path == "/v1/credits");
-        Assert.Equal("urn:bank:sca:psd2", hit.ScaAcr);
-        Assert.Equal(stale.ToString(System.Globalization.CultureInfo.InvariantCulture), hit.ScaAuthTime);
+            // A fresh re-attestation on the SAME row re-drives the SAME leg to settlement.
+            var fresh = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            await RestampRowScaAsync(creditId, "urn:bank:sca:psd2", fresh);
+
+            await WaitUntilAsync(
+                async () => await StatusAsync(creditId) == "PUBLISHED",
+                TimeSpan.FromSeconds(30),
+                "the re-driven credit leg did not settle after a fresh SCA proof");
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+
+        Assert.Equal("PUBLISHED", await StatusAsync(creditId));
     }
 
     [Fact]
@@ -306,6 +360,21 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
             "SELECT status FROM saga_outbox WHERE message_id = @id;", connection);
         command.Parameters.AddWithValue("id", messageId);
         return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>Model a fresh SCA re-attestation on the SAME retriable-PENDING outbox row (same process_id,
+    /// same seq): stamp fresh <c>sca_acr</c> / <c>sca_auth_time</c> so the dispatcher's next re-drive
+    /// forwards a proof the receiver accepts. Proves the leg re-drives IN PLACE, never as a new occurrence
+    /// (ADR-PC-043).</summary>
+    private async Task RestampRowScaAsync(Guid messageId, string scaAcr, long scaAuthTime)
+    {
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "UPDATE saga_outbox SET sca_acr = @acr, sca_auth_time = @at WHERE message_id = @id;", connection);
+        command.Parameters.AddWithValue("acr", scaAcr);
+        command.Parameters.AddWithValue("at", scaAuthTime);
+        command.Parameters.AddWithValue("id", messageId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task<int?> FailureStatusCodeAsync(Guid messageId)

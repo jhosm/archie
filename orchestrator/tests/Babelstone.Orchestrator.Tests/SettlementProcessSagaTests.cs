@@ -247,6 +247,35 @@ public sealed class SettlementProcessSagaTests
         Assert.Null(bridge.ForOutcome("UnknownCommand", CommandDeliveryKind.Applied));
     }
 
+    [Fact]
+    public void Bridge_reads_a_422_SCA_REQUIRED_on_a_confirm_as_retriable_stay_PENDING()
+    {
+        // The LIVE wiring of ClassifySettlementDelivery into the dispatch path (ADR-PC-043): the bridge parses
+        // the ProblemDetails error code off the 4xx body and tells the dispatcher to leave the row PENDING on
+        // a 422 SCA_REQUIRED confirm — never terminal-FAILED.
+        var bridge = new SettlementResultEvents.Bridge();
+        const string scaBody = """{"code":"SCA_REQUIRED","title":"SCA required"}""";
+
+        // A 422 SCA_REQUIRED on either irreversible confirm → retriable (stays PENDING for a re-drive).
+        Assert.True(bridge.IsRetriableStayPending(SettlementProcess.ConfirmCredit, 422, scaBody));
+        Assert.True(bridge.IsRetriableStayPending(SettlementProcess.ConfirmDebit, 422, scaBody));
+        // Case-insensitive on the code — a receiver that lower-cases it still classifies retriable.
+        Assert.True(bridge.IsRetriableStayPending(
+            SettlementProcess.ConfirmCredit, 422, """{"code":"sca_required"}"""));
+
+        // A genuine business decline (a non-SCA 4xx code) is NOT retriable — it falls through to terminal Refused.
+        Assert.False(bridge.IsRetriableStayPending(
+            SettlementProcess.ConfirmCredit, 422, """{"code":"ACCOUNT_CLOSED"}"""));
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.ConfirmCredit, 400, scaBody));
+        // SCA_REQUIRED on a NON-confirm leg (a reserve / clearance query) is a plain decline, never a silent retry.
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.ReserveAccountBalance, 422, scaBody));
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.QueryCoreCreditStatus, 422, scaBody));
+        // A 2xx/5xx, or an unparseable / code-less body, is never retriable-by-this-carve-out.
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.ConfirmCredit, 200, scaBody));
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.ConfirmCredit, 422, "not json"));
+        Assert.False(bridge.IsRetriableStayPending(SettlementProcess.ConfirmCredit, 422, null));
+    }
+
     // ---- The command router (settlement legs -> the Core ACL, incl. the NEW credit routes) ------------
 
     [Fact]

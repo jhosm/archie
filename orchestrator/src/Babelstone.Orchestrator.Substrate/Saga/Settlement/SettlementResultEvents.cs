@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 
 namespace Babelstone.Orchestrator.Saga.Settlement;
 
@@ -94,9 +95,9 @@ public static class SettlementResultEvents
         /// <summary>
         /// An HTTP 202 Accepted on EITHER irreversible confirm (<see cref="SettlementProcess.ConfirmDebit"/>
         /// or <see cref="SettlementProcess.ConfirmCredit"/>) is an EXPLICIT INDETERMINATE settlement signal
-        /// (the ACL accepted the move but cannot yet confirm Core execution — ADR-IC-012 §P5). 202 is a 2xx,
+        /// (the ACL accepted the move but cannot yet confirm Core execution — ADR-IC-012). 202 is a 2xx,
         /// so the substrate would otherwise classify it Applied; this reinterpretation makes the dispatcher
-        /// flip the row terminal and self-advance into the matching clearance wait (ADR-IC-003 §P4). ONLY for
+        /// flip the row terminal and self-advance into the matching clearance wait (ADR-IC-003). ONLY for
         /// the two confirms; every other command/status returns null (the substrate's default classification
         /// applies). A confirm *timeout* is NOT this — it stays transient (the row stays PENDING for an
         /// idempotent retry).
@@ -106,5 +107,51 @@ public static class SettlementResultEvents
             && commandType is SettlementProcess.ConfirmDebit or SettlementProcess.ConfirmCredit
                 ? CommandDeliveryKind.Indeterminate
                 : null;
+
+        /// <summary>
+        /// The LIVE wiring of <see cref="SettlementProcess.ClassifySettlementDelivery"/> into the dispatch
+        /// path (ADR-PC-043). Parses the receiver's ProblemDetails error <c>code</c> off
+        /// <paramref name="responseBody"/> and routes the 4xx through the pure classifier: a
+        /// <c>422 SCA_REQUIRED</c> on a cash confirm →
+        /// <see cref="SettlementProcess.SettlementDeliveryDisposition.RetriablePending"/> ⇒ this returns
+        /// <c>true</c>, so the dispatcher leaves the row PENDING (transient) for a re-drive on a fresh proof
+        /// rather than flipping it terminal-FAILED. Every other 4xx (a genuine decline, or an SCA_REQUIRED on
+        /// a non-confirm leg) →
+        /// <see cref="SettlementProcess.SettlementDeliveryDisposition.Decline"/> ⇒ <c>false</c>, so the leg
+        /// falls through to the substrate's terminal-Refused classification. A body with no parseable
+        /// <c>code</c> yields a null error code, which the classifier treats as a plain Decline (never a
+        /// silent retry).
+        /// </summary>
+        public bool IsRetriableStayPending(string commandType, int httpStatusCode, string? responseBody) =>
+            SettlementProcess.ClassifySettlementDelivery(commandType, httpStatusCode, ReadErrorCode(responseBody))
+                == SettlementProcess.SettlementDeliveryDisposition.RetriablePending;
+
+        /// <summary>
+        /// Extract the ProblemDetails <c>code</c> member from a settlement receiver's 4xx body, or
+        /// <c>null</c> when the body is empty, not JSON, or carries no string <c>code</c> — the classifier
+        /// then treats the 4xx as a plain decline. Tolerant by design: a malformed or truncated refusal body
+        /// must never throw on the dispatch path.
+        /// </summary>
+        private static string? ReadErrorCode(string? responseBody)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                return document.RootElement.ValueKind == JsonValueKind.Object
+                       && document.RootElement.TryGetProperty("code", out var code)
+                       && code.ValueKind == JsonValueKind.String
+                    ? code.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
     }
 }

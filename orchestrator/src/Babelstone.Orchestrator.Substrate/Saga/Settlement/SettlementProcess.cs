@@ -280,19 +280,13 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     /// <c>SettlementDirection.Credit</c> — value enters the named account).</summary>
     private const string CreditDirectionValue = "Credit";
 
-    // --- The engine-CA settlement error model (ADR-PC-043 §5 slot 5) -----------------------------------
-    // In plain English: when the saga tries to move cash and the receiver says "no", we have to tell TWO
-    // different "no"s apart. One "no" means "you need to prove strong customer authentication again"
-    // (SCA_REQUIRED) — that is not a real failure, the money simply has not moved yet, so the saga should
-    // RE-TRY the SAME cash leg once a fresh proof arrives, under the SAME process_id, never dropping the
-    // payout and never starting a brand-new attempt (which would risk a double move). The other "no" means
-    // "the account genuinely declined this debit" (closed / frozen / insufficient) — that IS a real failure,
-    // so the saga parks LOUDLY in HUMAN_INTERVENTION_REQUIRED for an operator, never silently marching to
-    // COMPLETED with zero landing. The two are distinguished by the receiver's error CODE on the 4xx body,
-    // not by the status alone (both are 422s), which is why this classifier reads the code.
+    // --- The engine-CA settlement error model (ADR-PC-043) ---------------------------------------------
+    // In plain English: when the saga moves cash and the receiver says "no", two "no"s must be told apart —
+    // and they can only be told apart by the ProblemDetails error CODE, because both arrive as a 422. The
+    // per-outcome behaviour (retry vs. park) is spelled out on the disposition members below.
 
     /// <summary>The receiver's ProblemDetails error <c>code</c> that marks a <c>422</c> as a strong-customer-
-    /// authentication (SCA) re-challenge rather than a business decline (ADR-PC-043 §5; ADR-IC-006 §P2 —
+    /// authentication (SCA) re-challenge rather than a business decline (ADR-PC-043; ADR-IC-006 —
     /// the engine's <c>ScaPrecondition</c> / the Core-ACL settlement gate return this when the attested proof
     /// is absent, non-numeric, in the future, or older than the freshness window). Compared case-INSENSITIVELY
     /// so a receiver that lower-cases the code still classifies as retriable. The orchestrator subtree stays
@@ -301,10 +295,14 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     public const string ScaRequiredErrorCode = "SCA_REQUIRED";
 
     /// <summary>
-    /// The engine-CA settlement DELIVERY disposition (ADR-PC-043 §5) — how the dispatcher must treat a cash
+    /// The engine-CA settlement DELIVERY disposition (ADR-PC-043) — how the dispatcher must treat a cash
     /// leg's HTTP outcome once it knows the receiver's error <c>code</c>, not just its status. It refines the
     /// generic <see cref="CommandDeliveryKind"/> for the one case the status alone cannot express: a
     /// <c>422</c> that is a retriable SCA re-challenge versus a <c>422</c> that is a genuine business decline.
+    /// The dispatcher consumes it live through
+    /// <see cref="SettlementResultEvents.Bridge.IsRetriableStayPending"/> — a
+    /// <see cref="RetriablePending"/> leaves the outbox row PENDING, a <see cref="Decline"/> falls through to
+    /// the substrate's terminal-Refused flip.
     /// </summary>
     public enum SettlementDeliveryDisposition
     {
@@ -316,29 +314,31 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
         /// <summary>A <c>422 SCA_REQUIRED</c> at dispatch: NOT a failure. The cash never moved, so the leg
         /// stays retriable-PENDING under the SAME <c>process_id</c> and is re-driven once a fresh SCA proof is
         /// attested — never terminal-FAILED (a dropped payout) and never re-driven as a fresh occurrence (a
-        /// double move). Maps onto the transient/stays-PENDING arm of the ADR-PC-029 slot-5 error model.</summary>
+        /// double move). Maps onto the transient/stays-PENDING arm of the ADR-PC-029 error model.</summary>
         RetriablePending,
 
-        /// <summary>A genuine business DECLINE on the debit path (a closed / frozen / insufficient reserve
-        /// verdict, shaped as a <c>4xx</c> by the settlement-facing CA surface — never a 200-with-<c>Declined</c>
-        /// body the dispatcher would mis-read as <see cref="CommandDeliveryKind.Applied"/>). Maps to
-        /// <see cref="CommandDeliveryKind.Refused"/>, which the bridge turns into
-        /// <see cref="ReserveRefused"/> → a LOUD park in <see cref="States.HumanInterventionRequired"/> (no
-        /// compensation; the money did not move, ADR-IC-003 §P6).</summary>
+        /// <summary>A genuine business DECLINE (a closed / frozen / insufficient verdict, shaped as a
+        /// <c>4xx</c> by the settlement-facing CA surface — never a 200-with-<c>Declined</c> body the
+        /// dispatcher would mis-read as <see cref="CommandDeliveryKind.Applied"/>). The dispatcher treats it
+        /// as the substrate's terminal <see cref="CommandDeliveryKind.Refused"/>: the outbox row flips FAILED
+        /// (loud, never a silent COMPLETED; no compensation — the money did not move, ADR-IC-003). On the
+        /// reserve leg the bridge additionally self-advances <see cref="ReserveAccountBalance"/>+Refused →
+        /// <see cref="ReserveRefused"/> → a park in <see cref="States.HumanInterventionRequired"/>.</summary>
         Decline,
     }
 
     /// <summary>
     /// Classify a settlement cash leg's terminal HTTP outcome into a <see cref="SettlementDeliveryDisposition"/>
-    /// (ADR-PC-043 §5). PURE — a function of <paramref name="commandType"/>, <paramref name="httpStatusCode"/>,
+    /// (ADR-PC-043). PURE — a function of <paramref name="commandType"/>, <paramref name="httpStatusCode"/>,
     /// and the receiver's ProblemDetails error <paramref name="errorCode"/> alone (no clock, no I/O), so the
-    /// dispatcher shell owns the HTTP call and this owns only the decision.
+    /// dispatcher shell owns the HTTP call and this owns only the decision. The dispatcher wires it in live
+    /// via <see cref="SettlementResultEvents.Bridge.IsRetriableStayPending"/>.
     /// <list type="bullet">
     ///   <item>A <c>422</c> whose <paramref name="errorCode"/> is <see cref="ScaRequiredErrorCode"/> (case-
     ///   insensitive) → <see cref="SettlementDeliveryDisposition.RetriablePending"/>: the SCA re-challenge is
     ///   retriable under the SAME <c>process_id</c>, never terminal-FAILED, never a fresh occurrence.</item>
     ///   <item>Any OTHER <c>4xx</c> (including a <c>422</c> with a non-SCA code — the genuine decline) →
-    ///   <see cref="SettlementDeliveryDisposition.Decline"/>: Refused → <see cref="ReserveRefused"/> → HIR.</item>
+    ///   <see cref="SettlementDeliveryDisposition.Decline"/>: the substrate's terminal Refused flip.</item>
     ///   <item>Everything else (a 2xx, a 5xx) → <see cref="SettlementDeliveryDisposition.DefaultByStatus"/>:
     ///   the substrate's status-based classification is unchanged.</item>
     /// </list>
