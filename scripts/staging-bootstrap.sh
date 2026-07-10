@@ -58,19 +58,21 @@ SECRET_PREFLIGHT_SCRIPT="$REPO_ROOT/scripts/cd-secret-preflight.sh"
 # lands on the box (same ethos as the digest-pinned first-party images, PR #531). Keep these
 # IDENTICAL to bootstrap/README.md's "Apply order" — the two sources are one contract.
 # The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s
-# server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a
-# chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT
-# proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed,
-# BEFORE a live provision.
+# server 1.35. These controller versions were VERIFIED against k8s 1.35 and bumped to a
+# 1.35-supported line on 2026-07-10 (bd babelstone-zla1.12.26): cert-manager v1.21 supports
+# k8s 1.33→1.36 (v1.16 was EOL and stopped at 1.32); system-upgrade-controller v0.19 is the
+# first release built for k8s 1.35; the hashicorp/vault chart 0.34.0 ships vault-csi-provider
+# v1.7.3 (GA APIs, no kubeVersion ceiling — the earlier `4.1.0` was not a resolvable chart
+# version). Re-verify against the support matrices before any future k8s bump.
 # Verify / bump:
 #   cert-manager  → `helm search repo jetstack/cert-manager --versions` (after `helm repo update`)
 #   Traefik chart → `helm search repo traefik/traefik --versions`
 #   sys-upgrade-c → https://github.com/rancher/system-upgrade-controller/releases (pick a tag)
 #   vault-csi-pr  → `helm search repo hashicorp/vault --versions` (the chart's csi: subcomponent)
-CERT_MANAGER_VERSION="v1.16.2"      # jetstack/cert-manager Helm chart (== app version)
+CERT_MANAGER_VERSION="v1.21.0"      # jetstack/cert-manager Helm chart (== app version)
 TRAEFIK_CHART_VERSION="33.2.1"      # traefik/traefik Helm chart (ships Traefik proxy v3.x)
-SUC_VERSION="v0.14.2"               # rancher/system-upgrade-controller release tag
-VAULT_CHART_VERSION="4.1.0"         # hashicorp/vault Helm chart — used ONLY for the vault-csi-provider
+SUC_VERSION="v0.19.2"               # rancher/system-upgrade-controller release tag
+VAULT_CHART_VERSION="0.34.0"        # hashicorp/vault Helm chart — used ONLY for the vault-csi-provider (ships vault-csi-provider v1.7.3)
 
 # The Secrets Store CSI driver is the VENDORED, pinned (v1.6.0) material under the openbao-csi
 # component's upstream/ dir — applied file-by-file (hermetic, no remote fetch), NOT via Helm.
