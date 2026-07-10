@@ -30,7 +30,7 @@ application/engine service images (they connect to this stack).
 | redpanda-console | Deployment | 8080 | dev convenience |
 | kong | Deployment | 8000, 8001 | [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |
 | openbao | Deployment | 8200 | [ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) |
-| grafana-lgtm | Deployment | **3000** (base); staging adds 3200/9090/3100 (Tempo/Prometheus/Loki query APIs, mission-control-only) + OTLP 4317/4318 (collector-only NetworkPolicy) | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
+| grafana-lgtm | Deployment | **3000** (base); staging adds 3200/9090/3100 (Tempo/Prometheus/Loki query APIs, mission-control-only) + OTLP 4317/4318 (collector-only NetworkPolicy); ha adds OTLP 4317/4318 (collector-only NetworkPolicy) | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
 | backstage (catalogue portal) | Deployment | 7007 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml` from the baked image; in-memory SQLite (no Postgres), rebuilt from the baked `/catalog` on boot (bd babelstone-zla1.6.6) |
@@ -181,9 +181,11 @@ grafana-lgtm Service never exposes 4317/4318. Overlays that carry a
 collector-only NetworkPolicy **republish** 4317/4318 on that Service so the
 Collector's fan-out hop (`grafana-lgtm:4317`) lands — the `allow-grafana-lgtm-ingress`
 policy admits those ports from the `otel-collector` pod only, so the Collector
-stays the sole path (ADR-IC-007 §P1 amendment 2026-07-09). Staging does this via
-`grafana-otlp-svc.patch.yaml`, and a positive staging CI assertion guards the
-republish-plus-policy pairing. OTLP is never fronted on an Ingress.
+stays the sole path (ADR-IC-007 §P1 amendment 2026-07-09). Both the staging and the
+`ha` overlay do this via a `grafana-otlp-svc.patch.yaml` + an `allow-grafana-lgtm-ingress`
+NetworkPolicy in `network-policies.yaml`, and a positive per-overlay CI assertion guards
+each republish-plus-policy pairing (staging: bd babelstone-zla1.16; ha: bd babelstone-zla1.18).
+OTLP is never fronted on an Ingress.
 
 Separately, the appliance's **read** query APIs — Tempo (3200), Prometheus (9090)
 and Loki (3100) — are published on the staging Service (`grafana-query-svc.patch.yaml`)
@@ -227,6 +229,19 @@ required zone anti-affinity against the primary, so a same-zone placement is a
 scheduling failure, not a silent co-location (a co-located standby protects
 nothing against a site/AZ loss).
 
+**Telemetry hop (bd babelstone-zla1.18).** Like staging, the ha overlay
+republishes the appliance's OTLP intake (4317/4318) on the grafana-lgtm Service
+(`grafana-otlp-svc.patch.yaml`) so the OTel Collector's fan-out to
+`grafana-lgtm:4317` lands — without it every trace/log/metric is silently
+dropped in k8s (the same latent defect staging fixed in bd babelstone-zla1.16).
+The ADR-IC-007 §P1 single-OTLP-entry-point boundary is held at the network layer
+by `network-policies.yaml`: `allow-grafana-lgtm-ingress` admits those ports from
+the `otel-collector` pod **only**. That policy file is scoped to just this
+telemetry edge — the ha overlay renders backing-infra only (no `apps/`), so
+staging's broad per-service allow rules have no pods to select here (see the
+file's scope note). A positive ha CI assertion guards the
+republish-plus-policy pairing, the counterpart of the staging one.
+
 **Postgres Service split (writes go only to the primary).** Both PG pods carry
 `app.kubernetes.io/name: postgres`, so the overlay role-scopes the Services:
 - `postgres` — the **write** entrypoint, narrowed to `pg-role: primary` (the
@@ -243,7 +258,8 @@ nothing against a site/AZ loss).
 **The infra CI job validates only.** The infra job kustomize-builds + kubeconforms
 *both* overlays and asserts the HA commitments mechanically (3-node Redpanda; primary
 `synchronous_commit`/`synchronous_standby_names`; standby slot + zone
-anti-affinity). It does **not** spin up a real cluster. Two downstream lanes
+anti-affinity; the OTLP fan-out hop + its collector-only NetworkPolicy — see below).
+It does **not** spin up a real cluster. Two downstream lanes
 ride on this wiring but are out of scope here:
 
 - **Sync-replication append-latency benchmark — L.3** (the Q-AK load test named
