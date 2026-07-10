@@ -1,0 +1,164 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-undeliverable-credits.openapi.yaml — the operator
+# undeliverable-credit (IOU / escheat) query surface (ADR-PC-043 slot 5; catalogued per ADR-IC-020;
+# bd babelstone-qa92.1). INTERNAL admin-ops plane: the single read route is mapped ONCE at host
+# level by the family-agnostic hosting spine (Babelstone.Engine.Hosting/UndeliverableCreditsEndpoints.cs,
+# ADR-PC-021) and is deliberately NOT an infra/kong/kong.yml route — its caller is the operator
+# tooling on the internal network. This is how an operator answers "which credits are still owed, to
+# whom, and how old?": when a matured payout has nowhere to land the engine records a NAMED IOU
+# (operations.CreditUnapplied), and when a live destination later exists it records the resolution
+# (operations.CreditReapplied) and the IOU leaves the outstanding set. The list is the spine-owned
+# rebuildable fold of that pair (the same posture as the account-hold ledger).
+#
+# Shapes are transcribed from the REAL code surface: UndeliverableCreditsResponse /
+# UndeliverableCreditView (Babelstone.Engine.Hosting) — snake_case on the wire. Spec<->DTO lock:
+# Babelstone.ContractDrift.Tests Layer 1. No PII (ADR-PC-004 §P2): an opaque economic-intent id, an
+# opaque beneficiary reference, integer cents, a stable machine reason code, and dates only.
+info:
+  title: Babelstone Engine — Undeliverable Credits (INTERNAL admin-ops)
+  version: 1.0.0
+  description: >
+    The operator query surface for the spine-owned undeliverable-credit (IOU / escheat) ledger
+    (ADR-PC-043 slot 5). GET /v1/operations/undeliverable-credits lists the OUTSTANDING IOUs — a
+    CreditUnapplied not yet matched by a CreditReapplied on the derived resolution key — each with
+    its opaque beneficiary reference, amount in integer cents, machine reason code, unapplied date,
+    and age. Age is whole days from the credit's unapplied date to an operator-supplied as_of
+    horizon (an input — ADR-PC-023 — defaulting to the host clock's date when omitted; the clock is
+    read only in this impure HTTP shell, never in the replay-deterministic fold). Family-agnostic by
+    construction — the surface names no family; the ledger folds every family's undeliverable-credit
+    facts (ADR-PC-021). Errors are RFC 9457 application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: legal-obligation   # GDPR Art.6(1)(c) — escheat/IOU reconciliation; opaque structural ids + machine reason codes only, no data-subject data
+  x-authorized-consumers:
+    - platform-operations   # the operator IOU/escheat reconciliation tooling (ADR-PC-043 operator-facing)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg) ──
+  x-internal: >-
+    Operator/admin-ops undeliverable-credit reconciliation plane (ADR-PC-043 slot 5): an operator
+    lists the outstanding IOUs on the internal network to chase down and reapply an ageing credit —
+    deliberately not an infra/kong/kong.yml route; escheat reconciliation is never a public client
+    operation.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/operations/undeliverable-credits:
+    get:
+      operationId: listUndeliverableCredits
+      summary: List the OUTSTANDING undeliverable credits (open IOUs), oldest first.
+      description: >
+        Returns every OUTSTANDING IOU — a CreditUnapplied whose intent has not yet been resolved by
+        a matching CreditReapplied — with its beneficiary_ref, amount_cents, reason, unapplied_at,
+        and age_days, oldest first. age_days is whole days from unapplied_at to the as_of horizon
+        (an input, never a clock read in the fold): supply as_of to reproduce an ageing snapshot, or
+        omit it to age against the host clock's current date. A resolved credit is absent from the
+        list (the intent left the outstanding set once its CreditReapplied landed).
+      parameters:
+        - name: as_of
+          in: query
+          required: false
+          description: >
+            The ISO date (yyyy-MM-dd) the ages are computed against — an operator input (ADR-PC-023).
+            Omitted, the host clock's current date is used. A malformed value is a 400.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: >
+            The OUTSTANDING IOUs and the as_of horizon their ages were computed against.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UndeliverableCreditsResponse'
+        '400':
+          description: >
+            The as_of query parameter is not a valid ISO date (yyyy-MM-dd) — fail loud rather than
+            silently age against today and mis-label every IOU.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    UndeliverableCreditsResponse:
+      type: object
+      description: >
+        The list of OUTSTANDING IOUs (UndeliverableCreditsResponse) and the as_of horizon their ages
+        were computed against — echoed so the caller knows which day the ages are relative to.
+      required: [as_of, outstanding_count, credits]
+      properties:
+        as_of:
+          type: string
+          format: date
+          description: >
+            The horizon the ages were computed against — the query's as_of param, or the host
+            clock's current date when omitted.
+        outstanding_count:
+          type: integer
+          description: How many IOUs are still owed (the length of credits).
+        credits:
+          type: array
+          description: The OUTSTANDING IOUs, oldest first (by unapplied_at, then intent_id).
+          items:
+            $ref: '#/components/schemas/UndeliverableCreditView'
+      examples:
+        - as_of: 2026-07-10
+          outstanding_count: 1
+          credits:
+            - intent_id: INTENT-11111111111111111111111111111111|maturity
+              beneficiary_ref: acct-9f3c
+              amount_cents: 125000
+              reason: BENEFICIARY_ACCOUNT_CLOSED
+              unapplied_at: 2026-06-25
+              age_days: 15
+    UndeliverableCreditView:
+      type: object
+      description: >
+        One OUTSTANDING IOU (UndeliverableCreditView): a credit that could not be delivered and is
+        still owed — one line of the "which credits are still owed, to whom, and how old" list. No
+        PII (ADR-PC-004): opaque intent + beneficiary refs, integer cents, a machine reason, and dates.
+      required: [intent_id, beneficiary_ref, amount_cents, reason, unapplied_at, age_days]
+      properties:
+        intent_id:
+          type: string
+          description: >
+            The undeliverable credit's economic-intent id (ADR-PC-043 slot 4) — an opaque structural
+            token, never PII.
+        beneficiary_ref:
+          type: string
+          description: The opaque beneficiary the credit is owed to — never PII / an IBAN.
+        amount_cents:
+          type: integer
+          format: int64
+          description: The undeliverable amount, integer cents (ADR-PC-010).
+        reason:
+          type: string
+          description: >
+            The stable machine reason code the credit was undeliverable (e.g. BENEFICIARY_ACCOUNT_CLOSED,
+            BENEFICIARY_ACCOUNT_NOT_FOUND) — never free-text PII.
+        unapplied_at:
+          type: string
+          format: date
+          description: The economic date the credit was recorded unapplied (an ADR-PC-023 input).
+        age_days:
+          type: integer
+          description: >
+            Whole days between unapplied_at and the response's as_of horizon — how old the IOU is.
+            Derived from the operator-supplied horizon, never a stored column (ADR-PC-023).
+    Problem:
+      type: object
+      description: RFC 9457 problem detail (application/problem+json).
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string

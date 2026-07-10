@@ -83,6 +83,12 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
         // spine table (freeze_id/instance_id primitives, no family vocabulary) the authorization
         // decider consults — added here as the deliberate generic-engine change ADR-PC-021 wants.
         "account_freezes",
+        // The ADR-PC-043 slot-5 undeliverable-credit (IOU / escheat) read model (migration 0024): a
+        // generic, intent-keyed spine table (intent_id/beneficiary_ref primitives + machine reason
+        // codes, no family vocabulary) an operator queries for outstanding IOUs — the rebuildable fold
+        // of the CreditUnapplied -> CreditReapplied lifecycle, the same posture as account_holds /
+        // account_freezes. Added here as the deliberate generic-engine change ADR-PC-021 wants.
+        "undeliverable_credits",
     ];
 
     /// <summary>

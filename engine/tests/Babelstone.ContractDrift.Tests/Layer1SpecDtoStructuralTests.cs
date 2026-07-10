@@ -94,6 +94,13 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationRetryResponse", typeof(BulkOperationRetryResponse), Mode.Response },
         { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationCancelResponse", typeof(BulkOperationCancelResponse), Mode.Response },
 
+        // The operator undeliverable-credit (IOU / escheat) query surface (ADR-PC-043 slot 5;
+        // contracts/openapi/internal/engine-undeliverable-credits; bd babelstone-qa92.1). The single
+        // read answers with UndeliverableCreditsResponse, whose credits array carries the
+        // UndeliverableCreditView line shape — both locked to the Hosting DTOs.
+        { "contracts/openapi/internal/engine-undeliverable-credits.openapi.yaml", "UndeliverableCreditsResponse", typeof(UndeliverableCreditsResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-undeliverable-credits.openapi.yaml", "UndeliverableCreditView", typeof(UndeliverableCreditView), Mode.Response },
+
         // personal_loan command + read surface (contracts/openapi/internal/engine-loan-commands,
         // engine-loan-reads; bd babelstone-ax0b.10). The five command ops all answer with the one
         // LoanCommandResponse; the read is the folded LoanResponse.
