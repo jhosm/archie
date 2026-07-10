@@ -3,7 +3,7 @@ using Babelstone.Lifecycle;
 namespace Babelstone.Families.PersonalLoan.Lifecycle;
 
 /// <summary>
-/// One loan held DISBURSEMENT-PENDING at source (ADR-PC-043 slot 5; bd babelstone-98mj.6) — the
+/// One loan held DISBURSEMENT-PENDING at source (ADR-PC-043 slot 5) — the
 /// projection-derived facts the <see cref="DisbursementPendingRetryRule"/> needs to re-fire the held
 /// disbursement: which loan, to which opaque destination, and its business start date. A structural,
 /// no-PII shape (ADR-PC-004): opaque refs and an input date only.
@@ -18,7 +18,7 @@ public sealed record DisbursementPendingLoan(Guid LoanId, string DisbursementAcc
 
 /// <summary>
 /// The projection-driven read the <see cref="DisbursementPendingRetryRule"/> consults for the loans held
-/// disbursement-pending (ADR-PC-043 slot 5; bd babelstone-98mj.6). The personal_loan read model
+/// disbursement-pending (ADR-PC-043 slot 5). The personal_loan read model
 /// deliberately carries NO lifecycle column (see <c>LoanInstanceFilterResolver</c>), so the held-loan
 /// population is a distinct projection read supplied to the rule rather than a column scan — but it stays a
 /// PROJECTION read, never a clock (ADR-PC-023: the projection IS the temporal signal), so the rule remains a
@@ -33,8 +33,8 @@ public interface IDisbursementPendingReader
 
 /// <summary>
 /// A projection-driven, clock-free predicate the <see cref="DisbursementPendingRetryRule"/> consults to
-/// decide whether a held disbursement's destination is RECEIVABLE again (ADR-PC-043 slot 5; bd
-/// babelstone-98mj.6). In plain English: a loan whose disbursement could not land is held
+/// decide whether a held disbursement's destination is RECEIVABLE again (ADR-PC-043 slot 5).
+/// In plain English: a loan whose disbursement could not land is held
 /// disbursement-pending; the re-attempt must fire ONLY once the borrower account can actually receive money
 /// again (re-opened, reactivated, or re-targeted). This port answers exactly that "can this account receive
 /// a credit now?" question off a PROJECTION read — never a clock (ADR-PC-023: the projection IS the signal),
@@ -54,8 +54,8 @@ public interface IPayoutDestinationReceivability
 }
 
 /// <summary>
-/// The personal-loan family's re-attempt rule for a held disbursement (ADR-PC-043 slot 5; bd
-/// babelstone-98mj.6) — the disbursement-pending twin of the deposit family's <c>PayoutPendingRetryRule</c>.
+/// The personal-loan family's re-attempt rule for a held disbursement (ADR-PC-043 slot 5)
+/// — the disbursement-pending twin of the deposit family's <c>PayoutPendingRetryRule</c>.
 /// In plain English: when a loan was approved but its disbursement had nowhere to land, the loan is held
 /// disbursement-pending at source (the money is never disgorged); this rule watches for those held loans and
 /// re-fires the disbursement the moment a live destination exists, so the borrower's money reaches them

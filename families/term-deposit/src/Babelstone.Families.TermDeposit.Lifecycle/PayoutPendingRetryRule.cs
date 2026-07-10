@@ -5,7 +5,7 @@ namespace Babelstone.Families.TermDeposit.Lifecycle;
 
 /// <summary>
 /// A projection-driven, clock-free predicate the <see cref="PayoutPendingRetryRule"/> consults to decide
-/// whether a held payout's destination is RECEIVABLE again (ADR-PC-043 slot 5; bd babelstone-98mj.6). In
+/// whether a held payout's destination is RECEIVABLE again (ADR-PC-043 slot 5). In
 /// plain English: a matured deposit whose payout could not land is held payout-pending; the re-attempt must
 /// fire ONLY once the beneficiary account can actually receive money again (re-opened, reactivated, or
 /// re-targeted). This port answers exactly that "can this account receive a credit now?" question off a
@@ -24,8 +24,8 @@ public interface IPayoutDestinationReceivability
 }
 
 /// <summary>
-/// The term-deposit family's re-attempt rule for a held maturity payout (ADR-PC-043 slot 5; bd
-/// babelstone-98mj.6) — the payout-pending twin of the one-shot <see cref="MaturityRule"/>. In plain English:
+/// The term-deposit family's re-attempt rule for a held maturity payout (ADR-PC-043 slot 5)
+/// — the payout-pending twin of the one-shot <see cref="MaturityRule"/>. In plain English:
 /// when a deposit matured but its payout had nowhere to land, the deposit is held payout-pending at source
 /// (the money is never disgorged); this rule watches for those held deposits and re-fires the payout the
 /// moment a live destination exists, so the customer's money reaches them exactly once. It is the same

@@ -88,7 +88,7 @@ public sealed class DepositMaturedHandler : IEventHandler<DepositPosition, Depos
         });
 }
 
-// The undeliverable-payout pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): the matured deposit holds
+// The undeliverable-payout pair (ADR-PC-043 slot 5): the matured deposit holds
 // the payout AT SOURCE when it cannot land, then resolves back once a live destination exists. Same
 // purity contract as the folds above — a single `state with { … }`, no clock/I/O/randomness
 // (BENG001/002/003); each LABELS lifecycle only. Transition legality is F.3 (LifecycleTransitions).

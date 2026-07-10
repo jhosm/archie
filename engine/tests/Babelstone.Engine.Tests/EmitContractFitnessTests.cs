@@ -166,7 +166,7 @@ public sealed class EmitContractFitnessTests
         // subset (many are store-only with no .avsc, so a regex that silently dropped one would leave
         // a schemaless event unguarded). If a family adds/removes an event, update this count knowingly.
         // Current total = 30: 13 from term_deposit (the 11 original + the ADR-PC-043 slot-5 undeliverable-
-        // payout pair DepositPayoutHeld / DepositPayoutLanded, bd babelstone-98mj.6 — past-participle FACT
+        // payout pair DepositPayoutHeld / DepositPayoutLanded — past-participle FACT
         // names, NOT clock-driven "about-to-happen" signals) + 8 from personal_loan (LoanDisbursed,
         // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff, plus the
         // undeliverable-disbursement pair LoanDisbursementHeld / LoanDisbursementLanded) +

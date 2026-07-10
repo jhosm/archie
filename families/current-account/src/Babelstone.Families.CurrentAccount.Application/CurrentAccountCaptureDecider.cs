@@ -100,7 +100,7 @@ public static class CurrentAccountCaptureDecider
         Direction: SettlementDirection.Debit,
         Amount: new Money(command.AmountCents),
         ValueDate: command.ValueDate,
-        // The DEDICATED CA settle-debit verb the capture debit lands under (ADR-PC-043; bd babelstone-98mj.8):
+        // The DEDICATED CA settle-debit verb the capture debit lands under (ADR-PC-043):
         // SettleDebit names the current-account settlement DEBIT-capture honestly, REPLACING the earlier
         // CollectInstallment stopgap the CA borrowed before it had its own governed label. A confirmed debit
         // is deposit funding / an installment collection; the CA is family-agnostic and does not learn the

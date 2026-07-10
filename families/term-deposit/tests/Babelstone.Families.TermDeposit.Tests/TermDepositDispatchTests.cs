@@ -21,7 +21,7 @@ public sealed class TermDepositDispatchTests
         var module = new TermDepositFamilyModule();
 
         // Thirteen term-deposit family events (the eleven original plus the ADR-PC-043 slot-5
-        // undeliverable-payout pair DepositPayoutHeld / DepositPayoutLanded, bd babelstone-98mj.6) plus
+        // undeliverable-payout pair DepositPayoutHeld / DepositPayoutLanded) plus
         // the engine-declared cross-cutting operational events the family splices in
         // (CrossCuttingEventRegistrations.For<DepositPosition>(), event-store §4.1).
         var crossCutting = CrossCuttingEventRegistrations.For<DepositPosition>();

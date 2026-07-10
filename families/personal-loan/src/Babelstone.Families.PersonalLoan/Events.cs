@@ -288,7 +288,7 @@ public sealed record LoanWrittenOff(
 }
 
 /// <summary>The approved disbursement could not be delivered to the borrower's account, so the loan is
-/// held DISBURSEMENT-PENDING at source rather than disgorged (ADR-PC-043 slot 5; bd babelstone-98mj.6).
+/// held DISBURSEMENT-PENDING at source rather than disgorged (ADR-PC-043 slot 5).
 /// In plain English: the loan was approved but the money had nowhere to land — the borrower's account is
 /// closed, dormant-past-revival, or does not exist — so instead of losing the disbursement the source
 /// KEEPS the funds and marks itself disbursement-pending. The lifecycle-driver's re-attempt rule
@@ -314,7 +314,7 @@ public sealed record LoanDisbursementHeld(
     DateOnly PendingSince) : DomainEvent;
 
 /// <summary>The held disbursement was delivered once a live destination existed, so the loan leaves
-/// disbursement-pending and becomes active/amortizing (ADR-PC-043 slot 5; bd babelstone-98mj.6). In plain
+/// disbursement-pending and becomes active/amortizing (ADR-PC-043 slot 5). In plain
 /// English: the account that could not receive the disbursement became receivable again, the re-attempt
 /// landed the credit, and the loan is finally live. The resolve leg of the reversible marker:
 /// <see cref="LoanLifecycle.DisbursementPending"/> → <see cref="LoanLifecycle.Active"/>.</summary>

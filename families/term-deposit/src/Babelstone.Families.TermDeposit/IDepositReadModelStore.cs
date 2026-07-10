@@ -52,7 +52,7 @@ public interface IDepositReadModelStore : IReadModelStore<DepositReadModelRow>
     /// <summary>
     /// Every deposit currently held PAYOUT-PENDING (<see cref="DepositReadModelRow.Lifecycle"/> ==
     /// <c>PayoutPending</c>), ordered by <c>stream_id</c> (a deterministic, stable order). Backs the
-    /// lifecycle-driver's <c>PayoutPendingRetryRule</c> (ADR-PC-043 slot 5, bd babelstone-98mj.6): the
+    /// lifecycle-driver's <c>PayoutPendingRetryRule</c> (ADR-PC-043 slot 5): the
     /// projection-keyed, clock-free scan the re-attempt rule reads to find matured deposits whose payout
     /// could not land, so it can re-fire the payout once a live destination exists. Family-specific (a
     /// non-deposit family has no payout-pending state), so it lives on the family store, not the generic

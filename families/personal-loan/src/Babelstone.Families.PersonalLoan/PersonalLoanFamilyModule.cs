@@ -33,7 +33,7 @@ public sealed class PersonalLoanFamilyModule : IFamilyModule
             new DispatchableHandler<LoanPosition, LoanSettled>(new LoanSettledHandler())),
         new("personal_loan.LoanWrittenOff", typeof(LoanWrittenOff),
             new DispatchableHandler<LoanPosition, LoanWrittenOff>(new LoanWrittenOffHandler())),
-        // The undeliverable-disbursement pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): held-at-source and
+        // The undeliverable-disbursement pair (ADR-PC-043 slot 5): held-at-source and
         // its resolve-to-active leg (Pending → DisbursementPending → Active).
         new("personal_loan.LoanDisbursementHeld", typeof(LoanDisbursementHeld),
             new DispatchableHandler<LoanPosition, LoanDisbursementHeld>(new LoanDisbursementHeldHandler())),

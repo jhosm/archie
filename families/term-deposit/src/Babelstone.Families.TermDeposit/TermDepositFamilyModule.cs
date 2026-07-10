@@ -52,7 +52,7 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositCorrected>(new DepositCorrectedHandler())),
         new("term_deposit.DepositTransferredToHeirs", typeof(DepositTransferredToHeirs),
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
-        // The undeliverable-payout pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): held-at-source and its
+        // The undeliverable-payout pair (ADR-PC-043 slot 5): held-at-source and its
         // resolve-back leg (Matured → PayoutPending → Matured).
         new("term_deposit.DepositPayoutHeld", typeof(DepositPayoutHeld),
             new DispatchableHandler<DepositPosition, DepositPayoutHeld>(new DepositPayoutHeldHandler())),

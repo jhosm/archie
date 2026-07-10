@@ -6,7 +6,7 @@ namespace Babelstone.Orchestrator.Tests;
 
 /// <summary>
 /// Tests for <see cref="PayoutLandingReconciler"/> — the engine↔engine-CA payout-landing reconciler
-/// (ADR-PC-043; bd babelstone-98mj.7). In plain English: this is the safety net that catches the rare cases
+/// (ADR-PC-043). In plain English: this is the safety net that catches the rare cases
 /// prevention cannot — a payout that never landed, landed twice, or landed at the wrong amount. The tests pin
 /// <b>XFAMILY_PAYOUT_LANDING_RECONCILED</b>: each source payout occurrence pairs to exactly one CA landing by
 /// the economic-intent id; a matched pair raises NO signal; and DROP (source-paid-not-landed past the interim
@@ -20,7 +20,7 @@ public sealed class PayoutLandingReconciliationTests
     private static readonly Guid SourceB = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002");
     private static readonly DateOnly AsOf = new(2026, 7, 10);
 
-    // Interim DROP SLA (bd babelstone-98mj.7): a source payout with no landing is IN_FLIGHT until older than
+    // Interim DROP SLA: a source payout with no landing is IN_FLIGHT until older than
     // this horizon, then a DROP. Q-AG calibration of the real horizon is PENDING — this cross-checks the
     // documented interim placeholder, not a settled value.
     private const int InterimDropSlaDays = PayoutLandingReconciler.DefaultDropSlaDays;

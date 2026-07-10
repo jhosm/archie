@@ -6,7 +6,7 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
 /// Tests for <see cref="DisbursementPendingRetryRule"/> — the personal-loan family's re-attempt rule for a
-/// held disbursement (ADR-PC-043 slot 5; bd babelstone-98mj.6). In plain English: when a loan was approved but
+/// held disbursement (ADR-PC-043 slot 5). In plain English: when a loan was approved but
 /// its disbursement had nowhere to land, the money is HELD at source (the loan is disbursement-pending) rather
 /// than lost; this rule re-fires the disbursement the moment a live destination exists, and does so exactly
 /// once. The tests drive the rule over a fake held-loan reader and a fake receivability probe (no live engine
