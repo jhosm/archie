@@ -7,7 +7,7 @@
 # flat ConfigMap can't carry — so we bake pt.2026.1 into a thin derived image here.
 #
 # This image is FROM the base engine image the image-build matrix already builds + pushes
-# (multi-arch arm64, zla1.8), so it inherits the exact runtime + entrypoint; it only adds
+# (amd64-only, bd babelstone-zla1.13), so it inherits the exact runtime + entrypoint; it only adds
 # the pack layer. Build context is the REPO ROOT (so the COPY can reach packs/). The base
 # tag is a build-arg so it can be pinned by digest for a real promotion (a movable :latest
 # is fine for the demo box); see infra/k8s/apps/README.md.

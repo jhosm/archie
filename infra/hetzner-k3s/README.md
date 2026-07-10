@@ -2,10 +2,9 @@
 
 Plain English: this is the one declarative file that turns the empty Hetzner account
 into a running single-node Kubernetes cluster. You run one command, `hetzner-k3s`
-creates a CAX41 ARM server in Helsinki, installs single-node k3s on it, and writes you a
-kubeconfig. The Hetzner cloud-controller and CSI driver are deliberately turned OFF and
-`provision.sh` scrubs the token Secret hetzner-k3s plants on every create (see "Posture notes"
-below), so in the end **no** Hetzner API token is left in the cluster; stateful
+creates a CPX42 x86 server in Helsinki, installs single-node k3s on it, and writes you a
+kubeconfig. The Hetzner cloud-controller and CSI driver are deliberately turned OFF (see
+"Posture notes" below), so **no** Hetzner API token is ever stored in the cluster; stateful
 storage uses the k3s built-in node-local `local-path` provisioner instead. Everything else
 (`infra/k8s/overlays/staging`) then deploys *into* that cluster. This is **Phase 1** of the
 staging bring-up (bd babelstone-zla1.2); it sits one layer below the Kustomize manifests —
@@ -19,7 +18,7 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
 ## Contents
 
 - [`cluster.yaml`](./cluster.yaml) — the [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s)
-  cluster config (v2.6.0+ format): 1× CAX41 ARM, Hetzner Helsinki (`hel1`), single-node k3s,
+  cluster config (v2.6.0+ format): 1× CPX42 x86, Hetzner Helsinki (`hel1`), single-node k3s,
   embedded etcd, with the Hetzner CCM and CSI driver **disabled** and the k3s built-in
   `local-path` storage class enabled (removing the token's in-cluster consumers; `provision.sh`
   then scrubs the token Secret hetzner-k3s plants on every create, so no Hetzner API token is

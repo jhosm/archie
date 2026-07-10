@@ -99,7 +99,7 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
 ### 1.1 Phase 1 — provision the cluster (`hetzner-k3s`)
 
 Step 1 above is one `hetzner-k3s` command. The cluster config lives at
-[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (1× CAX41 ARM, Helsinki `hel1`,
+[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (1× CPX42 x86, Helsinki `hel1`,
 single-node k3s); the full walk-through + prereqs are in
 [`../hetzner-k3s/README.md`](../hetzner-k3s/README.md). In short:
 
