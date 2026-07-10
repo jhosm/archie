@@ -167,3 +167,109 @@ public sealed record OverdraftInterestAccrued(
     /// </summary>
     IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
 }
+
+/// <summary>A settlement CREDIT landed on the demand account (ADR-PC-043 §2 <c>ConfirmCredit → Credit
+/// Movement</c>) — the family's FIRST ability to RECEIVE money. In plain English: a matured deposit, a
+/// loan disbursement, or a coupon paid money INTO this account, so the account records the credit as a
+/// Credit <see cref="Movement"/> that the spine's account-keyed movement ledger folds into the accounting
+/// balance (<see cref="IMovementBearing"/>). The credit was admitted UPSTREAM at ingestion by the
+/// family's <c>ICreditAdmissible</c> gate (a Closed/Erased account is refused by construction, never here
+/// in the fold) — so this fact is only ever appended for an account that could receive it (ADR-PC-043
+/// §The credit-admission gate). The credit <see cref="Movement"/> is <see cref="MovementOrigin.Observed"/>
+/// in the ADR-PC-043 "engine-internal already-effected" sense: the settlement saga already drove the cash
+/// leg and the CA records the landing, so <c>MovementHeaders</c> emits no Originated header and the
+/// settlement predicate starts no SECOND saga on the account's own event (the loop-breaker). The family
+/// fold itself is a no-op — a demand account's balance is a spine-owned fold, never family state
+/// (ADR-PC-033). STORE-ONLY (uncatalogued — the Avro/CUE contract + EventCatalog entry is a later change,
+/// bd babelstone-98mj.8), so it carries no <c>.avsc</c> yet. STRUCTURAL only, no PII (ADR-PC-004 §P2) —
+/// opaque ids, integer-cents <see cref="Money"/>, and an input value-date.</summary>
+/// <param name="AccountId">The account stream the credit is appended to — never PII (ADR-PC-004 §P2).</param>
+/// <param name="AccountRef">The account's opaque spine key the credit Movement posts against
+/// (<see cref="AccountPosition.AccountRef"/>) — a reference the engine resolves internally, never PII.</param>
+/// <param name="Amount">The credited amount as a positive integer-cents <see cref="Money"/> (the source
+/// <c>Movement.Amount</c> the writer lands — the in-band WRONG-AMOUNT guard, ADR-PC-043 §1), posted as a
+/// Credit so the accounting balance moves up.</param>
+/// <param name="IntentReference">The ADR-PC-043 slot-4 economic-intent reference the append <c>command_id</c>
+/// is derived from (via <c>SettlementReferences.DeriveFromIntent</c>) — carried for audit/lineage, NEVER the
+/// HTTP Idempotency-Key. A structural token, never PII (ADR-PC-004 §P2).</param>
+/// <param name="ValueDate">The credit's economic value-date — a caller-supplied input, never a clock read in
+/// a fold (ADR-PC-023).</param>
+/// <param name="Movements">The credit as ONE Observed Credit Movement against <paramref name="AccountRef"/>
+/// (a generic money-IN <c>MovementOperation</c>; Observed in the ADR-PC-043 engine-internal-already-effected
+/// sense — the CA reuses an existing operation verb rather than widening the closed enum, a dedicated CA
+/// credit verb being bd babelstone-98mj.8). Kept nullable and defaulted so a forward-only replay of a
+/// pre-Movement record still decodes (ADR-IC-002), mapped onto the non-null seam member below.</param>
+public sealed record AccountCredited(
+    Guid AccountId,
+    string AccountRef,
+    Money Amount,
+    string IntentReference,
+    DateOnly ValueDate,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
+{
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: the credit Movement as a NON-null list. Maps the nullable <see cref="Movements"/>
+    /// carrier onto the non-null seam member by coalescing <see langword="null"/> to empty, so the generic
+    /// projector folds it with no per-event null guard. No <c>IntegrationHeaders</c> override — the credit
+    /// Movement is <see cref="MovementOrigin.Observed"/> (ADR-PC-043 engine-internal-already-effected), so
+    /// <c>MovementHeaders.ForOriginatedMovements</c> returns null and the settlement predicate starts no
+    /// second saga on the account's own event (the loop-breaker), and the event is store-only besides.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
+}
+
+/// <summary>A settlement CAPTURE landed a real DEBIT on the demand account (ADR-PC-043 §2 <c>ConfirmDebit →
+/// HoldCaptured + Debit Movement</c>) — a reservation turned into money actually leaving. In plain English:
+/// an earlier <c>authorize</c> earmarked funds (an <c>operations.HoldPlaced</c>); when the settlement saga
+/// confirms the debit (funding a deposit at constitution, collecting a loan installment), the earmark is
+/// captured and the money truly moves, so the account records the debit as a Debit <see cref="Movement"/>
+/// the spine's account-keyed movement ledger folds into the accounting balance (<see cref="IMovementBearing"/>).
+/// The matching <c>operations.HoldCaptured</c> (the SPINE-owned earmark release, ADR-PC-033 — NOT redefined
+/// here) is appended in the SAME batch, so the hold leaves the active set and this Debit posts atomically
+/// (ADR-PC-043 §2). The Debit <see cref="Movement"/> is <see cref="MovementOrigin.Observed"/> in the
+/// ADR-PC-043 "engine-internal already-effected" sense: the settlement saga drove the cash leg and the CA
+/// records the landing, so <c>MovementHeaders</c> emits no Originated header and the settlement predicate
+/// starts no SECOND saga on the account's own event (the loop-breaker). The family fold itself is a no-op —
+/// a demand account's balance is a spine-owned fold, never family state (ADR-PC-033). STORE-ONLY (uncatalogued
+/// — the Avro/CUE contract is bd babelstone-98mj.8), so it carries no <c>.avsc</c> yet. STRUCTURAL only, no
+/// PII (ADR-PC-004 §P2).</summary>
+/// <param name="AccountId">The account stream the capture debit is appended to — never PII (ADR-PC-004 §P2).</param>
+/// <param name="AccountRef">The account's opaque spine key the Debit Movement posts against
+/// (<see cref="AccountPosition.AccountRef"/>) — a reference the engine resolves internally, never PII.</param>
+/// <param name="Amount">The captured (settled) amount as a positive integer-cents <see cref="Money"/> (the
+/// source <c>Movement.Amount</c> the writer lands — the in-band WRONG-AMOUNT guard, ADR-PC-043 §1), posted as
+/// a Debit so the accounting balance moves down.</param>
+/// <param name="HoldId">The reservation this capture settles (the ADR-PC-033 hold lifecycle key) — the SAME
+/// <c>HoldId</c> the matching <c>operations.HoldCaptured</c> carries, so the capture and its Debit name one
+/// earmark. Enforced equal to the authorize's hold at the command boundary (SETTLEMENT_CA_CAPTURE_HOLD_MATCH).</param>
+/// <param name="IntentReference">The ADR-PC-043 slot-4 economic-intent reference the append <c>command_id</c>
+/// is derived from — carried for audit/lineage, NEVER the HTTP Idempotency-Key. A structural token, never
+/// PII (ADR-PC-004 §P2).</param>
+/// <param name="ValueDate">The capture's economic value-date — a caller-supplied input, never a clock read in
+/// a fold (ADR-PC-023).</param>
+/// <param name="Movements">The capture as ONE Observed Debit Movement against <paramref name="AccountRef"/>
+/// (a generic money-OUT <c>MovementOperation</c>; Observed in the ADR-PC-043 engine-internal-already-effected
+/// sense — the CA reuses an existing operation verb rather than widening the closed enum, a dedicated CA
+/// settle-debit verb being bd babelstone-98mj.8). Kept nullable and defaulted so a forward-only replay of a
+/// pre-Movement record still decodes (ADR-IC-002), mapped onto the non-null seam member below.</param>
+public sealed record AccountDebited(
+    Guid AccountId,
+    string AccountRef,
+    Money Amount,
+    string HoldId,
+    string IntentReference,
+    DateOnly ValueDate,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
+{
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: the capture's Debit Movement as a NON-null list. Maps the nullable
+    /// <see cref="Movements"/> carrier onto the non-null seam member by coalescing <see langword="null"/> to
+    /// empty. No <c>IntegrationHeaders</c> override — the Debit Movement is
+    /// <see cref="MovementOrigin.Observed"/> (ADR-PC-043 engine-internal-already-effected), so
+    /// <c>MovementHeaders.ForOriginatedMovements</c> returns null and the settlement predicate starts no
+    /// second saga on the account's own event (the loop-breaker), and the event is store-only besides.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
+}

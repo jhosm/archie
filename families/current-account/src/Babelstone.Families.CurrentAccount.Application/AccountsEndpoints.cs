@@ -51,6 +51,11 @@ public static class AccountsEndpoints
     // never PII.
     private const string AccrualActor = "svc:lifecycle-overdraft-accrual";
 
+    // The default acting principal recorded on a settlement credit / capture append: the substrate-owned
+    // SettlementProcess saga's dispatcher (a machine/saga caller, never human-initiated), a structural role,
+    // never PII (ADR-PC-043 / ADR-PC-004 §P2).
+    private const string SettlementActor = "svc:settlement-dispatch";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // Open a new demand account (opens the stream). The Idempotency-Key is OPTIONAL here (the
@@ -70,6 +75,17 @@ public static class AccountsEndpoints
         // real time. Ungated (see the class remarks) but carries a MANDATORY Idempotency-Key — a replayed
         // authorize returns the original verdict (same hold_id) with no second HoldPlaced.
         app.MapPost("/v1/accounts/{id:guid}/authorize", AuthorizeAsync);
+
+        // The SETTLEMENT-facing money-movers (ADR-PC-043): the substrate SettlementProcess saga drives these
+        // against the engine-owned CA. UNLIKE every other route, their append command_id is derived from the
+        // BODY's economic-intent reference (NOT the HTTP Idempotency-Key — the scoped ADR-PC-029 carve-out),
+        // so a saga reissue with a byte-identical body collapses to ONE append at command_dedup. /credit lands
+        // a received Credit (admitting Active/Dormant, refusing Closed/Erased by construction); /capture turns
+        // an authorize reservation into a real Debit (the spine HoldCaptured + the family AccountDebited in one
+        // append). A DECLINED/rejected settlement is a 4xx (ADR-PC-043 §Error model — never a 200-with-Declined
+        // the dispatcher would mis-classify as Applied).
+        app.MapPost("/v1/accounts/{id:guid}/credit", ReceiveCreditAsync);
+        app.MapPost("/v1/accounts/{id:guid}/capture", CaptureAsync);
 
         // The projection-derived HOLD-EXPIRY command (ADR-PC-037): append a HoldExpired for a hold the
         // ADR-PC-036 lifecycle-command driver found due against a value-date horizon. Moves no money (a
@@ -313,6 +329,170 @@ public static class AccountsEndpoints
         {
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
+    }
+
+    /// <summary>
+    /// The settlement CREDIT-receive command (ADR-PC-043 §2 ConfirmCredit / §The credit-admission gate): land
+    /// a Credit into the account, admitting an Active/Dormant account (a Dormant one reactivates + credits in
+    /// one atomic batch) and refusing a Closed/Erased one by construction. The append command_id is derived
+    /// from the BODY's economic-intent reference (NOT the HTTP Idempotency-Key — the scoped ADR-PC-029
+    /// carve-out), so a saga reissue with a byte-identical body collapses to ONE append at command_dedup. A
+    /// rejected admission (Closed → ACCOUNT_CLOSED, Erased → ACCOUNT_ERASED) is a 422 — a 4xx the dispatcher
+    /// classifies as needing the source to hold the funds (ADR-PC-043 §Error model / §Undeliverable credit),
+    /// NEVER a 200-with-Declined it would march to COMPLETED with zero landing.
+    /// </summary>
+    private static async Task<IResult> ReceiveCreditAsync(
+        Guid id,
+        ReceiveCreditRequest request,
+        CurrentAccountCreditReceiveService service,
+        AggregateRuntime<AccountPosition> runtime,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // The exactly-once key is the BODY's economic-intent reference, NOT the HTTP Idempotency-Key
+        // (ADR-PC-043 §Idempotency — the scoped ADR-PC-029 inversion). It is MANDATORY: a settlement credit
+        // has no fall-back key (the credit path rests SOLELY on command_dedup, single-guarded).
+        if (string.IsNullOrWhiteSpace(request.IntentReference))
+        {
+            return Results.Problem(
+                "intent_reference is required — the settlement credit's append command_id derives from it (ADR-PC-043).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.AmountCents <= 0)
+        {
+            return Results.Problem(
+                "amount_cents must be a positive integer in cents (ADR-PC-010).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Derive the append command_id from the intent reference (ADR-PC-043 slot 4) — the same reference
+        // always yields the same id, so a byte-identical reissue collapses to one append.
+        var commandId = SettlementIntentKey.Derive(request.IntentReference);
+
+        // Pre-check BEFORE any side effect: a known command id replays the ORIGINAL outcome with NO second
+        // append (the crash-atomic guarantee is the in-transaction command_dedup; this read keeps the common
+        // saga reissue off the write path).
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new SettlementApplyResponse(id, Status(replay.State), receipt.CommitSequence));
+        }
+
+        // The value_date is the caller's economic date; validTime is the envelope's stamped instant (the host
+        // owns the wall clock at this boundary, ADR-PC-010). The decider reads neither a clock.
+        var command = new ReceiveCreditCommand(
+            id, request.AmountCents, request.ValueDate, request.IntentReference,
+            request.Actor ?? SettlementActor, commandId);
+
+        long commitSequence;
+        try
+        {
+            commitSequence = await service.ReceiveCreditAsync(command, clock.GetUtcNow(), ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            // A concurrent duplicate slipped past the pre-check: the in-transaction dedup rolled the append
+            // back. Return the ORIGINAL outcome off the authoritative fold (idempotent replay, ADR-PC-029).
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new SettlementApplyResponse(id, Status(replay.State), replay.Version));
+        }
+        catch (DomainRejectedException e)
+        {
+            // A non-admitting account (Closed → ACCOUNT_CLOSED, Erased → ACCOUNT_ERASED) or a non-positive
+            // amount — a 4xx, never a silent append (ADR-PC-043 §Error model). The source holds the funds.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        var hydrated = await runtime.LoadAsync(id, ct);
+        return Results.Ok(new SettlementApplyResponse(id, Status(hydrated.State), commitSequence));
+    }
+
+    /// <summary>
+    /// The settlement CAPTURE command (ADR-PC-043 §2 ConfirmDebit → HoldCaptured + Debit Movement / ADR-PC-037
+    /// §D4): turn an authorize reservation into a real Debit — append the spine <c>HoldCaptured</c> (the
+    /// earmark release, REUSED) + the family <c>AccountDebited</c> (the Debit Movement) in ONE append. The
+    /// append command_id is derived from the BODY's economic-intent reference (NOT the HTTP Idempotency-Key),
+    /// so a saga reissue collapses to ONE Debit at command_dedup; the capture also applies only WHERE the hold
+    /// state is ACTIVE (the double guard). A capture whose target_hold_id names no active hold is a 422
+    /// (SETTLEMENT_CA_CAPTURE_HOLD_MATCH). A partial / over-capture (ADR-PC-037 §D4) is surfaced on the response.
+    /// </summary>
+    private static async Task<IResult> CaptureAsync(
+        Guid id,
+        CaptureAccountRequest request,
+        CurrentAccountCaptureService service,
+        AggregateRuntime<AccountPosition> runtime,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.IntentReference))
+        {
+            return Results.Problem(
+                "intent_reference is required — the settlement capture's append command_id derives from it (ADR-PC-043).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.TargetHoldId))
+        {
+            return Results.Problem(
+                "target_hold_id is required — it must match the authorize's hold (ADR-PC-043).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (request.AmountCents <= 0)
+        {
+            return Results.Problem(
+                "amount_cents must be a positive integer in cents (ADR-PC-010).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // The exactly-once key is the intent reference, NOT the HTTP Idempotency-Key (ADR-PC-043 slot 4).
+        var commandId = SettlementIntentKey.Derive(request.IntentReference);
+
+        // Pre-check: a known command id replays the original commit with no second append (the second guard,
+        // command_dedup — the first is the capture's WHERE state='ACTIVE'). A reissue lands EXACTLY ONE Debit.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new SettlementApplyResponse(id, Status(replay.State), receipt.CommitSequence));
+        }
+
+        var command = new CaptureAccountCommand(
+            id, request.TargetHoldId, request.AmountCents, request.ValueDate, request.IntentReference,
+            request.Actor ?? SettlementActor, commandId);
+
+        CaptureOutcome outcome;
+        try
+        {
+            outcome = await service.CaptureAsync(command, clock.GetUtcNow(), ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new SettlementApplyResponse(id, Status(replay.State), replay.Version));
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Account {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // A hold-match failure (the target names no active authorization hold) or a non-positive amount —
+            // a 4xx, never a phantom debit (ADR-PC-043 §Error model, SETTLEMENT_CA_CAPTURE_HOLD_MATCH).
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        var hydrated = await runtime.LoadAsync(id, ct);
+        return Results.Ok(new SettlementApplyResponse(
+            id, Status(hydrated.State), outcome.CommitSequence, outcome.Reconciliation));
     }
 
     /// <summary>

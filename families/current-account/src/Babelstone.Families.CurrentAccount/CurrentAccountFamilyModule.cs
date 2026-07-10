@@ -57,6 +57,21 @@ public sealed class CurrentAccountFamilyModule : IFamilyModule
         // family state — ADR-PC-033). The fee math is command-side, never in this fold (ADR-PC-037 §P3).
         new("current_account.OverdraftInterestAccrued", typeof(OverdraftInterestAccrued),
             new DispatchableHandler<AccountPosition, OverdraftInterestAccrued>(new OverdraftInterestAccruedHandler())),
+        // The settlement CREDIT-receive fact (ADR-PC-043 §2 ConfirmCredit → Credit Movement): the family's
+        // FIRST money-IN event. Store-only for now (its .avsc/EventCatalog entry is bd babelstone-98mj.8) and
+        // folded as a no-op on the family position, but IMovementBearing, so the SPINE's movement ledger folds
+        // the Credit Movement it carries into the accounting balance (the balance is spine-owned, never family
+        // state — ADR-PC-033). Admission (Active/Dormant admit, Closed/Erased reject) is decided UPSTREAM in
+        // the credit-receive command, never in this fold (ADR-PC-043 §The credit-admission gate).
+        new("current_account.AccountCredited", typeof(AccountCredited),
+            new DispatchableHandler<AccountPosition, AccountCredited>(new AccountCreditedHandler())),
+        // The settlement CAPTURE-debit fact (ADR-PC-043 §2 ConfirmDebit → HoldCaptured + Debit Movement): a
+        // reservation turned into a real debit. Appended in the SAME batch as the spine-owned HoldCaptured
+        // (which releases the earmark, ADR-PC-033 — bound below, not redefined here). Store-only for now (its
+        // .avsc is bd babelstone-98mj.8) and folded as a no-op on the family position, but IMovementBearing,
+        // so the SPINE's movement ledger folds the Debit Movement it carries into the accounting balance.
+        new("current_account.AccountDebited", typeof(AccountDebited),
+            new DispatchableHandler<AccountPosition, AccountDebited>(new AccountDebitedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's AccountPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every

@@ -158,6 +158,29 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<CurrentAccountProductConfigStore>(),
             serviceProvider.GetRequiredService<IRateSheetStore>(),
             ctx.Pack));
+
+        // The settlement CREDIT-receive command shell (ADR-PC-043 §The credit-admission gate): the /credit
+        // target the substrate SettlementProcess saga POSTs to. The family's FIRST money-IN service — it loads
+        // the account's own stream, runs the pure ICreditAdmissible admission decider, and appends
+        // AccountCredited at the loaded version under per-stream OCC (a Closed/Erased account is refused by
+        // construction). It composes just the family runtime + the pinned pack (admission is a pure decision on
+        // the folded lifecycle; no balance read needed). A family→engine dependency (ENGINE_API_HOST_FAMILY_AGNOSTIC).
+        services.AddSingleton(serviceProvider => new CurrentAccountCreditReceiveService(
+            serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            ctx.Pack));
+
+        // The settlement CAPTURE command shell (ADR-PC-043 §2 ConfirmDebit / ADR-PC-037 §D4): the /capture
+        // target the substrate SettlementProcess saga POSTs to. It turns an authorize reservation into a real
+        // debit — appending the spine HoldCaptured + the family AccountDebited in one atomic batch — so unlike
+        // the credit service it reads the active-hold set (to enforce authorize.hold_id == capture.target and
+        // to surface a partial/over-capture) and drains the spine projection first (read-your-writes). It
+        // composes the family runtime, the spine balance/hold reader, the projection drainer, and the pinned
+        // pack — all family→engine dependencies (the host still names no current-account type).
+        services.AddSingleton(serviceProvider => new CurrentAccountCaptureService(
+            serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            serviceProvider.GetRequiredService<AccountBalanceReader>(),
+            serviceProvider.GetRequiredService<SpineProjectionDrainer>(),
+            ctx.Pack));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app)
