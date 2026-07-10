@@ -150,15 +150,20 @@ if [ "$SEALED" != "False" ]; then
   log "2. unseal (threshold=$KEY_THRESHOLD)"
   python3 -c 'import json,sys; [print(k) for k in json.load(open(sys.argv[1]))["unseal_keys_b64"][:int(sys.argv[2])]]' \
     "$INIT_SECRETS_FILE" "$KEY_THRESHOLD" | while IFS= read -r key; do
-      printf '%s' "$key" | kbao_i operator unseal - >/dev/null
+      # `bao operator unseal -` does NOT read the key from stdin (OpenBao treats `-` as the key
+      # literal → "must be a valid hex or base64 string"). Read it into a shell var and pass as an
+      # arg instead — still leak-safe: the key arrives over the exec STDIN, never in the kubectl argv
+      # or the apiserver audit log; only the in-pod `bao` process sees it.
+      printf '%s' "$key" | ksh_i 'read k; bao operator unseal "$k"' >/dev/null
     done
   kbao status -format=json | python3 -c 'import sys,json; assert json.load(sys.stdin)["sealed"] is False' \
     || fail "OpenBao is still sealed after unseal."
   log "   unsealed."
 fi
 
-# Authenticate for the rest of the session (token read from stdin, not argv; persists in-pod).
-printf '%s' "$ROOT_TOKEN" | kbao_i login - >/dev/null
+# Authenticate for the rest of the session (token read from stdin into a shell var, then passed as
+# an arg — `bao login -` likewise does not read stdin. Not in kubectl argv/audit; persists in-pod).
+printf '%s' "$ROOT_TOKEN" | ksh_i 'read t; bao login "$t"' >/dev/null
 
 if [ "$MODE" = "unseal" ]; then
   log "3. ordered restart: rollout restart deploy/engine"
