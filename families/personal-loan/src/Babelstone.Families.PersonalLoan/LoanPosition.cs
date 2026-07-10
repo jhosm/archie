@@ -16,7 +16,7 @@ public enum LoanLifecycle
     Active,
 
     /// <summary>Approved but the disbursement could not be delivered to the borrower's account, so the
-    /// funds are held AT SOURCE (ADR-PC-043 slot 5; bd babelstone-98mj.6). A NON-terminal, reversible
+    /// funds are held AT SOURCE (ADR-PC-043 slot 5). A NON-terminal, reversible
     /// marker: the loan stays disbursement-pending until a live destination exists, at which point the
     /// lifecycle-driver's <c>DisbursementPendingRetryRule</c> re-fires the disbursement and the loan
     /// resolves to <see cref="Active"/> (<c>LoanDisbursementLanded</c>). Reached from

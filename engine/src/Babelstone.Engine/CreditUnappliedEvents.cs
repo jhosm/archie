@@ -14,7 +14,7 @@ namespace Babelstone.Engine;
 // destination later exists, operations.CreditReapplied records the resolution — keyed by a
 // ResolutionIntentId DERIVED FROM the original IntentId (SettlementReferences.DeriveResolutionIntentId),
 // so a late original apply and the resolution collapse to exactly one landing (the structural
-// double-pay guard, ADR-PC-043 §Idempotency).
+// double-pay guard, ADR-PC-043).
 //
 // Family-agnostic (ADR-PC-021): the records and their pure folds name NO family — any family whose
 // payout can be undeliverable records these same two facts, so the engine declares them ONCE rather
@@ -22,10 +22,11 @@ namespace Babelstone.Engine;
 // the no-op folds against its own projection state via CrossCuttingEventRegistrations.For<TState>()
 // so the events DECODE (and replay fail-closed) on every family stream that can carry them.
 //
-// STORE-ONLY at Stage A (ADR-IC-017): no catalogued .avsc, so the events never reach the durable
-// bus. Their governed wire shapes (contracts/avro/operations/CreditUnapplied.avsc /
-// CreditReapplied.avsc) are authored as the contracts stage lands, at which point the fail-closed
-// catalog gate promotes them.
+// CATALOGUED / PROMOTED to the durable bus (ADR-IC-017): the catalog entry IS the promotion — the
+// governed wire shapes (contracts/avro/operations/CreditUnapplied.avsc / CreditReapplied.avsc) and
+// their AsyncAPI entries (action: send) publish these facts on the bus, consumed by acl (downstream
+// core-banking escheat/IOU reconciliation) and notification (the customer-facing 'payout held,
+// action needed' advice).
 //
 // NO PII (ADR-PC-004): opaque refs, integer-cents Money, stable machine reason codes, and input
 // dates only; every date is supplied by the command, never read from a clock in a fold (ADR-PC-023).
@@ -47,7 +48,7 @@ namespace Babelstone.Engine;
 /// The RESOLUTION key is NOT on this event: it is DERIVED from <paramref name="IntentId"/> by
 /// <c>SettlementReferences.DeriveResolutionIntentId</c> when a reapply is attempted, so a late original
 /// apply and the resolution both key off the SAME intent and collapse to one landing (the double-pay
-/// guard, ADR-PC-043 §Idempotency). Pure fold, no clock, no I/O (BENG001/002/003) — replay deterministic.
+/// guard, ADR-PC-043). Pure fold, no clock, no I/O (BENG001/002/003) — replay deterministic.
 /// </remarks>
 /// <param name="IntentId">The ADR-PC-043 slot-4 economic-intent id the undeliverable payout belongs to
 /// (from <c>SettlementReferences.DeriveIntentId</c>) — the exactly-once axis AND the root the resolution
@@ -78,7 +79,7 @@ public sealed record CreditUnapplied(
 /// <b>The resolution key is a pure function of the original intent (the double-pay guard).</b>
 /// <paramref name="ResolutionIntentId"/> is <c>g(IntentId)</c> — derived by
 /// <c>SettlementReferences.DeriveResolutionIntentId</c> from the SAME <paramref name="OriginalIntentId"/>,
-/// never freshly minted (ADR-PC-043 §Idempotency). So a late apply of the ORIGINAL credit and this
+/// never freshly minted (ADR-PC-043). So a late apply of the ORIGINAL credit and this
 /// resolution both structurally reference the same intent, and the CA-apply <c>command_id</c> derived
 /// from the resolution key collapses at <c>command_dedup</c> to one landing. A second
 /// <c>CreditReapplied</c> for an already-resolved intent is a reconciliation signal, not a double-pay.

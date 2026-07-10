@@ -19,7 +19,7 @@ public enum DepositLifecycle
     Matured,
 
     /// <summary>Matured but the payout could not be delivered, so the funds are held AT SOURCE
-    /// (ADR-PC-043 slot 5; bd babelstone-98mj.6). A NON-terminal, reversible marker on the closed side of
+    /// (ADR-PC-043 slot 5). A NON-terminal, reversible marker on the closed side of
     /// maturity: the deposit stays payout-pending until a live destination exists, at which point the
     /// lifecycle-driver's <c>PayoutPendingRetryRule</c> re-fires the payout and the deposit resolves back
     /// to <see cref="Matured"/> (<c>DepositPayoutLanded</c>). Reached from <see cref="Matured"/> via

@@ -111,7 +111,7 @@ public static class PersonalLoanLifecycleDispatch
 
     /// <summary>
     /// The re-attempt command for a loan whose approved disbursement was held DISBURSEMENT-PENDING
-    /// (ADR-PC-043 slot 5, bd babelstone-98mj.6): re-fire the disbursement endpoint under the ONE-SHOT
+    /// (ADR-PC-043 slot 5): re-fire the disbursement endpoint under the ONE-SHOT
     /// occurrence key so the engine's <c>command_dedup</c> (and the ADR-PC-043 slot-4 intent key) collapse a
     /// late original apply and this re-attempt to exactly ONE landing — the loan cannot be double-disbursed.
     /// The re-attempt fires only when the destination is receivable again (the rule's projection-driven gate),

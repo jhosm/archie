@@ -89,8 +89,8 @@ public static class TermDepositLifecycleDispatch
         new(maturityDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
 
     /// <summary>
-    /// The re-attempt command for a deposit whose maturity payout was held PAYOUT-PENDING (ADR-PC-043 slot 5,
-    /// bd babelstone-98mj.6): re-fire the SAME maturity endpoint under the SAME one-shot occurrence key so the
+    /// The re-attempt command for a deposit whose maturity payout was held PAYOUT-PENDING (ADR-PC-043 slot 5):
+    /// re-fire the SAME maturity endpoint under the SAME one-shot occurrence key so the
     /// engine's <c>command_dedup</c> (and the ADR-PC-043 slot-4 intent key) collapse the re-attempt to exactly
     /// ONE landing — a late original apply and this re-attempt cannot double-pay. The re-attempt fires only
     /// when the destination is receivable again (the rule's projection-driven gate), so the payout lands

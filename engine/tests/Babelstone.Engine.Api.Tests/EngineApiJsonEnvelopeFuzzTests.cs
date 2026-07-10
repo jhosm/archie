@@ -555,6 +555,9 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 
         public Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Guid>>([]);
+
+        public Task<IReadOnlyList<DepositReadModelRow>> ListPayoutPendingAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<DepositReadModelRow>>([]);
     }
 
     /// <summary>A secret provider that resolves a fixed, non-empty salt and never throws. Registered only

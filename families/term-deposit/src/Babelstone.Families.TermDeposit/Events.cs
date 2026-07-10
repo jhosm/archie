@@ -396,7 +396,7 @@ public sealed record DepositTransferredToHeirs(
 }
 
 /// <summary>The maturity payout could not be delivered to the beneficiary account, so the deposit is
-/// held PAYOUT-PENDING at source rather than disgorged (ADR-PC-043 slot 5; bd babelstone-98mj.6). In
+/// held PAYOUT-PENDING at source rather than disgorged (ADR-PC-043 slot 5). In
 /// plain English: the deposit matured but the money had nowhere to land — the beneficiary account is
 /// closed, dormant-past-revival, or does not exist — so instead of losing the payout the deposit KEEPS
 /// the funds and marks itself payout-pending. The lifecycle-driver's re-attempt rule
@@ -421,8 +421,8 @@ public sealed record DepositPayoutHeld(
     DateOnly PendingSince) : DomainEvent;
 
 /// <summary>The held maturity payout was delivered once a live destination existed, so the deposit
-/// leaves payout-pending and reaches its settled maturity terminal (ADR-PC-043 slot 5; bd
-/// babelstone-98mj.6). In plain English: the account that could not receive the payout became receivable
+/// leaves payout-pending and reaches its settled maturity terminal (ADR-PC-043 slot 5).
+/// In plain English: the account that could not receive the payout became receivable
 /// again, the re-attempt landed the credit, and the deposit is finally, cleanly matured-and-paid. This is
 /// the resolve leg of the reversible payout-pending marker: <see cref="DepositLifecycle.PayoutPending"/>
 /// → <see cref="DepositLifecycle.Matured"/>.</summary>

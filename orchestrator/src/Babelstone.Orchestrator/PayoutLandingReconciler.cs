@@ -3,7 +3,7 @@ using Babelstone.Orchestrator.Saga.Settlement;
 namespace Babelstone.Orchestrator;
 
 /// <summary>
-/// The engine↔engine-CA payout-landing reconciler (ADR-PC-043; bd babelstone-98mj.7) — the ADR-PC-016
+/// The engine↔engine-CA payout-landing reconciler (ADR-PC-043) — the ADR-PC-016
 /// flow-1 reconciliation pattern re-scoped INTERNALLY, from "engine vs legacy Core" to "engine source vs
 /// engine-owned current account". In plain English: this is the safety net that catches the rare cases
 /// prevention cannot — a payout the source recorded that never landed on the CA, one that landed twice, or
@@ -85,7 +85,7 @@ public static class PayoutLandingReconciler
             if (landings.Count == 0)
             {
                 // Source paid, nothing landed. IN_FLIGHT until older than the SLA, then a DROP — the source
-                // holds the funds meanwhile (the payout-pending marker, bd 98mj.6), so a DROP is a signal to
+                // holds the funds meanwhile (the payout-pending marker), so a DROP is a signal to
                 // reconcile, never a re-pay this reconciler drives.
                 var ageDays = asOf.DayNumber - payout.ValueDate.DayNumber;
                 var classification = ageDays > horizon
@@ -160,7 +160,7 @@ public static class PayoutLandingReconciler
 }
 
 /// <summary>
-/// One source-side Originated payout movement to reconcile (ADR-PC-043; bd babelstone-98mj.7): its
+/// One source-side Originated payout movement to reconcile (ADR-PC-043): its
 /// economic-intent id, the amount the source paid, and the value date the source recorded. Structural,
 /// no PII (ADR-PC-004): opaque intent id, integer cents, a date.
 /// </summary>
@@ -171,7 +171,7 @@ public static class PayoutLandingReconciler
 public sealed record SourcePayout(string IntentId, long AmountCents, DateOnly ValueDate);
 
 /// <summary>
-/// One CA-side landing to reconcile (ADR-PC-043; bd babelstone-98mj.7): the intent reference the CA
+/// One CA-side landing to reconcile (ADR-PC-043): the intent reference the CA
 /// credit/debit writer carried, the amount that landed, and the direction. Structural, no PII (ADR-PC-004).
 /// </summary>
 /// <param name="IntentReference">The intent reference the CA event carried (from
@@ -181,7 +181,7 @@ public sealed record SourcePayout(string IntentId, long AmountCents, DateOnly Va
 /// <c>SettlementDirection</c> member name, carried for the signal's audit context.</param>
 public sealed record CaLanding(string IntentReference, long AmountCents, string Direction);
 
-/// <summary>The classification of one reconciled intent (ADR-PC-043; bd babelstone-98mj.7).</summary>
+/// <summary>The classification of one reconciled intent (ADR-PC-043).</summary>
 public enum ReconciliationClass
 {
     /// <summary>Source payout paired to exactly one CA landing of the same amount — the happy path.</summary>
@@ -204,7 +204,7 @@ public enum ReconciliationClass
 }
 
 /// <summary>
-/// The outcome of reconciling ONE economic intent (ADR-PC-043; bd babelstone-98mj.7): its classification and,
+/// The outcome of reconciling ONE economic intent (ADR-PC-043): its classification and,
 /// for every non-matched case, the operational <see cref="ReconciliationSignal"/> to surface.
 /// <see cref="Signal"/> is <see langword="null"/> exactly when <see cref="Classification"/> is
 /// <see cref="ReconciliationClass.Matched"/> (a matched pair needs no operator attention).
@@ -218,7 +218,7 @@ public sealed record ReconciliationOutcome(
     ReconciliationSignal? Signal);
 
 /// <summary>
-/// An operational signal the reconciler SURFACES for a non-matched intent (ADR-PC-043; bd babelstone-98mj.7)
+/// An operational signal the reconciler SURFACES for a non-matched intent (ADR-PC-043)
 /// — advisory only, for a human/operator reconciliation process. It NEVER carries a corrective Movement: the
 /// reconciler raises the fact, it does not move money.
 /// </summary>

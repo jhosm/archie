@@ -67,7 +67,7 @@ public static class CurrentAccountCreditAdmissionDecider
             Direction: SettlementDirection.Credit,
             Amount: new Money(command.AmountCents),
             ValueDate: command.ValueDate,
-            // The DEDICATED CA credit-receive verb the credit lands under (ADR-PC-043; bd babelstone-98mj.8):
+            // The DEDICATED CA credit-receive verb the credit lands under (ADR-PC-043):
             // ReceiveCredit names the current-account settlement CREDIT-in honestly, REPLACING the earlier
             // PayMaturity stopgap the CA borrowed before it had its own governed label. A maturity/coupon/
             // disbursement payout are all credit-in; the CA is family-agnostic and does not learn the source's

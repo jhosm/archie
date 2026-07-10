@@ -24,8 +24,8 @@ public static class LifecycleTransitions
         FailDisbursement,
 
         /// <summary>Hold the approved disbursement at source when it cannot be delivered —
-        /// <see cref="LoanDisbursementHeld"/> (Pending → DisbursementPending). ADR-PC-043 slot 5 / bd
-        /// babelstone-98mj.6: the money is held rather than disgorged. A reversible marker, resolved by
+        /// <see cref="LoanDisbursementHeld"/> (Pending → DisbursementPending). ADR-PC-043 slot 5:
+        /// the money is held rather than disgorged. A reversible marker, resolved by
         /// <see cref="LandDisbursement"/> once a live destination exists.</summary>
         DisbursePend,
 
@@ -74,7 +74,7 @@ public static class LifecycleTransitions
             [Transition.Disburse] = Set(LoanLifecycle.Pending),
             [Transition.FailDisbursement] = Set(LoanLifecycle.Pending),
 
-            // Undeliverable-disbursement hold (ADR-PC-043 slot 5, bd babelstone-98mj.6): an approved loan
+            // Undeliverable-disbursement hold (ADR-PC-043 slot 5): an approved loan
             // whose disbursement cannot land holds it at source (Pending → DisbursementPending), and the
             // resolve leg lands it once a live destination exists (DisbursementPending → Active). A reversible
             // marker, so DisbursementPending is NOT terminal (it is a legal source of LandDisbursement and Erase).

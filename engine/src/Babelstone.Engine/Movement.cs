@@ -127,14 +127,14 @@ public enum MovementOperation
     AccrueOverdraftInterest,
 
     /// <summary>A current-account settlement CREDIT-in — money RECEIVED onto an engine-owned demand account
-    /// (ADR-PC-043; bd babelstone-98mj.8). The dedicated CA credit-receive verb the <c>AccountCredited</c>
+    /// (ADR-PC-043). The dedicated CA credit-receive verb the <c>AccountCredited</c>
     /// event carries, REPLACING the <c>PayMaturity</c> stopgap it borrowed before it had its own governed
     /// label (the direction Credit was always correct; only the operation label was a placeholder). Added at
     /// the END so existing ordinals are stable (forward-only schema evolution, ADR-IC-002).</summary>
     ReceiveCredit,
 
     /// <summary>A current-account settlement DEBIT-capture — money that truly LEFT an engine-owned demand
-    /// account when a reservation was captured (ADR-PC-043; bd babelstone-98mj.8). The dedicated CA
+    /// account when a reservation was captured (ADR-PC-043). The dedicated CA
     /// settle-debit verb the <c>AccountDebited</c> event carries, REPLACING the <c>CollectInstallment</c>
     /// stopgap it borrowed before it had its own governed label. Added at the END so existing ordinals are
     /// stable (forward-only schema evolution, ADR-IC-002).</summary>

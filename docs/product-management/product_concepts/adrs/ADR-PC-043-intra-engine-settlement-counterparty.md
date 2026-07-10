@@ -76,7 +76,9 @@ only when BOTH the source reads payout-pending (`DepositLifecycle.PayoutPending`
 clock-free read); it re-fires the SAME one-shot occurrence, so the driver dedupe + engine
 `command_dedup` + the slot-4 intent key collapse a late original apply and the re-attempt to exactly
 one landing. The now-live §Verifiable-commitments rows migrate to the
-[commitment catalogue](./commitment-catalogue.md) (rows CA-7…CA-13).*
+[commitment catalogue](./commitment-catalogue.md) as CA-7…CA-12 (the resolution-key row reuses
+the existing CA-6; the new capture-hold-match lands as CA-9; the still-Planned credit-admission
+own-stream check is filed as CA-13).*
 
 ### 1. Payload shape
 

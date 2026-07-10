@@ -67,7 +67,7 @@ public sealed class CurrentAccountCaptureTests
         Assert.Equal(AccountRef, movement.AccountRef);
         Assert.Equal(SettlementDirection.Debit, movement.Direction);
         Assert.Equal(50_000, movement.Amount.Cents);
-        Assert.Equal(MovementOperation.SettleDebit, movement.Operation); // dedicated CA settle-debit verb (ADR-PC-043, bd 98mj.8; re-pointed from the CollectInstallment stopgap)
+        Assert.Equal(MovementOperation.SettleDebit, movement.Operation); // dedicated CA settle-debit verb (ADR-PC-043; re-pointed from the CollectInstallment stopgap)
         Assert.Equal(MovementOrigin.Observed, movement.Origin);
         Assert.Equal(CommandId, movement.CommandId);
 

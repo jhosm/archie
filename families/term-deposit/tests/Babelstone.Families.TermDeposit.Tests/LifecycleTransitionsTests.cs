@@ -39,7 +39,7 @@ public sealed class LifecycleTransitionsTests
 
     // The BUSINESS transitions (everything except the cross-cutting regulatory Erase AND the
     // orthogonal undeliverable-payout recovery pair). Terminality is defined against THESE — a closed
-    // deposit rejects every one of them. PayoutPend/LandPayout (ADR-PC-043 slot 5, bd babelstone-98mj.6)
+    // deposit rejects every one of them. PayoutPend/LandPayout (ADR-PC-043 slot 5)
     // are EXCLUDED for the same reason Erase is: they are a reversible marker orthogonal to the business
     // lifecycle (PayoutPend fires FROM the business-terminal Matured to hold an undeliverable payout at
     // source), so "terminal to normal business operations" and "still holdable/resolvable" coexist — the
@@ -108,7 +108,7 @@ public sealed class LifecycleTransitionsTests
     }
 
     // ---- undeliverable-payout hold: the reversible marker on the closed side of maturity ---------
-    // ADR-PC-043 slot 5 / bd babelstone-98mj.6.
+    // ADR-PC-043 slot 5.
 
     [Fact]
     public void Payout_hold_is_legal_only_from_Matured_and_lands_only_from_PayoutPending()

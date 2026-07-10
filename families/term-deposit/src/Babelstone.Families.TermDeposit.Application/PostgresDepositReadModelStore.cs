@@ -185,7 +185,7 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
 
     public async Task<IReadOnlyList<DepositReadModelRow>> ListPayoutPendingAsync(CancellationToken ct = default)
     {
-        // The undeliverable-payout hold population (ADR-PC-043 slot 5, bd babelstone-98mj.6): every deposit
+        // The undeliverable-payout hold population (ADR-PC-043 slot 5): every deposit
         // whose matured payout could not land, so it is held payout-pending at source. nameof keeps the
         // literal in lock-step with the enum — a rename breaks the build, not the query silently. ORDER BY
         // stream_id is a deterministic, stable order (cf. ListActiveStreamIdsAsync); the

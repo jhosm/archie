@@ -76,8 +76,8 @@ public static class LifecycleTransitions
         Correct,
 
         /// <summary>Hold the matured payout at source when it cannot be delivered —
-        /// <see cref="DepositPayoutHeld"/> (Matured → PayoutPending). ADR-PC-043 slot 5 / bd
-        /// babelstone-98mj.6: the money is held rather than disgorged. A reversible marker on the closed
+        /// <see cref="DepositPayoutHeld"/> (Matured → PayoutPending). ADR-PC-043 slot 5:
+        /// the money is held rather than disgorged. A reversible marker on the closed
         /// side of maturity, resolved by <see cref="LandPayout"/> once a live destination exists.</summary>
         PayoutPend,
 
@@ -129,7 +129,7 @@ public static class LifecycleTransitions
             [Transition.TerminateEarly] = Set(DepositLifecycle.Active),
             [Transition.TransferToHeirs] = Set(DepositLifecycle.Active),
 
-            // Undeliverable-payout hold (ADR-PC-043 slot 5, bd babelstone-98mj.6): a matured deposit whose
+            // Undeliverable-payout hold (ADR-PC-043 slot 5): a matured deposit whose
             // payout cannot land holds it at source (Matured → PayoutPending), and the resolve leg lands it
             // once a live destination exists (PayoutPending → Matured). Unlike the business-terminal
             // transitions above, this pair is a reversible marker on the closed side of maturity, so
