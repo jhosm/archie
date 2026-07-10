@@ -312,9 +312,6 @@ Bootstrap glue done. REMAINING HUMAN / ACCOUNT-GATED STEPS (this script did NOT 
       the secret/data/babelstone/* paths the SecretProviderClass reads) — the CSI mount stays
       unresolved until this is done. These produce secret-zero and are the operator's job
       (infra/k8s/components/openbao-csi/README.md "Live apply + init").
-  [ ] Apply the bootstrap internal-mTLS server certs + re-run deck-sync to flip tls_verify,
-      then handshake-test the engine/orchestrator hops (internal-mtls.patch.yaml is now ON in
-      the render — the live cert issuance + Kong flip are the human residual).
   [ ] Set the Cloudflare SSL/TLS mode to "Full (strict)" for babelstone.dev.
   [ ] Open inbound TCP 80/443 on the Hetzner firewall (Cloudflare-scoped):
         infra/hetzner-k3s/firewall-web.sh            # dry-run

@@ -365,13 +365,11 @@ invariants are preserved:
   drops its 8001 Service port (`kong-admin-localhost.patch.yaml` — the base table
   above still lists 8001 for the dev rendering); operator `deck sync` reaches it via
   `kubectl port-forward` (which targets the pod loopback). The internal-mTLS
-  extension to the engine/orchestrator hops is now **enabled** in the render
-  (`internal-mtls.patch.yaml` is applied — bd babelstone-zla1.12.21, now that the
-  server certs `bootstrap/internal-mtls.yaml` and the client-cert callers are on
-  main); the render flips both Kestrel hosts to HTTPS with `RequireCertificate`.
-  The live rollout (apply the bootstrap certs, re-run `deck-sync` to flip
-  `tls_verify`, handshake-test) is the human residual — rollout order in the patch
-  header.
+  extension to the engine/orchestrator hops is authored but **gated off**
+  (`internal-mtls.patch.yaml` + `bootstrap/internal-mtls.yaml` — rollout order in
+  the patch header). Enabling it is tracked in bd babelstone-zla1.12.25: it also
+  needs the server-side internal-CA trust to land first, or the servers would flip
+  to `RequireCertificate` and reject every valid client cert.
 
 **TLS issuance is a cluster CRD, kept out of the kustomize build.** cert-manager's
 `ClusterIssuer` (and `Certificate`) are CRDs, and the CI gate runs

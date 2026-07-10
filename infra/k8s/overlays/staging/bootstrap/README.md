@@ -115,7 +115,7 @@ kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/d
 #     the node DaemonSet — none of which the strict kubeconform gate has a vendored schema
 #     for, so they are installed HERE, never in `kustomize build overlays/staging`. The
 #     overlay registers ONLY the SecretProviderClass custom resource (see
-#     ../../components/openbao-csi/README.md). The driver install is the VENDORED, pinned
+#     infra/k8s/components/openbao-csi/README.md). The driver install is the VENDORED, pinned
 #     (v1.6.0) material under that component's upstream/ — applied file-by-file so it is
 #     hermetic (no remote fetch); the vault-csi-provider is the upstream HashiCorp chart,
 #     PINNED to chart 4.1.0 — keep in lockstep with staging-bootstrap.sh.
