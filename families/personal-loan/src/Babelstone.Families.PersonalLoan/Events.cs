@@ -100,7 +100,7 @@ public sealed record LoanDisbursed(
     /// Promote the disbursement Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>, bd babelstone-t7o3.20) — it names no family, so
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>, bd babelstone-t7o3.20) — it names no family, so
     /// every Movement-bearing event gets the headers the same way. Null/empty movements (pre-Movement
     /// streams) declare no settlement header (the base-default behaviour), starting no saga.
     /// </summary>
@@ -173,7 +173,7 @@ public sealed record LoanInstallmentPaid(
     /// Promote the installment-collection Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>) — it names no family. Null/empty movements
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>) — it names no family. Null/empty movements
     /// (pre-Movement streams) declare no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
@@ -228,7 +228,7 @@ public sealed record LoanRepaidEarly(
     /// Promote the early-repayment Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>) — it names no family. Null/empty movements
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>) — it names no family. Null/empty movements
     /// (pre-Movement streams) declare no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
