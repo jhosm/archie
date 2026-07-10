@@ -1,3 +1,4 @@
+using Babelstone.Cadence;
 using Babelstone.Orchestrator;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Edge;
@@ -10,6 +11,7 @@ using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -353,6 +355,65 @@ EdgeServices.Register(builder.Services, runtimeConnectionString
     ?? throw new InvalidOperationException(
         "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
         "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."));
+
+// The SCHEDULED PAYOUT-LANDING RECONCILER (bd babelstone-qa92.2; ADR-PC-043 reconcile-signals-only,
+// ADR-PC-023 clock-free, ADR-IC-019 cadence). In plain English: PayoutLandingReconciler already knows how to
+// spot a payout that never landed, landed twice, or landed at the wrong amount — but until now nothing RAN it
+// in production, so its mismatch signals reached no one. This wires a clock-owning poll loop (the shared
+// Babelstone.Cadence worker the notification scheduler and the lifecycle driver reuse) that, once per tick,
+// reads the source payouts + CA landings as-of today, reconciles them, and surfaces every non-matched signal
+// to an OPERATOR sink — a per-class Prometheus counter + a structured log (ADR-IC-007 Layer 1). It moves no
+// money: signal only (ADR-PC-043). The clock lives HERE in the worker; the injected asOf flows into the
+// classifier, which stays clock-free (ADR-PC-023 §6).
+//
+// The READ side (IPayoutLandingSource — the live movement-ledger + CA-landing read as-of a date) needs a
+// running stack and is a human bring-up follow-up (bd babelstone-qa92.2 §Scope): the worker starts ONLY when
+// a host registers an IPayoutLandingSource AND opts in via Reconciler:PayoutLanding:Enabled, so the demo/local
+// hosts (which register no source) run byte-for-byte unchanged and CI exercises the pass against an in-memory
+// fake. The sink, the metrics, and the cadence knobs are registered regardless — with no meter listener every
+// counter/gauge is a near-zero-cost no-op.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(BabelstoneTelemetry.ActivitySource);
+// The operator-facing signal sink (ADR-IC-007 Layer 1): the per-ReconciliationClass Prometheus counter +
+// structured log. Registered unconditionally — it is the default sink the pass emits through; a deployment
+// MAY replace it (e.g. to add a spine operational event, ADR-PC-043 names that optional) without touching
+// the pass.
+builder.Services.AddSingleton<IReconciliationSignalSink, OperatorReconciliationSignalSink>();
+// The reconciler's cadence/retry/backoff knobs (ADR-PC-023 §6 — the downstream consumer owns the read
+// cadence). The one-hour default sits well inside a DROP-SLA-day tolerance; an operator tunes it from the
+// "Reconciler:PayoutLanding" section. Registered as its own instance (not a shared singleton) so it cannot
+// collide with another cadence consumer's options in the same host.
+var payoutReconcilerPollSeconds =
+    builder.Configuration.GetValue<double?>("Reconciler:PayoutLanding:PollIntervalSeconds");
+var payoutReconcilerOptions = payoutReconcilerPollSeconds is > 0
+    ? new CadenceSchedulerOptions { PollInterval = TimeSpan.FromSeconds(payoutReconcilerPollSeconds.Value) }
+    : new CadenceSchedulerOptions();
+// The interim DROP SLA (DefaultDropSlaDays=3, Q-AG calibration pending — ADR-PC-043 §Residual risks): the
+// reconciler's own default unless an operator overrides it here (a single configured value, never a literal
+// restated). A null flows straight to PayoutLandingReconciler.DefaultDropSlaDays.
+var payoutReconcilerDropSlaDays =
+    builder.Configuration.GetValue<int?>("Reconciler:PayoutLanding:DropSlaDays");
+var payoutReconcilerEnabled =
+    builder.Configuration.GetValue("Reconciler:PayoutLanding:Enabled", defaultValue: false);
+if (payoutReconcilerEnabled)
+{
+    // The worker starts only when the host also registered an IPayoutLandingSource (the live read side, a
+    // human follow-up). We register the pass + worker as a hosted service; a host that flips Enabled without
+    // wiring a source fails loud at resolve time (a mis-wired deployment must not run a blind reconciler),
+    // exactly the fail-loud stance the lifecycle driver's connection resolution takes.
+    builder.Services.AddSingleton(sp => new PayoutLandingReconciliationSchedulePass(
+        sp.GetRequiredService<IPayoutLandingSource>(),
+        sp.GetRequiredService<IReconciliationSignalSink>(),
+        payoutReconcilerDropSlaDays,
+        sp.GetService<ILogger<PayoutLandingReconciliationSchedulePass>>()));
+    builder.Services.AddSingleton(payoutReconcilerOptions);
+    builder.Services.AddHostedService(sp => new PayoutLandingReconciliationWorker(
+        sp.GetRequiredService<PayoutLandingReconciliationSchedulePass>(),
+        payoutReconcilerOptions,
+        sp.GetRequiredService<TimeProvider>(),
+        sp.GetRequiredService<ILogger<PayoutLandingReconciliationWorker>>(),
+        sp.GetService<System.Diagnostics.ActivitySource>()));
+}
 
 var app = builder.Build();
 
