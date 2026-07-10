@@ -21,7 +21,9 @@
 #     (staging-ops.md §1 step 5 — this script REFUSES to mint the account-gated secrets)
 #   - set Cloudflare SSL/TLS = Full (strict)
 #   - open the Hetzner web firewall (infra/hetzner-k3s/firewall-web.sh --apply)
-#   - deploy the overlay itself (kubectl apply -k … / gh workflow run cd.yml)
+#   - deploy the overlay itself (kustomize build --load-restrictor=LoadRestrictionsNone … |
+#     kubectl apply -f -, or gh workflow run cd.yml — NOT `kubectl apply -k`, which can't pass
+#     the load-restrictor the out-of-root kong.yml ConfigMap needs)
 #
 # Required env:
 #   KUBECONFIG              path to the cluster-admin kubeconfig (the gitignored hetzner-k3s
@@ -318,8 +320,9 @@ Bootstrap glue done. REMAINING HUMAN / ACCOUNT-GATED STEPS (this script did NOT 
   [ ] Open inbound TCP 80/443 on the Hetzner firewall (Cloudflare-scoped):
         infra/hetzner-k3s/firewall-web.sh            # dry-run
         infra/hetzner-k3s/firewall-web.sh --apply    # apply
-  [ ] Deploy the overlay:
-        kubectl apply -k infra/k8s/overlays/staging
+  [ ] Deploy the overlay (NOT 'kubectl apply -k' — the out-of-root kong.yml ConfigMap needs
+      --load-restrictor, which kubectl's embedded kustomize can't pass):
+        mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging | kubectl apply -f -
       or:
         gh workflow run cd.yml -f overlay=staging -f apply=true
 ===============================================================================

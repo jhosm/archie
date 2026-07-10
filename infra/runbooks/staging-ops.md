@@ -129,8 +129,12 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
 
    Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
    the Kong mTLS material (via `deck-sync`).
-6. Deploy: `kubectl apply -k infra/k8s/overlays/staging` (or dispatch `cd.yml` with
-   `overlay: staging`). This brings up Postgres/Redpanda/Kong, the event-store migration Job, Logto
+6. Deploy: `mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging | kubectl apply -f -`
+   (or dispatch `cd.yml` with `overlay: staging`, which runs exactly this). **Do NOT use plain
+   `kubectl apply -k`** — the `base` generates a ConfigMap from `../../kong/kong.yml` (above the
+   kustomization root), so the build needs `--load-restrictor=LoadRestrictionsNone`, a flag
+   `kubectl apply -k` (kubectl's embedded kustomize, default `LoadRestrictionsRootOnly`) cannot pass;
+   it fails with "file …/infra/kong/kong.yml is not in or below infra/k8s/base". This brings up Postgres/Redpanda/Kong, the event-store migration Job, Logto
    (+ its seed jobs), OpenBao (**sealed/uninitialised**), and the engine (**NotReady** — its CSI mount
    can't resolve until step 7). Grafana/Mission-Control/Backstage come up but OIDC login stays broken
    until their real client secrets land (step 7).
