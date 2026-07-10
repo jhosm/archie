@@ -287,6 +287,39 @@ for h in app api auth; do
 done   # expect real (non-000, non-5xx) codes end-to-end through Cloudflare with valid TLS
 ```
 
+### 7.1 Logto crashloops with "Row-level security has to be enforced" (bd babelstone-zla1.12.34)
+
+In plain English: if the `logto` pod crashloops at boot complaining that `_logto_configs` has no
+row-level security, its `logto` database was bootstrapped down the wrong path and carries a stray
+**legacy** `_logto_configs` table that modern Logto rejects. The durable fix is already in
+`logto-jobs.yaml` (the `wait-for-logto-seed` init gates the alteration Job on the seed completing, so
+the race that creates the stray table can't happen). To recover a box that is *already* in the broken
+state, do a clean reseed — note the clean-up must drop **cluster-global roles** too, which survive a
+`DROP DATABASE`:
+
+```bash
+# Confirm the failure mode: the ONLY tables without RLS should be systems + service_logs; a stray
+# `_logto_configs` here is the fault.
+kubectl -n babelstone-staging exec postgres-0 -- psql -U babelstone -d logto -tAc \
+  "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=current_schema() AND rowsecurity=false"
+
+# Quick fix (keeps the seeded data): drop just the stray legacy table, then restart Logto.
+kubectl -n babelstone-staging exec postgres-0 -- psql -U babelstone -d logto -c "DROP TABLE IF EXISTS _logto_configs"
+kubectl -n babelstone-staging rollout restart deploy/logto
+
+# Full clean reseed (from scratch): scale Logto down, delete the two DB Jobs, then drop the DB AND the
+# cluster-global tenant roles (they survive DROP DATABASE), and re-apply the overlay so the guarded
+# init/seed + alteration Jobs rebuild a clean schema.
+kubectl -n babelstone-staging scale deploy/logto --replicas=0
+kubectl -n babelstone-staging delete job logto-db-init logto-db-alteration --ignore-not-found
+kubectl -n babelstone-staging exec postgres-0 -- psql -U babelstone -d babelstone \
+  -c "DROP DATABASE IF EXISTS logto WITH (FORCE)" \
+  -c "DROP ROLE IF EXISTS logto_tenant_logto" \
+  -c "DROP ROLE IF EXISTS logto_tenant_logto_admin" \
+  -c "DROP ROLE IF EXISTS logto_tenant_logto_default"
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging | kubectl apply -f -
+```
+
 ## 8. Public edge security posture (bd babelstone-zla1.10.6)
 
 In plain English: the two most sensitive UIs — the Logto **admin console**

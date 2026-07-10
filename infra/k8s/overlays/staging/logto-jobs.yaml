@@ -96,7 +96,7 @@ spec:
               memory: 128Mi
       containers:
         - name: db-init
-          image: svhd/logto:latest
+          image: ghcr.io/logto-io/logto:1.41.0
           # Seed the schema into the freshly created `logto` DB. `db seed` is NOT idempotent — it
           # CREATE ROLEs Logto's RLS/tenant roles and fails Postgres 42710 on a re-run — so we only
           # seed when the create-logto-db init step did NOT find an existing schema (its
@@ -145,6 +145,19 @@ spec:
 #     per release (ADR-IC-021 §soft-criteria names this the one real recurring chore). Re-run it
 #     after the image tag bumps; idempotent (a no-op when already at `latest`). Modelled on the
 #     event-store migration Job (apps/event-store-migration-job.yaml).
+#
+#     ORDERING GUARD (bd babelstone-zla1.12.34). This Job and logto-db-init are otherwise unordered.
+#     If `db alteration deploy latest` wins the race and runs against the freshly-created-but-UNSEEDED
+#     `logto` DB, Logto reads alteration-timestamp 0 and replays its LEGACY alterations from scratch —
+#     the first of which (`1.0.0_beta.10-1-logto-config`) CREATEs the obsolete `_logto_configs` table
+#     (no RLS, stamped timestamp:1), then dies on the next alteration because seed never set up its
+#     prerequisites. That stray `_logto_configs` survives the later seed and poisons Logto's own
+#     boot-time RLS precondition — `checkRowLevelSecurity` rejects EVERY table lacking RLS except
+#     `systems`/`service_logs` — so the server crashloops with "Found ... table(s) without RLS:
+#     _logto_configs". The wait-for-logto-seed initContainer below closes the race: it gates the deploy
+#     on the seed being COMPLETE (systems.alterationState stamped), so a fresh box only ever deploys
+#     against a fully-seeded schema (finding 0 pending), while an image-bump upgrade on an
+#     already-seeded DB still runs immediately. A clean modern `db seed` never creates `_logto_configs`.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -161,9 +174,54 @@ spec:
         app.kubernetes.io/name: logto-db-alteration
     spec:
       restartPolicy: OnFailure
+      # Gate the alteration deploy on the seed being COMPLETE — `systems.alterationState` stamped —
+      # NOT merely on the `logto` DB existing: db seed creates the tables first and stamps the
+      # alteration state LAST, so waiting on a table alone leaves a window where `db alteration deploy`
+      # still reads timestamp 0 and replays from scratch (re-creating the stray `_logto_configs`,
+      # bd babelstone-zla1.12.34). Only the init/seed Job writes systems.alterationState; this only
+      # waits — race-free, mirrors the Deployment's own wait-for-logto-db init (logto.yaml). The wait
+      # is intentionally unbounded (like the sibling create-logto-db / wait-for-logto-db inits): a
+      # never-completing seed should hold the upgrade back, not fail open and let a half-applied
+      # deploy proceed — the seed Job's own backoffLimit surfaces a genuinely broken seed.
+      initContainers:
+        - name: wait-for-logto-seed
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until psql -tAc "SELECT 1 FROM systems WHERE key='alterationState' LIMIT 1" 2>/dev/null | grep -q 1; do
+                echo "waiting for the logto schema to be seeded (systems.alterationState) ..."
+                sleep 3
+              done
+              echo "logto schema seeded; running alteration deploy."
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: logto
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
       containers:
         - name: db-alteration
-          image: svhd/logto:latest
+          image: ghcr.io/logto-io/logto:1.41.0
           command: ["sh", "-c", "npm run cli db alteration deploy latest"]
           env:
             - name: LOGTO_DB_PASSWORD
@@ -212,7 +270,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: rotate
-              image: svhd/logto:latest
+              image: ghcr.io/logto-io/logto:1.41.0
               command: ["sh", "-c", "npm run cli db config rotate oidc.privateKeys"]
               env:
                 - name: LOGTO_DB_PASSWORD

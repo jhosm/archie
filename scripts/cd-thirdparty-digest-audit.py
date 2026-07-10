@@ -5,7 +5,7 @@ In plain English: the Kubernetes manifests pin every third-party image (postgres
 redpanda, logto, the k3s control-plane upgrader, …) to an immutable sha256 digest so a
 redeploy pulls the EXACT bytes we validated (bd babelstone-2t16.31.1; ADR-PC-007 §A3). A
 pinned digest goes stale as upstream rebuilds a rolling tag (postgres:18-alpine,
-svhd/logto:latest, …) — an unmaintained pin is a silent staleness hazard. This script is the
+ghcr.io/logto-io/logto:1.41.0, …) — an unmaintained pin is a silent staleness hazard. This script is the
 DELIBERATE bump lever the scheduled .github/workflows/cd-thirdparty-digest-audit.yml runs: it
 re-resolves each pinned tag with `crane` and, in --write mode, refreshes the committed digest,
 so a maintainer reviews a PR instead of the pins rotting quietly.
