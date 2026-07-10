@@ -80,6 +80,19 @@ one landing. The now-live §Verifiable-commitments rows migrate to the
 the existing CA-6; the new capture-hold-match lands as CA-9; the still-Planned credit-admission
 own-stream check is filed as CA-13).*
 
+*Amended 2026-07-10 (bd `babelstone-98mj.12`): the two settlement CA error-model gates
+(`SETTLEMENT_CA_DECLINE_IS_4XX` — a 4xx-decline → `ReserveRefused` → a loud HIR park, never a
+silent 200-with-`Declined` success; `SETTLEMENT_CA_SCA_STALE_IS_RETRIABLE` — a `422 SCA_REQUIRED`
+at dispatch is retriable-PENDING under the same `process_id`, never terminal-FAILED and never a
+fresh occurrence) have shipped and are now **Live** per bd `babelstone-98mj.5`, without altering
+the §Error-model decision above. Backed by `SettlementCaErrorModelTests`
+(`orchestrator/tests/Babelstone.Orchestrator.Tests/SettlementCaErrorModelTests.cs`, Docker-free —
+the pure classifier + transition table) with the end-to-end retriable-PENDING-then-re-drive path
+proven on real PostgreSQL by `SettlementLegStepUpScaIntegrationTests`
+(`orchestrator/tests/Babelstone.Orchestrator.Tests/SettlementLegStepUpScaIntegrationTests.cs`).
+The §Verifiable-commitments rows 3 and 4 migrate to the
+[commitment catalogue](./commitment-catalogue.md) as CA-14 and CA-15.*
+
 ### 1. Payload shape
 
 - Settlement command bodies are **unchanged** (`ReserveAccountBalance` / `ConfirmDebit` /
@@ -340,8 +353,8 @@ lands with the build.
 |---|---|---|---|---|
 | 1 | CA-apply `command_id` derived from the body `IntentId` reference, never the HTTP `Idempotency-Key` (§Idempotency) | integration | `SETTLEMENT_CA_APPLY_KEY_INTENT_DERIVED` | Planned |
 | 2 | A redelivered OR reissued `ConfirmDebit`/`ConfirmCredit` against the CA lands exactly one Movement (§Idempotency) | integration | `SETTLEMENT_CA_CASH_LEG_IDEMPOTENT` | Planned |
-| 3 | Settlement-facing decline returns 4xx → `ReserveRefused` → HIR, never 200-with-Declined (§Error model) | integration | `SETTLEMENT_CA_DECLINE_IS_4XX` | Planned |
-| 4 | `422 SCA_REQUIRED` at dispatch is retriable under the same `process_id`, never terminal-FAILED (§Error model) | integration | `SETTLEMENT_CA_SCA_STALE_IS_RETRIABLE` | Planned |
+| 3 | Settlement-facing decline returns 4xx → `ReserveRefused` → HIR, never 200-with-Declined (§Error model) | unit | `SETTLEMENT_CA_DECLINE_IS_4XX` | Catalogued (CA-14, Live) |
+| 4 | `422 SCA_REQUIRED` at dispatch is retriable under the same `process_id`, never terminal-FAILED (§Error model) | unit | `SETTLEMENT_CA_SCA_STALE_IS_RETRIABLE` | Catalogued (CA-15, Live) |
 | 5 | Credit-admission + `AccountCredited` append are one own-stream read-modify-write; credit-receive vs `CloseAccount` at the same version yields exactly one commit + an `ACCOUNT_CLOSED` reject on retry (§The credit-admission gate) | integration | `CREDIT_ADMISSION_OWN_STREAM_OCC` | Catalogued (CA-13, Planned) |
 | 6 | `AccountReactivated` + `AccountCredited` are one atomic append batch (§The credit-admission gate) | unit | `CREDIT_REACTIVATE_CREDIT_ATOMIC_BATCH` | Catalogued (CA-7, Live) |
 | 7 | Admission is decided upstream; the generic fold only ever folds admitted credits (§The credit-admission gate) | architecture | `CREDIT_ADMISSION_UPSTREAM_OF_FOLD` | Catalogued (CA-8, Live) |
