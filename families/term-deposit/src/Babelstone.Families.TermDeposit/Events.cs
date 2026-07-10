@@ -125,7 +125,7 @@ public sealed record DepositConstituted(
     /// Promote a RENEWAL constitution's rollover-debit Movement origin/direction to the
     /// <c>ce_movementorigin</c> / <c>ce_movementdirections</c> CloudEvents extension headers the
     /// substrate-owned settlement saga auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC
-    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements"/>). A FRESH constitution carries no
+    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). A FRESH constitution carries no
     /// Movement, so it declares no settlement header and starts no settlement saga — its principal debit stays
     /// the CONSTITUTION saga's gated step (bd babelstone-t7o3.4), untouched by this seam.
     /// </summary>
@@ -182,7 +182,7 @@ public sealed record DepositMatured(
     /// <c>ce_*</c> headers. The substrate-owned settlement saga auto-starts on <c>movementorigin == Originated</c>
     /// (bd babelstone-t7o3.13); a renewal saga still filters header-only on <c>autorenewalpolicy</c>. The two
     /// producers COMPOSE on one hop — distinct keys, no double-populate. Movement headers come via the GENERIC
-    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements"/>), so they name no family. Both are
+    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>), so they name no family. Both are
     /// emitted only when present: a movement-free / empty-policy event declares the corresponding header(s) only
     /// when it has them. All values are closed-enum / structural tokens, never PII (ADR-PC-004 §P2).
     /// </summary>
@@ -270,7 +270,7 @@ public sealed record InterestPaid(
     /// Promote the coupon Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>). Null/empty movements declare no settlement
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). Null/empty movements declare no settlement
     /// header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
@@ -324,7 +324,7 @@ public sealed record DepositTerminatedEarly(
     /// Promote the early-termination payout Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>). Null/empty movements declare no settlement
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). Null/empty movements declare no settlement
     /// header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
