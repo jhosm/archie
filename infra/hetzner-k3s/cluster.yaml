@@ -213,5 +213,33 @@ additional_pre_k3s_commands:
     cat > /etc/rancher/k3s/config.yaml.d/50-secrets-encryption.yaml <<'K3S_CFG'
     secrets-encryption: true
     K3S_CFG
+  # (3) CLEAR THE CLOUD-PROVIDER "uninitialised" TAINT (bd babelstone-zla1.12.28). hetzner-k3s
+  #     hardcodes `--kubelet-arg cloud-provider=external` (src/configuration/main.cr `all_kubelet_args`,
+  #     UNCONDITIONAL) and `--disable-cloud-controller` (templates/master_install_script.sh) into the
+  #     k3s.service ExecStart. The `addons.cloud_controller_manager.enabled: false` toggle above only
+  #     skips installing the CCM *manifest* — it does NOT drop these flags. So with no CCM to clear it,
+  #     the kubelet leaves the node tainted `node.cloudprovider.kubernetes.io/uninitialized:NoSchedule`
+  #     forever and NOTHING schedules (coredns / local-path / system-upgrade / cert-manager all Pending
+  #     — a dead cluster; observed live 2026-07-10). Because those flags live on the k3s.service CLI, a
+  #     config.yaml.d drop-in cannot unset them and there is no hetzner-k3s knob for it. So install a
+  #     tiny systemd oneshot that removes the taint after k3s starts, re-running on EVERY k3s start
+  #     (boot AND a SUC k3s-upgrade restart) via WantedBy/PartOf=k3s.service — reboot-safe, and
+  #     re-applied on every re-provision because it lives here. This box needs NO cloud provider
+  #     (Cloudflare-Tunnel ingress, local-path storage), so an un-tainted node is the intended state.
+  - |
+    cat > /etc/systemd/system/k3s-clear-cloud-taint.service <<'UNTAINT'
+    [Unit]
+    Description=Clear node.cloudprovider.kubernetes.io/uninitialized taint (no external CCM on this box; bd babelstone-zla1.12.28)
+    After=k3s.service
+    PartOf=k3s.service
+    [Service]
+    Type=oneshot
+    ExecStart=/bin/sh -c 'for i in $(seq 1 60); do /usr/local/bin/k3s kubectl taint nodes --all node.cloudprovider.kubernetes.io/uninitialized:NoSchedule- 2>/dev/null && exit 0; sleep 5; done; exit 0'
+    [Install]
+    WantedBy=k3s.service
+    UNTAINT
+    mkdir -p /etc/systemd/system/k3s.service.wants
+    ln -sf /etc/systemd/system/k3s-clear-cloud-taint.service /etc/systemd/system/k3s.service.wants/k3s-clear-cloud-taint.service
+    systemctl daemon-reload || true
 
 protect_against_deletion: true   # guards against an accidental `hetzner-k3s delete`
