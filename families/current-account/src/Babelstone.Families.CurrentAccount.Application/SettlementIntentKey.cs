@@ -5,7 +5,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 
 /// <summary>
 /// Derives the settlement-facing append <c>command_id</c> from the body's economic-INTENT reference — the
-/// ADR-PC-043 §Idempotency slot-4 rule and the scoped ADR-PC-029 inversion. In plain English: for the
+/// ADR-PC-043 slot-4 rule and the scoped ADR-PC-029 inversion. In plain English: for the
 /// engine-owned CA's <c>/credit</c> and <c>/capture</c> endpoints, the exactly-once key is NOT the HTTP
 /// Idempotency-Key header (as every other CA endpoint) but a deterministic function of the intent reference
 /// carried in the request body — so a saga REISSUE (byte-identical body, a fresh dispatch message_id)
@@ -13,7 +13,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Deterministic and byte-stable (ADR-PC-010 §P5).</b> The command id is a name-based (v5, SHA-1) UUID
+/// <b>Deterministic and byte-stable (ADR-PC-010).</b> The command id is a name-based (v5, SHA-1) UUID
 /// over a FIXED committed namespace and the intent reference string — no clock, no minted GUID, no
 /// randomness — so the SAME intent reference always yields the SAME command id (across process restarts and
 /// re-emissions). It mirrors the substrate's own RFC-4122 §4.3 v5 construction (SettlementMovementFanout's
@@ -32,7 +32,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 public static class SettlementIntentKey
 {
     /// <summary>
-    /// The FIXED, committed namespace GUID the CA settlement command ids are derived under (ADR-PC-043 §6 —
+    /// The FIXED, committed namespace GUID the CA settlement command ids are derived under (ADR-PC-043 —
     /// "the <c>CaSettlementNamespace</c> GUID is a fixed committed constant, never regenerated"). Changing it
     /// would re-key every in-flight intent and reopen the replay-into-double floor, so it is a constant, not
     /// config.
@@ -54,7 +54,7 @@ public static class SettlementIntentKey
     }
 
     // RFC-4122 §4.3 name-based (SHA-1) UUID over the namespace + name. Mirrors the substrate's DeriveV5: no
-    // clock, no randomness, so a replay reproduces the id exactly (ADR-PC-010 §P5).
+    // clock, no randomness, so a replay reproduces the id exactly (ADR-PC-010).
     private static Guid DeriveV5(Guid namespaceId, string name)
     {
         var namespaceBytes = namespaceId.ToByteArray();

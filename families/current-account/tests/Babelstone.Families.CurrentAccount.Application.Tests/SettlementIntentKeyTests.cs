@@ -3,7 +3,7 @@ using Xunit;
 namespace Babelstone.Families.CurrentAccount.Application.Tests;
 
 /// <summary>
-/// The settlement-facing append-key derivation (ADR-PC-043 §Idempotency, the scoped ADR-PC-029 inversion): the
+/// The settlement-facing append-key derivation (ADR-PC-043, the scoped ADR-PC-029 inversion): the
 /// /credit and /capture endpoints derive the append command_id from the BODY's economic-intent reference, NOT
 /// the HTTP Idempotency-Key. In plain English: the same intent reference always yields the same command_id, so
 /// a saga REISSUE (a byte-identical body with a fresh dispatch message_id) collapses at command_dedup to ONE
@@ -14,7 +14,7 @@ public sealed class SettlementIntentKeyTests
     [Fact]
     public void The_same_intent_reference_always_derives_the_same_command_id()
     {
-        // Deterministic (ADR-PC-010 §P5 — no clock, no mint): a reissue with the identical intent reference
+        // Deterministic (ADR-PC-010 — no clock, no mint): a reissue with the identical intent reference
         // derives the identical command id, so command_dedup collapses it to one append.
         const string intent = "CREDIT-INTENT-abcdef|maturity";
 

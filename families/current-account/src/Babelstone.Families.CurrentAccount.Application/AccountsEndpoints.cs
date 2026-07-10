@@ -18,7 +18,7 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// NONE of these routes is step-up-SCA-gated. The lifecycle transitions (open / mark-dormant / reactivate
 /// / close) move no money — they only relabel the account's lifecycle state. The synchronous AUTHORIZE
 /// money-mover DOES earmark funds, but it is deliberately ungated too (ADR-PC-034): it is a machine/rail-
-/// initiated, de-settled decision on the mTLS-only internal command surface (ADR-IC-006 §P5 Boundary 2 —
+/// initiated, de-settled decision on the mTLS-only internal command surface (ADR-IC-006 Boundary 2 —
 /// never a public Kong route), and strong customer authentication is an upstream stage-1/2 concern, not
 /// the engine's stage-3/5 decision (ADR-PC-034) — adding an engine-side SCA gate here would contradict
 /// that split. Every route stays idempotent (ADR-PC-029): an at-least-once retry replays the original
@@ -53,7 +53,7 @@ public static class AccountsEndpoints
 
     // The default acting principal recorded on a settlement credit / capture append: the substrate-owned
     // SettlementProcess saga's dispatcher (a machine/saga caller, never human-initiated), a structural role,
-    // never PII (ADR-PC-043 / ADR-PC-004 §P2).
+    // never PII (ADR-PC-043 / ADR-PC-004).
     private const string SettlementActor = "svc:settlement-dispatch";
 
     public static void Map(IEndpointRouteBuilder app)
@@ -71,7 +71,7 @@ public static class AccountsEndpoints
         app.MapPost("/v1/accounts/{id:guid}/reactivate", ReactivateAsync);
         app.MapPost("/v1/accounts/{id:guid}/close", CloseAsync);
 
-        // The synchronous AUTHORIZE money-mover (ADR-PC-037 §D6 / ADR-PC-034): place a hold or decline, in
+        // The synchronous AUTHORIZE money-mover (ADR-PC-037 / ADR-PC-034): place a hold or decline, in
         // real time. Ungated (see the class remarks) but carries a MANDATORY Idempotency-Key — a replayed
         // authorize returns the original verdict (same hold_id) with no second HoldPlaced.
         app.MapPost("/v1/accounts/{id:guid}/authorize", AuthorizeAsync);
@@ -82,7 +82,7 @@ public static class AccountsEndpoints
         // so a saga reissue with a byte-identical body collapses to ONE append at command_dedup. /credit lands
         // a received Credit (admitting Active/Dormant, refusing Closed/Erased by construction); /capture turns
         // an authorize reservation into a real Debit (the spine HoldCaptured + the family AccountDebited in one
-        // append). A DECLINED/rejected settlement is a 4xx (ADR-PC-043 §Error model — never a 200-with-Declined
+        // append). A DECLINED/rejected settlement is a 4xx (ADR-PC-043 — never a 200-with-Declined
         // the dispatcher would mis-classify as Applied).
         app.MapPost("/v1/accounts/{id:guid}/credit", ReceiveCreditAsync);
         app.MapPost("/v1/accounts/{id:guid}/capture", CaptureAsync);
@@ -94,7 +94,7 @@ public static class AccountsEndpoints
         // {id:guid} names the account stream; {holdId} is the hold's free-string lifecycle key.
         app.MapPost("/v1/accounts/{id:guid}/holds/{holdId}/expire", ExpireHoldAsync);
 
-        // The projection-derived OVERDRAFT-ACCRUAL command (ADR-PC-037 §D5): append an OverdraftInterestAccrued
+        // The projection-derived OVERDRAFT-ACCRUAL command (ADR-PC-037): append an OverdraftInterestAccrued
         // for an account the ADR-PC-036 lifecycle-command driver found drawn below zero as-of a value-date. It
         // posts a fee Movement (a Debit that deepens the overdraft), but it is an INTERNAL ledger charge, not a
         // rails money-mover (the fee is an Observed engine-internal-already-effected Movement, ADR-PC-043 — no
@@ -262,7 +262,7 @@ public static class AccountsEndpoints
     }
 
     /// <summary>
-    /// The synchronous authorize decision (ADR-PC-037 §D6 / ADR-PC-034): fold the available balance, apply
+    /// The synchronous authorize decision (ADR-PC-037 / ADR-PC-034): fold the available balance, apply
     /// the pack rules, and place a hold (authorized) or record a refusal fact (declined) — in real time,
     /// idempotently on the mandatory Idempotency-Key command id. A DECLINED verdict is a normal business
     /// outcome on the 200 body (the refusal is an appended auditable fact, not an HTTP error); only a bad
@@ -332,13 +332,13 @@ public static class AccountsEndpoints
     }
 
     /// <summary>
-    /// The settlement CREDIT-receive command (ADR-PC-043 §2 ConfirmCredit / §The credit-admission gate): land
+    /// The settlement CREDIT-receive command (ADR-PC-043): land
     /// a Credit into the account, admitting an Active/Dormant account (a Dormant one reactivates + credits in
     /// one atomic batch) and refusing a Closed/Erased one by construction. The append command_id is derived
     /// from the BODY's economic-intent reference (NOT the HTTP Idempotency-Key — the scoped ADR-PC-029
     /// carve-out), so a saga reissue with a byte-identical body collapses to ONE append at command_dedup. A
     /// rejected admission (Closed → ACCOUNT_CLOSED, Erased → ACCOUNT_ERASED) is a 422 — a 4xx the dispatcher
-    /// classifies as needing the source to hold the funds (ADR-PC-043 §Error model / §Undeliverable credit),
+    /// classifies as needing the source to hold the funds (ADR-PC-043),
     /// NEVER a 200-with-Declined it would march to COMPLETED with zero landing.
     /// </summary>
     private static async Task<IResult> ReceiveCreditAsync(
@@ -353,7 +353,7 @@ public static class AccountsEndpoints
         ArgumentNullException.ThrowIfNull(request);
 
         // The exactly-once key is the BODY's economic-intent reference, NOT the HTTP Idempotency-Key
-        // (ADR-PC-043 §Idempotency — the scoped ADR-PC-029 inversion). It is MANDATORY: a settlement credit
+        // (ADR-PC-043 — the scoped ADR-PC-029 inversion). It is MANDATORY: a settlement credit
         // has no fall-back key (the credit path rests SOLELY on command_dedup, single-guarded).
         if (string.IsNullOrWhiteSpace(request.IntentReference))
         {
@@ -404,7 +404,7 @@ public static class AccountsEndpoints
         catch (DomainRejectedException e)
         {
             // A non-admitting account (Closed → ACCOUNT_CLOSED, Erased → ACCOUNT_ERASED) or a non-positive
-            // amount — a 4xx, never a silent append (ADR-PC-043 §Error model). The source holds the funds.
+            // amount — a 4xx, never a silent append (ADR-PC-043). The source holds the funds.
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
@@ -413,13 +413,12 @@ public static class AccountsEndpoints
     }
 
     /// <summary>
-    /// The settlement CAPTURE command (ADR-PC-043 §2 ConfirmDebit → HoldCaptured + Debit Movement / ADR-PC-037
-    /// §D4): turn an authorize reservation into a real Debit — append the spine <c>HoldCaptured</c> (the
+    /// The settlement CAPTURE command (ADR-PC-043 / ADR-PC-037): turn an authorize reservation into a real Debit — append the spine <c>HoldCaptured</c> (the
     /// earmark release, REUSED) + the family <c>AccountDebited</c> (the Debit Movement) in ONE append. The
     /// append command_id is derived from the BODY's economic-intent reference (NOT the HTTP Idempotency-Key),
     /// so a saga reissue collapses to ONE Debit at command_dedup; the capture also applies only WHERE the hold
     /// state is ACTIVE (the double guard). A capture whose target_hold_id names no active hold is a 422
-    /// (SETTLEMENT_CA_CAPTURE_HOLD_MATCH). A partial / over-capture (ADR-PC-037 §D4) is surfaced on the response.
+    /// (ADR-PC-043; pinned by CurrentAccountCaptureTests). A partial / over-capture (ADR-PC-037) is surfaced on the response.
     /// </summary>
     private static async Task<IResult> CaptureAsync(
         Guid id,
@@ -486,7 +485,7 @@ public static class AccountsEndpoints
         catch (DomainRejectedException e)
         {
             // A hold-match failure (the target names no active authorization hold) or a non-positive amount —
-            // a 4xx, never a phantom debit (ADR-PC-043 §Error model, SETTLEMENT_CA_CAPTURE_HOLD_MATCH).
+            // a 4xx, never a phantom debit (ADR-PC-043; the hold match is pinned by CurrentAccountCaptureTests).
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
@@ -525,7 +524,7 @@ public static class AccountsEndpoints
             clock, ct);
 
     /// <summary>
-    /// The projection-derived overdraft-interest accrual command (ADR-PC-037 §D5): append an
+    /// The projection-derived overdraft-interest accrual command (ADR-PC-037): append an
     /// <c>OverdraftInterestAccrued</c> for an account the ADR-PC-036 lifecycle-command driver found drawn below
     /// zero as-of a value-date. It reuses the shared idempotent choreography — the accrual posts a fee Movement
     /// but it is an INTERNAL ledger charge (an Observed engine-internal-already-effected Movement, ADR-PC-043 —

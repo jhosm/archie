@@ -109,7 +109,7 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             ctx.Pack));
 
-        // The family's OWN product-config store (ADR-PC-037 §D5; see CurrentAccountProductConfigStore for
+        // The family's OWN product-config store (ADR-PC-037; see CurrentAccountProductConfigStore for
         // why it is family-owned, not the deposit spine store): reads product-configs/current-account/ at
         // startup and resolves product_code → arranged overdraft / per-transaction cap for the authorize
         // decider's stage-4 rules. Engine:CurrentAccountConfigsDir overrides the default walk-up discovery
@@ -117,7 +117,7 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
         services.AddSingleton(_ => new CurrentAccountProductConfigStore(
             ctx.Configuration["Engine:CurrentAccountConfigsDir"]));
 
-        // The synchronous AUTHORIZE decider's orchestration (ADR-PC-034 technique / ADR-PC-037 §D6) — a
+        // The synchronous AUTHORIZE decider's orchestration (ADR-PC-034 technique / ADR-PC-037) — a
         // SEPARATE service on the payment hot path (lifecycle relabels state, authorize earmarks funds). It
         // composes the family runtime with the spine-owned, host-level singletons the decision reads: the
         // available-balance + freeze readers, the projection drainer it drains before deciding
@@ -136,7 +136,7 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IPiiProtector>(),
             serviceProvider.GetRequiredService<CurrentAccountProductConfigStore>()));
 
-        // The projection-derived HOLD-EXPIRY command shell (ADR-PC-037 §D4e): the /holds/{holdId}/expire
+        // The projection-derived HOLD-EXPIRY command shell (ADR-PC-037): the /holds/{holdId}/expire
         // target the ADR-PC-036 lifecycle-command driver POSTs to. A THIRD service, distinct from both the
         // lifecycle state machine (relabels state) and the authorize money-mover (places holds): it only
         // releases a hold, moving no money. It composes just the family runtime and the pinned pack — the
@@ -145,13 +145,13 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             ctx.Pack));
 
-        // The projection-derived OVERDRAFT-ACCRUAL command shell (ADR-PC-037 §D5): the /overdraft/accrue target
+        // The projection-derived OVERDRAFT-ACCRUAL command shell (ADR-PC-037): the /overdraft/accrue target
         // the ADR-PC-036 lifecycle-command driver POSTs to for an account it found drawn below zero. A FOURTH
         // service — it posts a fee Movement against the drawn balance, so unlike hold-expiry it reads the
         // balance and resolves a rate: it composes the family runtime, the spine balance reader, the family's
         // own product-config store (the overdraft rate REF), the rate-sheet store (the numeric TAN, ADR-PC-008),
         // and the pinned pack. All are family→engine dependencies — the host still names no current-account type
-        // (ENGINE_API_HOST_FAMILY_AGNOSTIC). The fee math is command-side in the pure decider (ADR-PC-037 §P3).
+        // (ENGINE_API_HOST_FAMILY_AGNOSTIC). The fee math is command-side in the pure decider (ADR-PC-037).
         services.AddSingleton(serviceProvider => new CurrentAccountOverdraftAccrualService(
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             serviceProvider.GetRequiredService<AccountBalanceReader>(),
@@ -159,9 +159,9 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IRateSheetStore>(),
             ctx.Pack));
 
-        // The settlement CREDIT-receive command shell (ADR-PC-043 §The credit-admission gate): the /credit
+        // The settlement CREDIT-receive command shell (ADR-PC-043): the /credit
         // target the substrate SettlementProcess saga POSTs to. The family's FIRST money-IN service — it loads
-        // the account's own stream, runs the pure ICreditAdmissible admission decider, and appends
+        // the account's own stream, runs the pure CurrentAccountCreditAdmissionDecider, and appends
         // AccountCredited at the loaded version under per-stream OCC (a Closed/Erased account is refused by
         // construction). It composes just the family runtime + the pinned pack (admission is a pure decision on
         // the folded lifecycle; no balance read needed). A family→engine dependency (ENGINE_API_HOST_FAMILY_AGNOSTIC).
@@ -169,7 +169,7 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             ctx.Pack));
 
-        // The settlement CAPTURE command shell (ADR-PC-043 §2 ConfirmDebit / ADR-PC-037 §D4): the /capture
+        // The settlement CAPTURE command shell (ADR-PC-043 / ADR-PC-037): the /capture
         // target the substrate SettlementProcess saga POSTs to. It turns an authorize reservation into a real
         // debit — appending the spine HoldCaptured + the family AccountDebited in one atomic batch — so unlike
         // the credit service it reads the active-hold set (to enforce authorize.hold_id == capture.target and

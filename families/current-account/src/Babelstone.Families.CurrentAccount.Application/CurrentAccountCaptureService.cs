@@ -6,28 +6,27 @@ using Babelstone.Packs;
 namespace Babelstone.Families.CurrentAccount.Application;
 
 /// <summary>
-/// The impure command shell for the settlement CAPTURE path (ADR-PC-043 §2 ConfirmDebit → HoldCaptured +
-/// Debit Movement / ADR-PC-037 §D4). In plain English: it turns an authorize reservation into a REAL debit —
+/// The impure command shell for the settlement CAPTURE path (ADR-PC-043 / ADR-PC-037). In plain English: it turns an authorize reservation into a REAL debit —
 /// it releases the placed hold and lands a Debit that actually moves the money — in one atomic append. It
 /// funds a fresh deposit or collects a loan installment against the customer's engine-owned current account.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>One atomic append: the spine HoldCaptured + the family AccountDebited (ADR-PC-043 §2).</b> The service
+/// <b>One atomic append: the spine HoldCaptured + the family AccountDebited (ADR-PC-043).</b> The service
 /// appends BOTH the engine-owned <see cref="HoldCaptured"/> (the earmark release — REUSED, never redefined,
 /// ADR-PC-033) and the family <see cref="AccountDebited"/> (the Debit Movement) in ONE
 /// <see cref="AggregateRuntime{TState}.AppendAsync"/> call, so the hold leaves the active set and the debit
 /// posts together or not at all. When the spine projection drive folds the batch, the
 /// <c>AccountHoldProjector</c> captures the hold WHERE its state is ACTIVE (the store's
 /// <c>UPDATE … WHERE state='ACTIVE'</c>) and SURFACES a partial / over-capture as a
-/// <see cref="HoldReleaseResult"/> reconciliation signal (ADR-PC-037 §D4) — never silently absorbed.
+/// <see cref="HoldReleaseResult"/> reconciliation signal (ADR-PC-037) — never silently absorbed.
 /// </para>
 /// <para>
-/// <b>Double-guarded idempotency (ADR-PC-043 §4).</b> command_dedup on the intent-derived
+/// <b>Double-guarded idempotency (ADR-PC-043).</b> command_dedup on the intent-derived
 /// <c>command_id</c> (a byte-identical saga reissue collapses to ONE append) PLUS the capture applying only
 /// WHERE the hold state is ACTIVE (a second capture of an already-captured hold folds as a no-op, never a
 /// double-release). So a redelivered / reissued capture lands EXACTLY ONE Debit Movement
-/// (SETTLEMENT_CA_CAPTURE_HOLD_MATCH).
+/// (pinned by CurrentAccountCaptureTests).
 /// </para>
 /// <para>
 /// <b>Hold-match enforced for one intent (ADR-PC-043).</b> Before appending, the shell drains the spine read
@@ -53,8 +52,8 @@ public sealed class CurrentAccountCaptureService(
     /// read model so the placed hold is visible, requires the command's target hold to be an ACTIVE
     /// authorization hold on this account (else <see cref="DomainRejectedException"/>), then appends the
     /// engine <see cref="HoldCaptured"/> + the family <see cref="AccountDebited"/> in one batch, idempotently
-    /// on the intent-derived command id. Reports a partial / over-capture reconciliation signal (ADR-PC-037
-    /// §D4) on the response. Propagates <see cref="DuplicateCommandException"/> /
+    /// on the intent-derived command id. Reports a partial / over-capture reconciliation signal (ADR-PC-037)
+    /// on the response. Propagates <see cref="DuplicateCommandException"/> /
     /// <see cref="ConcurrencyException"/> for the endpoint to map.
     /// </summary>
     public async Task<CaptureOutcome> CaptureAsync(
@@ -70,8 +69,8 @@ public sealed class CurrentAccountCaptureService(
         // hold-match check below (the same safety the authorize shell drains for).
         await drainer.DrainOnceAsync(ct);
 
-        // The pure decision: enforce the hold match (SETTLEMENT_CA_CAPTURE_HOLD_MATCH), classify the
-        // partial/over-capture (ADR-PC-037 §D4), and build the ONE atomic append batch (the spine HoldCaptured
+        // The pure decision: enforce the hold match (ADR-PC-043; pinned by CurrentAccountCaptureTests), classify the
+        // partial/over-capture (ADR-PC-037), and build the ONE atomic append batch (the spine HoldCaptured
         // + the family AccountDebited). GetActiveHoldsAsync returns only ACTIVE rows, so the decider's target
         // match is the command-time half of the double guard; the projection-time half is the store's WHERE
         // state='ACTIVE'. A non-positive amount or an unmatched target throws DomainRejectedException here,
@@ -94,20 +93,20 @@ public sealed class CurrentAccountCaptureService(
 
 /// <summary>The outcome of a capture: the commit sequence the batch reached (the read-your-writes token,
 /// ADR-IC-005) and a non-normal reconciliation signal when the captured amount did not equal the held amount
-/// (ADR-PC-037 §D4), or null on a clean full capture.</summary>
+/// (ADR-PC-037), or null on a clean full capture.</summary>
 public sealed record CaptureOutcome(long CommitSequence, string? Reconciliation);
 
-/// <summary>The bounded capture-reconciliation taxonomy (ADR-PC-037 §D4): the two non-normal capture-amount
+/// <summary>The bounded capture-reconciliation taxonomy (ADR-PC-037): the two non-normal capture-amount
 /// outcomes a capture surfaces so a partial / over-capture is never silently absorbed. A clean full capture
 /// carries neither (null).</summary>
 public static class SettlementReconciliation
 {
     /// <summary>The captured amount was LESS than the placed hold — the remainder is released (the whole hold
-    /// leaves the active set; only the captured cents posted, ADR-PC-033 / ADR-PC-037 §D4).</summary>
+    /// leaves the active set; only the captured cents posted, ADR-PC-033 / ADR-PC-037).</summary>
     public const string PartialCapture = "PARTIAL_CAPTURE";
 
     /// <summary>The captured amount EXCEEDED the placed hold — the money moved (the row transitioned), but the
-    /// mismatch is a reconciliation signal, never silently absorbed (ADR-PC-037 §D4;
+    /// mismatch is a reconciliation signal, never silently absorbed (ADR-PC-037;
     /// HoldReleaseResult.TransitionedOverCaptured).</summary>
     public const string OverCaptured = "OVER_CAPTURED";
 }
