@@ -229,7 +229,10 @@ helm upgrade --install vault-csi-provider hashicorp/vault \
   --version "$VAULT_CHART_VERSION" \
   --namespace kube-system \
   --set "csi.enabled=true" --set "server.enabled=false" --set "injector.enabled=false"
-kubectl -n kube-system rollout status ds/csi-secrets-store-secrets-store-csi-driver --timeout=300s
+# The DaemonSet name is from the VENDORED upstream manifest (metadata.name: csi-secrets-store),
+# NOT the Helm-chart-derived name `csi-secrets-store-secrets-store-csi-driver` (this is a
+# `kubectl apply` of upstream/, not a Helm install — bd babelstone-zla1.12.29).
+kubectl -n kube-system rollout status ds/csi-secrets-store --timeout=300s
 
 # ── STEP 5 · the app namespace (idempotent) ──────────────────────────────────────────────
 step "5. namespace ${APP_NAMESPACE} (idempotent apply)"
