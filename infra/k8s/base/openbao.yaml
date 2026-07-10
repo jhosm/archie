@@ -71,6 +71,29 @@ metadata:
   labels:
     app.kubernetes.io/name: openbao
 ---
+# Let the openbao ServiceAccount submit TokenReviews (system:auth-delegator). OpenBao's
+# Kubernetes auth method validates a mounting workload's projected SA token by calling the k8s
+# TokenReview API with the openbao SA's OWN token as the reviewer (token_reviewer_jwt, set at
+# operator init). Without this binding that review is forbidden, so every CSI login
+# (vault-csi-provider -> auth/kubernetes/login) fails and the engine never mounts
+# babelstone-app-secrets (bd babelstone-zla1.12.31). Cluster-scoped, mirroring the driver's own
+# vault-csi-provider-server-binding. The subject namespace is set by the overlay's namespace
+# transformer (babelstone-staging for the staging overlay — the only place OpenBao runs live).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-auth-delegator
+  labels:
+    app.kubernetes.io/name: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: openbao
+    namespace: babelstone-staging
+---
 # Raft data volume. A standalone PVC (ReadWriteOnce) rather than a StatefulSet
 # volumeClaimTemplate, because OpenBao here MUST stay a Deployment: the staging
 # overlay's resources.patch.yaml (which sizes the single node) targets
