@@ -23,6 +23,17 @@ public static class LifecycleTransitions
         /// <summary>Reject disbursement — <see cref="LoanDisbursementFailed"/> (no loan opens).</summary>
         FailDisbursement,
 
+        /// <summary>Hold the approved disbursement at source when it cannot be delivered —
+        /// <see cref="LoanDisbursementPending"/> (Pending → DisbursementPending). ADR-PC-043 slot 5 / bd
+        /// babelstone-98mj.6: the money is held rather than disgorged. A reversible marker, resolved by
+        /// <see cref="LandDisbursement"/> once a live destination exists.</summary>
+        DisbursePend,
+
+        /// <summary>Land the held disbursement once the destination is receivable —
+        /// <see cref="LoanDisbursementLanded"/> (DisbursementPending → Active). The resolve leg of
+        /// <see cref="DisbursePend"/>; the loan becomes live/amortizing.</summary>
+        LandDisbursement,
+
         /// <summary>Pay a scheduled installment — <see cref="LoanInstallmentPaid"/> (state-preserving on an Active loan).</summary>
         PayInstallment,
 
@@ -63,6 +74,13 @@ public static class LifecycleTransitions
             [Transition.Disburse] = Set(LoanLifecycle.Pending),
             [Transition.FailDisbursement] = Set(LoanLifecycle.Pending),
 
+            // Undeliverable-disbursement hold (ADR-PC-043 slot 5, bd babelstone-98mj.6): an approved loan
+            // whose disbursement cannot land holds it at source (Pending → DisbursementPending), and the
+            // resolve leg lands it once a live destination exists (DisbursementPending → Active). A reversible
+            // marker, so DisbursementPending is NOT terminal (it is a legal source of LandDisbursement and Erase).
+            [Transition.DisbursePend] = Set(LoanLifecycle.Pending),
+            [Transition.LandDisbursement] = Set(LoanLifecycle.DisbursementPending),
+
             // Operating on a live loan: only from Active.
             [Transition.PayInstallment] = Set(LoanLifecycle.Active),
             [Transition.RepayEarly] = Set(LoanLifecycle.Active),
@@ -76,6 +94,7 @@ public static class LifecycleTransitions
             // Erased itself (already erased — the decider rejects a re-erasure, also the idempotency guard).
             [Transition.Erase] = Set(
                 LoanLifecycle.Active,
+                LoanLifecycle.DisbursementPending,
                 LoanLifecycle.Failed,
                 LoanLifecycle.Settled,
                 LoanLifecycle.WrittenOff),

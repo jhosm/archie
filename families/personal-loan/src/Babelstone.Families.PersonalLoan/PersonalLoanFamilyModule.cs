@@ -33,6 +33,12 @@ public sealed class PersonalLoanFamilyModule : IFamilyModule
             new DispatchableHandler<LoanPosition, LoanSettled>(new LoanSettledHandler())),
         new("personal_loan.LoanWrittenOff", typeof(LoanWrittenOff),
             new DispatchableHandler<LoanPosition, LoanWrittenOff>(new LoanWrittenOffHandler())),
+        // The undeliverable-disbursement pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): held-at-source and
+        // its resolve-to-active leg (Pending → DisbursementPending → Active).
+        new("personal_loan.LoanDisbursementPending", typeof(LoanDisbursementPending),
+            new DispatchableHandler<LoanPosition, LoanDisbursementPending>(new LoanDisbursementPendingHandler())),
+        new("personal_loan.LoanDisbursementLanded", typeof(LoanDisbursementLanded),
+            new DispatchableHandler<LoanPosition, LoanDisbursementLanded>(new LoanDisbursementLandedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's LoanPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every

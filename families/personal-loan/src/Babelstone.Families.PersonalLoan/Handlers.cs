@@ -44,6 +44,33 @@ public sealed class LoanDisbursementFailedHandler : IEventHandler<LoanPosition, 
         });
 }
 
+// The undeliverable-disbursement pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): an approved loan holds
+// the disbursement AT SOURCE when it cannot land, then resolves to active once a live destination exists.
+// Same purity contract as the folds above — a single `state with { … }`, no clock/I/O/randomness
+// (BENG001/002/003); each LABELS lifecycle only. Transition legality is LifecycleTransitions.
+
+public sealed class LoanDisbursementPendingHandler : IEventHandler<LoanPosition, LoanDisbursementPending>
+{
+    public HandlerResult<LoanPosition> Apply(LoanPosition state, LoanDisbursementPending @event)
+        => HandlerResult<LoanPosition>.From(state with
+        {
+            // Held at source: mark the loan disbursement-pending. The undeliverable credit's attributed IOU
+            // is the engine's cross-cutting operations.CreditUnapplied — this only labels the source.
+            LoanId = @event.LoanId,
+            Lifecycle = LoanLifecycle.DisbursementPending,
+        });
+}
+
+public sealed class LoanDisbursementLandedHandler : IEventHandler<LoanPosition, LoanDisbursementLanded>
+{
+    public HandlerResult<LoanPosition> Apply(LoanPosition state, LoanDisbursementLanded @event)
+        => HandlerResult<LoanPosition>.From(state with
+        {
+            // Resolved: the re-attempt landed, so the loan becomes live/amortizing.
+            Lifecycle = LoanLifecycle.Active,
+        });
+}
+
 public sealed class LoanInstallmentPaidHandler : IEventHandler<LoanPosition, LoanInstallmentPaid>
 {
     public HandlerResult<LoanPosition> Apply(LoanPosition state, LoanInstallmentPaid @event)

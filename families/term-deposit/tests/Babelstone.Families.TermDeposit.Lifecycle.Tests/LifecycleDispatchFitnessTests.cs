@@ -98,6 +98,9 @@ public sealed class LifecycleDispatchFitnessTests
         public Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(CancellationToken ct = default) =>
             throw new NotSupportedException();
 
+        public Task<IReadOnlyList<DepositReadModelRow>> ListPayoutPendingAsync(CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
         public Task UpsertAsync(DepositReadModelRow row, CancellationToken ct = default) =>
             throw new NotSupportedException();
 

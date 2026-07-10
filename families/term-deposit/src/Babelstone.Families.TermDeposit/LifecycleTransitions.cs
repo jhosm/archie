@@ -75,6 +75,17 @@ public static class LifecycleTransitions
         /// <summary>Correct a recorded fact — <see cref="DepositCorrected"/> (state-preserving; the real bitemporal supersession is D.1/D.2).</summary>
         Correct,
 
+        /// <summary>Hold the matured payout at source when it cannot be delivered —
+        /// <see cref="DepositPayoutPending"/> (Matured → PayoutPending). ADR-PC-043 slot 5 / bd
+        /// babelstone-98mj.6: the money is held rather than disgorged. A reversible marker on the closed
+        /// side of maturity, resolved by <see cref="LandPayout"/> once a live destination exists.</summary>
+        PayoutPend,
+
+        /// <summary>Land the held payout once the destination is receivable —
+        /// <see cref="DepositPayoutLanded"/> (PayoutPending → Matured). The resolve leg of
+        /// <see cref="PayoutPend"/>; the deposit reaches its settled maturity terminal.</summary>
+        LandPayout,
+
         /// <summary>Erase the subject's personal data — the engine-declared cross-cutting
         /// <see cref="Babelstone.Engine.PersonalDataErasureRequested"/> (→ Erased). GDPR Article 17
         /// (ADR-PC-004 §P3/A4): legal from ANY state that still holds the subject's PII (live OR
@@ -118,6 +129,14 @@ public static class LifecycleTransitions
             [Transition.TerminateEarly] = Set(DepositLifecycle.Active),
             [Transition.TransferToHeirs] = Set(DepositLifecycle.Active),
 
+            // Undeliverable-payout hold (ADR-PC-043 slot 5, bd babelstone-98mj.6): a matured deposit whose
+            // payout cannot land holds it at source (Matured → PayoutPending), and the resolve leg lands it
+            // once a live destination exists (PayoutPending → Matured). Unlike the business-terminal
+            // transitions above, this pair is a reversible marker on the closed side of maturity, so
+            // PayoutPending is NOT business-terminal (it is a legal source of LandPayout and Erase).
+            [Transition.PayoutPend] = Set(DepositLifecycle.Matured),
+            [Transition.LandPayout] = Set(DepositLifecycle.PayoutPending),
+
             // GDPR erasure (ADR-PC-004 §P3): legal from any state that still holds the subject's PII —
             // a live deposit OR an already-closed one (a Matured/TerminatedEarly/Renewed/
             // TransferredToHeirs/Failed deposit still carries the subject's PII until erased). Excluded:
@@ -126,6 +145,7 @@ public static class LifecycleTransitions
             [Transition.Erase] = Set(
                 DepositLifecycle.Active,
                 DepositLifecycle.Matured,
+                DepositLifecycle.PayoutPending,
                 DepositLifecycle.Failed,
                 DepositLifecycle.Renewed,
                 DepositLifecycle.TerminatedEarly,

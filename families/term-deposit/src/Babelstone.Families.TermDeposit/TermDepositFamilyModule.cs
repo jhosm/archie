@@ -52,6 +52,12 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositCorrected>(new DepositCorrectedHandler())),
         new("term_deposit.DepositTransferredToHeirs", typeof(DepositTransferredToHeirs),
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
+        // The undeliverable-payout pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): held-at-source and its
+        // resolve-back leg (Matured → PayoutPending → Matured).
+        new("term_deposit.DepositPayoutPending", typeof(DepositPayoutPending),
+            new DispatchableHandler<DepositPosition, DepositPayoutPending>(new DepositPayoutPendingHandler())),
+        new("term_deposit.DepositPayoutLanded", typeof(DepositPayoutLanded),
+            new DispatchableHandler<DepositPosition, DepositPayoutLanded>(new DepositPayoutLandedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's DepositPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every

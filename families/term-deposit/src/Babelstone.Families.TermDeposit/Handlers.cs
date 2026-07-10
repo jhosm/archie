@@ -88,6 +88,32 @@ public sealed class DepositMaturedHandler : IEventHandler<DepositPosition, Depos
         });
 }
 
+// The undeliverable-payout pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): the matured deposit holds
+// the payout AT SOURCE when it cannot land, then resolves back once a live destination exists. Same
+// purity contract as the folds above — a single `state with { … }`, no clock/I/O/randomness
+// (BENG001/002/003); each LABELS lifecycle only. Transition legality is F.3 (LifecycleTransitions).
+
+public sealed class DepositPayoutPendingHandler : IEventHandler<DepositPosition, DepositPayoutPending>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositPayoutPending @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            // Held at source: mark the deposit payout-pending. The undeliverable credit's attributed IOU
+            // is the engine's cross-cutting operations.CreditUnapplied — this only labels the source.
+            Lifecycle = DepositLifecycle.PayoutPending,
+        });
+}
+
+public sealed class DepositPayoutLandedHandler : IEventHandler<DepositPosition, DepositPayoutLanded>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositPayoutLanded @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            // Resolved: the re-attempt landed, so the deposit reaches its settled maturity terminal.
+            Lifecycle = DepositLifecycle.Matured,
+        });
+}
+
 // The seven remaining folds (F.2, babelstone-5czr). Same purity contract as the four above:
 // each body is a single `state with { … }`, no clock/I/O/randomness (BENG001/002/003). These
 // LABEL lifecycle and accumulate carried facts; transition legality is F.3 (babelstone-29v8).

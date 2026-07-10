@@ -5,7 +5,7 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Tests;
 
 /// <summary>
-/// E.1 dispatch tests: the family module registers all eleven term-deposit family event types plus
+/// E.1 dispatch tests: the family module registers all thirteen term-deposit family event types plus
 /// the engine-declared cross-cutting set, and the engine folds each through its handler into the
 /// deposit position. The canonical AT_MATURITY numbers match the decider + financial-math kernel (the
 /// §5.4 withholding split). GDPR erasure is no longer a family event — it is the cross-cutting
@@ -16,14 +16,16 @@ public sealed class TermDepositDispatchTests
     private static readonly HandlerRegistry Registry = TermDepositFamilyModule.Registry();
 
     [Fact]
-    public void Module_registers_the_eleven_family_events_plus_the_cross_cutting_set()
+    public void Module_registers_the_thirteen_family_events_plus_the_cross_cutting_set()
     {
         var module = new TermDepositFamilyModule();
 
-        // Eleven term-deposit family events plus the engine-declared cross-cutting operational events
-        // the family splices in (CrossCuttingEventRegistrations.For<DepositPosition>(), event-store §4.1).
+        // Thirteen term-deposit family events (the eleven original plus the ADR-PC-043 slot-5
+        // undeliverable-payout pair DepositPayoutPending / DepositPayoutLanded, bd babelstone-98mj.6) plus
+        // the engine-declared cross-cutting operational events the family splices in
+        // (CrossCuttingEventRegistrations.For<DepositPosition>(), event-store §4.1).
         var crossCutting = CrossCuttingEventRegistrations.For<DepositPosition>();
-        Assert.Equal(11 + crossCutting.Count, module.Handlers.Count);
+        Assert.Equal(13 + crossCutting.Count, module.Handlers.Count);
 
         // The cross-cutting events register under the synthetic `operations` prefix, NOT a family one
         // (they are family-agnostic — event-store §4.3): PackVersionMigrated (ADR-PC-009 §P3) and the
