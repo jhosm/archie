@@ -404,7 +404,11 @@ public static class AccountsEndpoints
         catch (DomainRejectedException e)
         {
             // A non-admitting account (Closed → ACCOUNT_CLOSED, Erased → ACCOUNT_ERASED) or a non-positive
-            // amount — a 4xx, never a silent append (ADR-PC-043). The source holds the funds.
+            // amount — a 4xx, never a silent append (ADR-PC-043 §5, the SETTLEMENT_CA_DECLINE_IS_4XX contract).
+            // This is the settlement-facing decline shape the dispatcher classifies as a Refused →
+            // ReserveRefused → HIR park — DISTINCT from the customer authorize endpoint's 200-with-Declined
+            // body, which the dispatcher would mis-read as Applied and march to COMPLETED with zero landing.
+            // The source holds the funds.
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
@@ -484,8 +488,11 @@ public static class AccountsEndpoints
         }
         catch (DomainRejectedException e)
         {
-            // A hold-match failure (the target names no active authorization hold) or a non-positive amount —
-            // a 4xx, never a phantom debit (ADR-PC-043; the hold match is pinned by CurrentAccountCaptureTests).
+            // A hold-match failure (the target names no active authorization hold — a declined / frozen /
+            // insufficient reserve on the debit path) or a non-positive amount — a 4xx, never a phantom debit
+            // (ADR-PC-043 §5, the SETTLEMENT_CA_DECLINE_IS_4XX contract; the hold match is pinned by
+            // CurrentAccountCaptureTests). The dispatcher classifies this 4xx as a Refused → ReserveRefused →
+            // HIR park, never a 200-with-Declined it would march to COMPLETED with zero landing.
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
