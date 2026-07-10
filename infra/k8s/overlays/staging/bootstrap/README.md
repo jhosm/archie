@@ -73,13 +73,13 @@ Third-party controllers are installed at a **pinned version, never floating `lat
 bring-up is reproducible and an upstream release can't silently change what lands on the box
 (the same supply-chain ethos as the digest-pinned first-party images, PR #531). The versions
 below MUST stay **identical** to [`scripts/staging-bootstrap.sh`](../../../../../scripts/staging-bootstrap.sh)
-— the script and this list are one contract. The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s server 1.35. These controller versions are pinned for reproducibility (never `latest`) as a chosen starting point, and they PREDATE k8s 1.35's tested support window — so they are NOT proven-compatible with 1.35 and MUST be verified against k8s 1.35, and bumped if needed, BEFORE a live provision.
+— the script and this list are one contract. The pinned k3s is `v1.35.6+k3s1` (`infra/hetzner-k3s/cluster.yaml` `k3s_version`), i.e. k8s server 1.35. These controller versions were VERIFIED against k8s 1.35 and bumped to a 1.35-supported line on 2026-07-10 (bd babelstone-zla1.12.26): cert-manager v1.21 supports k8s 1.33→1.36 (v1.16 was EOL and stopped at 1.32), system-upgrade-controller v0.19 is the first release built for k8s 1.35, and the hashicorp/vault chart 0.34.0 ships vault-csi-provider v1.7.3 (GA APIs, no kubeVersion ceiling — the earlier `4.1.0` was not a resolvable chart version). Re-verify against the support matrices before any future k8s bump.
 To verify/bump: cert-manager `helm search repo jetstack/cert-manager --versions`; Traefik
 `helm search repo traefik/traefik --versions`; system-upgrade-controller the
 [releases page](https://github.com/rancher/system-upgrade-controller/releases);
 vault-csi-provider `helm search repo hashicorp/vault --versions` (the chart's `csi:`
-subcomponent). Pinned: cert-manager `v1.16.2`, Traefik chart `33.2.1`,
-system-upgrade-controller `v0.14.2`, HashiCorp vault chart `4.1.0` (vault-csi-provider).
+subcomponent). Pinned: cert-manager `v1.21.0`, Traefik chart `33.2.1`,
+system-upgrade-controller `v0.19.2`, HashiCorp vault chart `0.34.0` (vault-csi-provider).
 The Secrets Store CSI **driver** itself is vendored + pinned to `v1.6.0` under
 [`../../../components/openbao-csi/upstream/`](../../../components/openbao-csi/upstream/)
 (applied by `kubectl apply -f`, not Helm — re-vendor from the tag to bump; see that
@@ -87,9 +87,9 @@ component's README).
 
 ```bash
 # 1. Install cert-manager (with its CRDs) — Helm is the upstream-recommended path.
-#    PINNED to v1.16.2 (never `latest`) — keep in lockstep with staging-bootstrap.sh.
+#    PINNED to v1.21.0 (never `latest`) — keep in lockstep with staging-bootstrap.sh.
 helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm install cert-manager jetstack/cert-manager --version v1.16.2 \
+helm install cert-manager jetstack/cert-manager --version v1.21.0 \
   --namespace cert-manager --create-namespace --set crds.enabled=true
 
 # 1a. Install the Traefik ingress controller (bd babelstone-zla1.14). hetzner-k3s disables
@@ -102,11 +102,11 @@ helm install traefik traefik/traefik --version 33.2.1 \
   -f infra/k8s/overlays/staging/bootstrap/helm/traefik-values.yaml
 
 # 1b. Install Rancher's system-upgrade-controller (creates the `system-upgrade` ns + SA the
-#     k3s upgrade Plan uses). PINNED to the v0.14.2 release tag (releases/download/<TAG>/…),
+#     k3s upgrade Plan uses). PINNED to the v0.19.2 release tag (releases/download/<TAG>/…),
 #     NOT releases/latest/download/… — keep in lockstep with staging-bootstrap.sh.
 #     (The external CSI snapshot controller is no longer installed — the Hetzner CSI is dropped;
 #     bd babelstone-zla1.12.20.)
-kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/v0.14.2/system-upgrade-controller.yaml
+kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/download/v0.19.2/system-upgrade-controller.yaml
 
 # 1c. Install the Secrets Store CSI driver + the HashiCorp vault-csi-provider (bd
 #     babelstone-zla1.12.21) — cluster-scoped, both land in kube-system. This is the
@@ -118,7 +118,7 @@ kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/d
 #     infra/k8s/components/openbao-csi/README.md). The driver install is the VENDORED, pinned
 #     (v1.6.0) material under that component's upstream/ — applied file-by-file so it is
 #     hermetic (no remote fetch); the vault-csi-provider is the upstream HashiCorp chart,
-#     PINNED to chart 4.1.0 — keep in lockstep with staging-bootstrap.sh.
+#     PINNED to chart 0.34.0 (ships vault-csi-provider v1.7.3) — keep in lockstep with staging-bootstrap.sh.
 kubectl apply -f infra/k8s/components/openbao-csi/upstream/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
 kubectl apply -f infra/k8s/components/openbao-csi/upstream/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
 kubectl apply -f infra/k8s/components/openbao-csi/upstream/rbac-secretproviderclass.yaml
@@ -126,7 +126,7 @@ kubectl apply -f infra/k8s/components/openbao-csi/upstream/rbac-secretprovidersy
 kubectl apply -f infra/k8s/components/openbao-csi/upstream/csidriver.yaml
 kubectl apply -f infra/k8s/components/openbao-csi/upstream/secrets-store-csi-driver.yaml
 helm repo add hashicorp https://helm.releases.hashicorp.com && helm repo update
-helm install vault-csi-provider hashicorp/vault --version 4.1.0 \
+helm install vault-csi-provider hashicorp/vault --version 0.34.0 \
   --namespace kube-system \
   --set "csi.enabled=true" --set "server.enabled=false" --set "injector.enabled=false"
 
