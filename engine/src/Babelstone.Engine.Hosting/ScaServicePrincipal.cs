@@ -89,17 +89,17 @@ public static class ScaServicePrincipal
     /// decision an internal caller (the orchestrator saga dispatcher, the MCP account tools, the ADR-PC-036
     /// lifecycle-command driver's hold-expiry / accrual siblings) invokes on the mTLS-only internal command
     /// surface (ADR-IC-006 §P5 Boundary-2). Defined here as the settled name for the authorize operation so
-    /// that IF internal money-mover parity is later adopted (bd babelstone-sx4v acceptance criterion 2), the
-    /// gate wires against a NAMED, distinct scope — never a silent reuse of the lifecycle-sweep allowance.
+    /// that future adoption of an engine-side gate wires against a NAMED, distinct scope — never a silent
+    /// reuse of the lifecycle-sweep allowance.
     /// <para>
-    /// TRUST-SCOPE DECISION (bd babelstone-sx4v acceptance criterion 1). Authorizing an ARBITRARY debit is a
-    /// materially wider power than firing a scheduled, self-computed lifecycle occurrence (a deposit's
-    /// maturity / coupon or a loan's installment, whose amount and timing the schedule dictates). So a debit-
-    /// authorizing principal MUST carry a DISTINCT scope — <see cref="AuthorizeDebitScope"/> — never the
-    /// <see cref="LifecycleMoneyMoverScope"/> the clock-driven sweeps present: a leaked lifecycle-driver token
-    /// must not be turnable on the authorize surface, and conversely a payment-authorize principal has no
-    /// business firing a maturity. This is the "scoped, not blanket" split (ADR-PC-036 §Consequences) applied
-    /// to the authorize surface: two disjoint scopes, two disjoint route allowances.
+    /// TRUST-SCOPE DECISION. Authorizing an ARBITRARY debit is a materially wider power than firing a
+    /// scheduled, self-computed lifecycle occurrence (a deposit's maturity / coupon or a loan's installment,
+    /// whose amount and timing the schedule dictates). So a debit-authorizing principal MUST carry a DISTINCT
+    /// scope — <see cref="AuthorizeDebitScope"/> — never the <see cref="LifecycleMoneyMoverScope"/> the
+    /// clock-driven sweeps present: a leaked lifecycle-driver token must not be turnable on the authorize
+    /// surface, and conversely a payment-authorize principal has no business firing a maturity. This is the
+    /// "scoped, not blanket" split (ADR-PC-036 §Consequences) applied to the authorize surface: two disjoint
+    /// scopes, two disjoint route allowances.
     /// </para>
     /// <para>
     /// NOT CURRENTLY GATED. <see cref="AuthorizeOperation"/> is DELIBERATELY absent from
@@ -111,24 +111,23 @@ public static class ScaServicePrincipal
     /// trusted internal services. Wrapping it in the <see cref="ScaPreconditionFilter"/> would fail those
     /// internal callers CLOSED: they forward a service principal, not a human <c>acr</c>/<c>auth_time</c>, so
     /// the filter's human-SCA fallback would return <c>422 SCA_REQUIRED</c> — and it would break the
-    /// AUTHORIZATION_SYNC_IDEMPOTENT contract, whose callers present no SCA header at all. Adopting an engine-
-    /// side gate here therefore stays a FUTURE, ADR-PC-034-amending decision; this constant records the
-    /// distinct scope so that future adoption is a wiring change, not a fresh trust-scope negotiation.
+    /// AUTHORIZATION_SYNC_IDEMPOTENT contract, whose callers present no SCA header at all. This constant is
+    /// defined as the settled, distinct name/scope so future adoption is a wiring change, not a fresh
+    /// trust-scope negotiation (an ADR-PC-034-amending step).
     /// </para>
     /// </summary>
     public const string AuthorizeOperation = "authorize";
 
-    /// <summary>The DISTINCT scope a debit-authorizing service principal would carry IF internal
-    /// money-mover parity is later adopted for <see cref="AuthorizeOperation"/> (bd babelstone-sx4v). It is
-    /// DELIBERATELY NOT the <see cref="LifecycleMoneyMoverScope"/>: authorizing an arbitrary debit is a wider
-    /// power than firing a scheduled lifecycle occurrence, so the two live in disjoint scope namespaces —
-    /// a leaked lifecycle-sweep token cannot reach the authorize surface, and vice versa. Defined but NOT yet
-    /// wired: <see cref="IsAuthorised"/> only recognises <see cref="LifecycleMoneyMoverScope"/> today, because
+    /// <summary>The DISTINCT scope a debit-authorizing service principal would carry if an engine-side gate
+    /// on <see cref="AuthorizeOperation"/> is later adopted. It is DELIBERATELY NOT the
+    /// <see cref="LifecycleMoneyMoverScope"/>: authorizing an arbitrary debit is a wider power than firing a
+    /// scheduled lifecycle occurrence, so the two live in disjoint scope namespaces — a leaked lifecycle-sweep
+    /// token cannot reach the authorize surface, and vice versa. Defined but NOT yet wired:
+    /// <see cref="IsAuthorised"/> only recognises <see cref="LifecycleMoneyMoverScope"/> today, because
     /// <see cref="AuthorizeOperation"/> is not in <see cref="AuthorisedOperations"/> (the authorize route
-    /// stays ungated per ADR-PC-034 — see <see cref="AuthorizeOperation"/> for the full rationale). When
-    /// adopted, this value must be minted by the IAM (ADR-IC-021) for the payment-authorize principal and
-    /// route-scoped in <c>infra/kong/kong.yml</c>, in lock-step — the same cross-system contract the lifecycle
-    /// scope carries.</summary>
+    /// stays ungated per ADR-PC-034 — see <see cref="AuthorizeOperation"/> for the full rationale). Defined
+    /// as the settled, distinct name/scope so future adoption is a wiring change, not a fresh trust-scope
+    /// negotiation.</summary>
     public const string AuthorizeDebitScope = "authorize:current-account-debit";
 
     /// <summary>The ONLY route leaves this scoped principal authorises — the clock-driven lifecycle
