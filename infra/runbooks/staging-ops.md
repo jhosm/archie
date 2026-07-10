@@ -15,6 +15,21 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
 
 ## 1. Provision / first bring-up (Phases 0–2, account-gated)
 
+> **⚠️ Execution order — read before you start.** The numbered steps below are grouped by topic, but
+> three real dependencies force an *interleaved* order; a first bring-up that follows the numbers
+> literally will stall:
+> - **Provision `babelstone-dev-secrets` (step 5) BEFORE running the bootstrap (step 3).** The
+>   bootstrap's secret gate (`cd-secret-preflight.sh --live`) refuses to run until that Secret exists
+>   and is non-placeholder.
+> - **Initialize OpenBao AFTER the deploy (step 6), not before** — `bao operator init` execs into the
+>   `openbao` pod, which only exists once the overlay is applied. The engine stays NotReady
+>   (fail-closed) until then. See step 7 and [`../k8s/components/openbao-csi/README.md`](../k8s/components/openbao-csi/README.md).
+> - **The 3 Logto client secrets can only be minted after Logto is running (post-deploy).** Seed them
+>   with throwaway non-placeholder values in step 5, then register the apps and replace them in step 7.
+>
+> Net order: DNS (2) → secrets (5) → bootstrap (3–4) → deploy (6) → OpenBao init + engine restart (7)
+> → Logto registration + real client secrets + client restart (7) → verify (§7).
+
 1. Provision the node + k3s (Phase 1, `hetzner-k3s`) — see **§1.1** below. The Hetzner **CCM and
    CSI are DISABLED** via `cluster.yaml` `addons` (bd babelstone-zla1.12.20); the k3s built-in
    `local-path` provisioner is the storage class. hetzner-k3s still plants an all-powerful Hetzner
@@ -93,14 +108,47 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
    §C6 gap): register the Grafana app per that ADR's rollout step 3, the Mission Control app per
    [`mission-control-oidc-registration.md`](./mission-control-oidc-registration.md), and the Backstage
    app per [`backstage-oidc-registration.md`](./backstage-oidc-registration.md), then paste each client
-   secret here. `MC_SESSION_SIGNING_KEY` and `BACKSTAGE_AUTH_SESSION_SECRET` are freshly generated HMAC
+   secret here. **Because Logto must be *running* before you can register these apps (step 7 / the
+   Execution-order note above), seed these three keys with throwaway non-placeholder values now** — e.g.
+   `LOGTO_GRAFANA_CLIENT_SECRET="TEMP-$(openssl rand -hex 12)"` — which passes `cd-secret-preflight.sh`
+   (it rejects only the known `dev-placeholder-…` values), then replace them with the real secrets after
+   registration (step 7). `MC_SESSION_SIGNING_KEY` and `BACKSTAGE_AUTH_SESSION_SECRET` are freshly generated HMAC
    keys (Mission Control / Backstage each sign their own session cookie with one — NOT a Logto value),
    so mint them with `openssl rand` as shown. Rotating one invalidates that app's live sessions.
+
+   > **Keep three keys identical across both stores (cross-store consistency).** With the engine's
+   > `OpenBao__Enabled=true`, `POSTGRES_PASSWORD`, `SECRET_VAULT_KEK`, and `OIDC_PRIVATE_KEYS` **also**
+   > live in OpenBao KV (`secret/data/babelstone/{postgres,logto}`), seeded during OpenBao init (step 7).
+   > Set them to the **same values** in both stores, or a rotation drifts into split-brain. In
+   > particular, the password inside the engine's OpenBao connection string (`secret/data/Engine`) **MUST
+   > equal this `POSTGRES_PASSWORD`**: Postgres is seeded from it and the engine's migration
+   > init-container polls Postgres with it, so a mismatch makes the engine's *runtime* DB auth diverge
+   > from what Postgres was created with. (The engine reads its three `OPENBAO_*` anchors from the
+   > CSI-synced `babelstone-app-secrets`, not from `babelstone-dev-secrets` — see
+   > [`../k8s/components/openbao-csi/README.md`](../k8s/components/openbao-csi/README.md).)
 
    Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
    the Kong mTLS material (via `deck-sync`).
 6. Deploy: `kubectl apply -k infra/k8s/overlays/staging` (or dispatch `cd.yml` with
-   `overlay: staging`).
+   `overlay: staging`). This brings up Postgres/Redpanda/Kong, the event-store migration Job, Logto
+   (+ its seed jobs), OpenBao (**sealed/uninitialised**), and the engine (**NotReady** — its CSI mount
+   can't resolve until step 7). Grafana/Mission-Control/Backstage come up but OIDC login stays broken
+   until their real client secrets land (step 7).
+7. Finish the wiring — **post-deploy**, once the step-6 pods are up (these two are independent of each
+   other; Logto does not depend on OpenBao):
+   - **Initialize OpenBao** (secret-zero — the big manual lift): `bao operator init` + unseal, enable
+     the Kubernetes auth method, create the `babelstone-app` role/policy, populate the KV paths
+     (`secret/data/babelstone/{postgres,logto,engine-approle,engine-transit}` **and** `secret/data/Engine`),
+     and `bao secrets enable transit`. Full ordered commands + the single-node manual-unseal caveat are
+     in [`../k8s/components/openbao-csi/README.md`](../k8s/components/openbao-csi/README.md) "Live apply +
+     init". Then `kubectl -n babelstone-staging rollout restart deploy/engine` so its CSI mount + AppRole
+     login resolve and the engine goes Ready.
+   - **Register the 3 Logto apps + seed the real client secrets.** At `https://auth-admin.babelstone.dev`
+     (**not** a `kubectl port-forward` — Logto 401s a mismatched issuer) register Grafana / Mission
+     Control / Backstage per the runbooks in step 5, then merge-patch the three real `LOGTO_*_CLIENT_SECRET`
+     values over the step-5 placeholders, pin any newly-minted client IDs into the manifests (the
+     `configure-logto` job fails loud on a mismatch), and
+     `kubectl -n babelstone-staging rollout restart deploy/mission-control deploy/grafana-lgtm deploy/backstage`.
 
 ### 1.1 Phase 1 — provision the cluster (`hetzner-k3s`)
 
