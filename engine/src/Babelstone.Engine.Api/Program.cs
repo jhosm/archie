@@ -220,6 +220,25 @@ builder.Services.AddSingleton(serviceProvider =>
                     anomaly.Kind, anomaly.FreezeId, anomaly.LiftingStreamId, anomaly.LiftingSequence)));
 builder.Services.AddSingleton(serviceProvider => new AccountFreezeReader(
     serviceProvider.GetRequiredService<IAccountFreezeStore>()));
+// The spine-owned UNDELIVERABLE-CREDIT (IOU / escheat) read model (ADR-PC-043 slot 5): undeliverable_credits
+// (migration 0024) is the rebuildable fold of the credit lifecycle (CreditUnapplied -> CreditReapplied) an
+// operator queries for "which credits are still owed, to whom, and how old". Mirrors the hold/freeze ledgers
+// above: a PostgreSQL store and a spine projector (added to the spine drive below). Family-agnostic spine
+// components (ADR-PC-021) — ONE intent-keyed fold, never a per-family copy.
+builder.Services.AddSingleton<IIouLedgerStore>(_ => new PostgresIouLedgerStore(connectionString));
+builder.Services.AddSingleton(serviceProvider =>
+    new CreditUnappliedProjector(
+        serviceProvider.GetRequiredService<IIouLedgerStore>(),
+        // The ADR-PC-043 surfacing sink: a credit resolution that transitioned nothing is a warning an
+        // operator/reconciliation must see (never a silent no-op) — structural only, never PII.
+        onResolutionAnomaly: anomaly =>
+            serviceProvider.GetRequiredService<ILoggerFactory>()
+                .CreateLogger<CreditUnappliedProjector>()
+                .LogWarning(
+                    "Credit resolution folded as a no-op ({AnomalyKind}): CreditReapplied for intent {IntentId} "
+                    + "at stream {ResolvingStreamId} seq {ResolvingSequence} — already_resolved is a "
+                    + "duplicate/late resolution of an already-resolved intent (ADR-PC-043).",
+                    anomaly.Kind, anomaly.IntentId, anomaly.ResolvingStreamId, anomaly.ResolvingSequence)));
 // A.11 snapshot runtime wiring (ADR-PC-003): the byte-oriented snapshot store is a family-agnostic
 // spine component (ADR-PC-021), backed by the same PostgreSQL tier as the event store (ADR-PC-003
 // — snapshots are rows in a `snapshots` table in the SAME database). The family module composes the
@@ -342,6 +361,7 @@ builder.Services.AddSingleton(serviceProvider => new SpineProjectionDrainer(
         serviceProvider.GetRequiredService<MovementLedgerProjector>(),
         serviceProvider.GetRequiredService<AccountHoldProjector>(),
         serviceProvider.GetRequiredService<AccountFreezeProjector>(),
+        serviceProvider.GetRequiredService<CreditUnappliedProjector>(),
     ],
     serviceProvider.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(new SpineProjectionRelayOptions());
@@ -487,6 +507,13 @@ PackMigrationsEndpoints.Map(app);
 // onto the BulkOperationService registered above, registered ONCE at host level (family-agnostic;
 // the runner dispatches on operation_kind, never on a family).
 BulkOperationsEndpoints.Map(app);
+
+// The operator undeliverable-credit (IOU / escheat) query surface (ADR-PC-043 slot 5, bd babelstone-qa92.1):
+// GET /v1/operations/undeliverable-credits lists the OUTSTANDING IOUs (a CreditUnapplied not yet matched by a
+// CreditReapplied on the derived resolution key) with beneficiary ref, amount, reason, unapplied date, and age
+// — registered ONCE at host level (family-agnostic; the IOU ledger folds every family's undeliverable-credit
+// facts, the same posture as the hold/freeze ledgers).
+UndeliverableCreditsEndpoints.Map(app);
 
 app.Run();
 

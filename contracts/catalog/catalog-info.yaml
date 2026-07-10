@@ -202,6 +202,24 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
+  name: engine-undeliverable-credits-api
+  title: "INTERNAL — Engine Undeliverable Credits (admin-ops)"
+  description: >
+    The operator query surface for the spine-owned undeliverable-credit (IOU / escheat) ledger
+    (ADR-PC-043 slot 5): GET /v1/operations/undeliverable-credits lists the OUTSTANDING IOUs — a
+    CreditUnapplied not yet matched by a CreditReapplied on the derived resolution key — each with
+    its beneficiary ref, amount, machine reason, unapplied date, and age. Family-agnostic; a
+    host-level route on the internal network — not a Kong route.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-undeliverable-credits.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
   name: deposit-constituted
   title: DepositConstituted
   description: The term deposit is opened — principal, resolved TAN, and the fixed schedule.
