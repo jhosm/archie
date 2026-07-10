@@ -27,34 +27,34 @@ the base driver is vendored here (the vault provider install is out-of-band,
 exactly like cert-manager / the CSI snapshot controller in
 [`../../overlays/staging/bootstrap/`](../../overlays/staging/bootstrap/README.md)).
 
-## Why it is NOT registered in the staging overlay (yet)
+## How it splits across the staging overlay and the out-of-band bootstrap
 
 The driver install carries **CRDs** (`SecretProviderClass`,
 `SecretProviderClassPodStatus`) and a **`CSIDriver`**, and the SecretProviderClass
 itself is a **custom resource** — none of which the CI `kubeconform -strict` gate
-has a vendored schema for. Dropping this straight into the staging overlay would
-break that gate. The conformant wiring (a follow-up) is:
+has a vendored schema for. Dropping the whole component into the staging overlay
+would break that gate. So the wiring is split (bd babelstone-zla1.12.21):
 
-1. Move the **driver install** to the out-of-band bootstrap layer (Helm or
-   `kubectl apply`, like cert-manager / the CSI snapshot controller), so the
-   CRDs/`CSIDriver` never enter `kustomize build overlays/staging`.
-2. Register a component reduced to **just the SecretProviderClass** in the overlay
-   via one line — either
+1. The **driver install** lands in the out-of-band bootstrap layer (`kubectl apply`
+   of the vendored `upstream/` files + the vault-csi-provider Helm chart, like
+   cert-manager), so the CRDs/`CSIDriver` never enter `kustomize build
+   overlays/staging`. See [`../../overlays/staging/bootstrap/README.md`](../../overlays/staging/bootstrap/README.md)
+   step 1c and `scripts/staging-bootstrap.sh`.
+2. The **SecretProviderClass alone** IS registered in the staging overlay — via a
+   direct `resources:` reference to
+   [`secret-provider-class.yaml`](./secret-provider-class.yaml) (NOT the whole
+   `components:` entry, which would pull in the CRD-bearing driver install):
 
    ```yaml
    # infra/k8s/overlays/staging/kustomization.yaml
-   components:
-     - ../../components/openbao-csi
+   resources:
+     - ../../components/openbao-csi/secret-provider-class.yaml
    ```
 
-   (if the component keeps `kind: Component`) or a `resources:` entry pointing at
-   the same path — and validate that overlay leg with
-   `kubeconform -ignore-missing-schemas` (the SecretProviderClass has no strict
-   schema).
-
-That one-line registration was **deliberately deferred this run** to avoid
-colliding with in-flight staging-overlay work. This component is authored +
-validated standalone in the meantime.
+   The `SecretProviderClass` Kind has no vendored kubeconform schema, so the
+   staging-overlay leg of the strict gate carries `-ignore-missing-schemas` (it
+   keeps `-strict` for every kind that HAS a schema and skips only this CR);
+   `base`/`ha` render no `SecretProviderClass`, so their legs stay fully strict.
 
 > **Sizing follow-up (bd babelstone-zla1.12.21).** The persistent OpenBao container
 > in [`../../base/openbao.yaml`](../../base/openbao.yaml) carries **no memory
@@ -134,9 +134,11 @@ CI.
      engine's `OpenBaoKvSecretProvider` reads this directly)
 6. **Enable the transit engine** (`bao secrets enable transit`) for the
    per-subject crypto-shred boundary (ADR-PC-004).
-7. **Register this component** in the staging overlay (the deferred one-liner
-   above) and redeploy; the engine pod goes Ready once its OpenBao anchor +
-   `secret/data/Engine` resolve.
+7. **Deploy the staging overlay** and let the engine roll. The overlay already
+   registers the `SecretProviderClass` (the `resources:` reference above), so no
+   extra registration step is needed here — only the out-of-band driver install
+   (steps 1–2) and OpenBao init (steps 3–6). The engine pod goes Ready once its
+   OpenBao anchor + `secret/data/Engine` resolve.
 
 ## Bumping the vendored driver
 

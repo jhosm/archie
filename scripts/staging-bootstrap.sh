@@ -66,9 +66,25 @@ SECRET_PREFLIGHT_SCRIPT="$REPO_ROOT/scripts/cd-secret-preflight.sh"
 #   cert-manager  → `helm search repo jetstack/cert-manager --versions` (after `helm repo update`)
 #   Traefik chart → `helm search repo traefik/traefik --versions`
 #   sys-upgrade-c → https://github.com/rancher/system-upgrade-controller/releases (pick a tag)
+#   vault-csi-pr  → `helm search repo hashicorp/vault --versions` (the chart's csi: subcomponent)
 CERT_MANAGER_VERSION="v1.16.2"      # jetstack/cert-manager Helm chart (== app version)
 TRAEFIK_CHART_VERSION="33.2.1"      # traefik/traefik Helm chart (ships Traefik proxy v3.x)
 SUC_VERSION="v0.14.2"               # rancher/system-upgrade-controller release tag
+VAULT_CHART_VERSION="4.1.0"         # hashicorp/vault Helm chart — used ONLY for the vault-csi-provider
+
+# The Secrets Store CSI driver is the VENDORED, pinned (v1.6.0) material under the openbao-csi
+# component's upstream/ dir — applied file-by-file (hermetic, no remote fetch), NOT via Helm.
+# These are the driver install's plain manifests: the two CRDs, RBAC, the CSIDriver, the
+# node DaemonSet. Keep this list in lockstep with bootstrap/README.md step 1c.
+OPENBAO_CSI_UPSTREAM_DIR="$REPO_ROOT/infra/k8s/components/openbao-csi/upstream"
+OPENBAO_CSI_UPSTREAM_FILES=(
+  secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
+  secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
+  rbac-secretproviderclass.yaml
+  rbac-secretprovidersyncing.yaml
+  csidriver.yaml
+  secrets-store-csi-driver.yaml
+)
 
 # Same source URL bootstrap/README.md step 1b uses — keep them identical. Pinned to
 # ${SUC_VERSION} (releases/download/<TAG>/…), NOT releases/latest/download/….
@@ -149,10 +165,13 @@ Ordered Phase-2 bootstrap plan (data-independent glue automated by this script):
   1. helm upgrade --install cert-manager jetstack/cert-manager --version ${CERT_MANAGER_VERSION} -n ${CERT_MANAGER_NAMESPACE} (CRDs on); wait for rollout
   2. helm upgrade --install traefik traefik/traefik --version ${TRAEFIK_CHART_VERSION} -n traefik (ingress controller); wait for rollout
   3. kubectl apply -f ${SUC_MANIFEST_URL}   (system-upgrade-controller ${SUC_VERSION})
-  4. kubectl create namespace ${APP_NAMESPACE} (idempotent)
-  5. kubectl apply the cert-manager/${CLOUDFLARE_SECRET} Secret from \$CLOUDFLARE_API_TOKEN (DNS-01 solver)
-  6. kubectl apply the cluster-scoped bootstrap ${BOOTSTRAP_DIR}/*.yaml (except volume-snapshot-class.yaml)
-  7. mint the least-privilege CD kubeconfig (scripts/cd-kubeconfig.sh) → KUBECONFIG_B64
+  4. kubectl apply the VENDORED Secrets Store CSI driver (${OPENBAO_CSI_UPSTREAM_DIR}, pinned v1.6.0) +
+     helm upgrade --install vault-csi-provider hashicorp/vault --version ${VAULT_CHART_VERSION} -n kube-system
+     (csi-only) — the out-of-band half of the openbao-csi component (CRDs/CSIDriver/DaemonSet, kube-system)
+  5. kubectl create namespace ${APP_NAMESPACE} (idempotent)
+  6. kubectl apply the cert-manager/${CLOUDFLARE_SECRET} Secret from \$CLOUDFLARE_API_TOKEN (DNS-01 solver)
+  7. kubectl apply the cluster-scoped bootstrap ${BOOTSTRAP_DIR}/*.yaml
+  8. mint the least-privilege CD kubeconfig (scripts/cd-kubeconfig.sh) → KUBECONFIG_B64
 PLAN
 echo
 
@@ -187,15 +206,38 @@ kubectl -n traefik rollout status deploy/traefik --timeout=300s
 step "3. Rancher system-upgrade-controller ${SUC_VERSION} (kubectl apply)"
 kubectl apply -f "$SUC_MANIFEST_URL"
 
-# ── STEP 4 · the app namespace (idempotent) ──────────────────────────────────────────────
-step "4. namespace ${APP_NAMESPACE} (idempotent apply)"
+# ── STEP 4 · Secrets Store CSI driver (vendored) + vault-csi-provider (Helm) ──────────────
+# The out-of-band half of the openbao-csi component (bd babelstone-zla1.12.21): the CRDs
+# (SecretProviderClass, SecretProviderClassPodStatus), RBAC, the CSIDriver, and the node
+# DaemonSet land cluster-scoped in kube-system — NEVER in `kustomize build overlays/staging`
+# (the strict kubeconform gate has no schema for them). The overlay registers ONLY the
+# SecretProviderClass custom resource. The driver is the VENDORED, pinned-v1.6.0 material
+# under the component's upstream/ (applied file-by-file so it is hermetic — no remote fetch);
+# the vault-csi-provider is the HashiCorp chart's csi: subcomponent (server/injector off).
+step "4. Secrets Store CSI driver (vendored v1.6.0) + vault-csi-provider (helm ${VAULT_CHART_VERSION})"
+[ -d "$OPENBAO_CSI_UPSTREAM_DIR" ] || fail "vendored CSI driver dir missing: $OPENBAO_CSI_UPSTREAM_DIR"
+for csi_file in "${OPENBAO_CSI_UPSTREAM_FILES[@]}"; do
+  [ -f "$OPENBAO_CSI_UPSTREAM_DIR/$csi_file" ] || fail "vendored CSI driver manifest missing: $csi_file"
+  echo "   apply upstream/$csi_file"
+  kubectl apply -f "$OPENBAO_CSI_UPSTREAM_DIR/$csi_file"
+done
+helm repo add hashicorp https://helm.releases.hashicorp.com >/dev/null 2>&1 || true
+helm repo update hashicorp >/dev/null
+helm upgrade --install vault-csi-provider hashicorp/vault \
+  --version "$VAULT_CHART_VERSION" \
+  --namespace kube-system \
+  --set "csi.enabled=true" --set "server.enabled=false" --set "injector.enabled=false"
+kubectl -n kube-system rollout status ds/csi-secrets-store-secrets-store-csi-driver --timeout=300s
+
+# ── STEP 5 · the app namespace (idempotent) ──────────────────────────────────────────────
+step "5. namespace ${APP_NAMESPACE} (idempotent apply)"
 kubectl create namespace "$APP_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-# ── STEP 5 · the Cloudflare DNS-01 token Secret (idempotent; never echoes the token) ─────
+# ── STEP 6 · the Cloudflare DNS-01 token Secret (idempotent; never echoes the token) ─────
 if $CLOUDFLARE_SECRET_EXISTS; then
-  step "5. cert-manager/${CLOUDFLARE_SECRET} Secret already exists — leaving it as-is"
+  step "6. cert-manager/${CLOUDFLARE_SECRET} Secret already exists — leaving it as-is"
 else
-  step "5. cert-manager/${CLOUDFLARE_SECRET} Secret (idempotent apply from \$CLOUDFLARE_API_TOKEN)"
+  step "6. cert-manager/${CLOUDFLARE_SECRET} Secret (idempotent apply from \$CLOUDFLARE_API_TOKEN)"
   # Keep the token OUT of the process argv (visible via `ps`) and out of stdout: base64 it into
   # a Secret manifest applied on stdin. The value never appears as a command argument.
   cf_token_b64="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | base64 | tr -d '\n')"
@@ -212,19 +254,15 @@ EOF
   unset cf_token_b64
 fi
 
-# ── STEP 6 · the cluster-scoped bootstrap (glob, excluding volume-snapshot-class.yaml) ───
-# The Hetzner CSI is dropped (bd babelstone-zla1.12.20), so volume-snapshot-class.yaml's
-# VolumeSnapshotClass has no CRDs installed and a blanket apply of it would fail. Skip it
-# here. Once bd babelstone-zla1.12.21 removes that file from the tree, this exclusion can go.
-step "6. cluster-scoped bootstrap (${BOOTSTRAP_DIR}/*.yaml, minus volume-snapshot-class.yaml)"
+# ── STEP 7 · the cluster-scoped bootstrap (glob over ${BOOTSTRAP_DIR}/*.yaml) ─────────────
+# Every file here is kubectl apply-safe: the dead volume-snapshot-class.yaml (a
+# VolumeSnapshotClass whose CRD is not installed since the Hetzner CSI was dropped, bd
+# babelstone-zla1.12.20) was removed in bd babelstone-zla1.12.24, so a blanket apply no
+# longer fails and no exclusion is needed.
+step "7. cluster-scoped bootstrap (${BOOTSTRAP_DIR}/*.yaml)"
 shopt -s nullglob
 applied_any=false
 for manifest in "$BOOTSTRAP_DIR"/*.yaml; do
-  case "$(basename "$manifest")" in
-    volume-snapshot-class.yaml)
-      echo "   skipping $(basename "$manifest") (Hetzner CSI dropped — bd babelstone-zla1.12.20; remove after bd babelstone-zla1.12.21)"
-      continue ;;
-  esac
   echo "   apply $(basename "$manifest")"
   kubectl apply -f "$manifest"
   applied_any=true
@@ -232,8 +270,8 @@ done
 shopt -u nullglob
 $applied_any || fail "no bootstrap manifests found under $BOOTSTRAP_DIR — is the repo layout intact?"
 
-# ── STEP 7 · mint the least-privilege CD kubeconfig ──────────────────────────────────────
-step "7. mint the CD kubeconfig (scripts/cd-kubeconfig.sh)"
+# ── STEP 8 · mint the least-privilege CD kubeconfig ──────────────────────────────────────
+step "8. mint the CD kubeconfig (scripts/cd-kubeconfig.sh)"
 [ -x "$CD_KUBECONFIG_SCRIPT" ] || fail "cannot find the CD kubeconfig minter at $CD_KUBECONFIG_SCRIPT"
 CD_KUBECONFIG_TMP="$(mktemp "${TMPDIR:-/tmp}/cd-deployer.kubeconfig.XXXXXX")"
 # Ensure the token file is removed even if a later step fails.
@@ -270,6 +308,10 @@ Bootstrap glue done. REMAINING HUMAN / ACCOUNT-GATED STEPS (this script did NOT 
   [ ] Register the Logto apps and put their client secrets into babelstone-dev-secrets
       (runbook infra/runbooks/staging-ops.md §1 step 5). This script REFUSES to mint the
       account-gated Logto/OIDC secrets.
+  [ ] Initialise + unseal OpenBao and populate its KV paths (bao operator init/unseal, then
+      the secret/data/babelstone/* paths the SecretProviderClass reads) — the CSI mount stays
+      unresolved until this is done. These produce secret-zero and are the operator's job
+      (infra/k8s/components/openbao-csi/README.md "Live apply + init").
   [ ] Set the Cloudflare SSL/TLS mode to "Full (strict)" for babelstone.dev.
   [ ] Open inbound TCP 80/443 on the Hetzner firewall (Cloudflare-scoped):
         infra/hetzner-k3s/firewall-web.sh            # dry-run

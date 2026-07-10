@@ -215,10 +215,11 @@ spec:
         # Secrets Store CSI inline volume bound to the babelstone-app-secrets
         # SecretProviderClass (infra/k8s/components/openbao-csi). Sources the
         # app-tier + OpenBao-anchor secrets FROM OpenBao (k8s auth) rather than a
-        # committed k8s Secret — the ADR-PC-004 §A1 boundary. Requires the CSI
-        # driver + vault provider + the SecretProviderClass installed (the
-        # openbao-csi component, registered by an overlay — deferred this run; see
-        # the PR deferred-registration note). Static-validates as a manifest today.
+        # committed k8s Secret — the ADR-PC-004 §A1 boundary. The
+        # SecretProviderClass is now registered by the staging overlay (a direct
+        # secret-provider-class.yaml resources reference, bd babelstone-zla1.12.21);
+        # the CSI driver + vault provider install remains the out-of-band bootstrap
+        # residual. Static-validates as a manifest today.
         - name: openbao-app-secrets
           csi:
             driver: secrets-store.csi.k8s.io

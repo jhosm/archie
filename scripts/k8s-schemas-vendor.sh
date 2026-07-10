@@ -44,13 +44,20 @@ done > "$rendered"
 # "-apps-v1"; "networking.k8s.io/v1" -> "-networking-v1" (first group label).
 python3 - "$rendered" <<'PY' | sort -u > "$needed"
 import re, sys
+# Kinds provided by a CRD installed OUT-OF-BAND (never in the render), so upstream
+# kubernetes-json-schema has no schema for them and the strict gate skips them with
+# -ignore-missing-schemas. Do NOT try to vendor these — the fetch would 404. Keep in
+# lockstep with the -ignore-missing-schemas legs in ci.yml + cd.yml.
+#   SecretProviderClass → the openbao-csi component (bd babelstone-zla1.12.21); its CRD is
+#   installed at bootstrap, only the custom resource is registered in overlays/staging.
+CRD_KINDS_NO_UPSTREAM_SCHEMA = {"SecretProviderClass"}
 for doc in re.split(r'(?m)^---\s*$', open(sys.argv[1]).read()):
     av = re.search(r'(?m)^apiVersion:\s*(\S+)', doc)
     kd = re.search(r'(?m)^kind:\s*(\S+)', doc)
     if not (av and kd):
         continue
     av, kd = av.group(1), kd.group(1)
-    if kd == "List":
+    if kd == "List" or kd in CRD_KINDS_NO_UPSTREAM_SCHEMA:
         continue
     if "/" in av:
         grp, ver = av.split("/", 1)
