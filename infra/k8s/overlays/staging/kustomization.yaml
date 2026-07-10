@@ -98,18 +98,20 @@ resources:
 # base's own resources, so postgres — declared afresh by apps/ (engine, orchestrator, the
 # event-store migration Job) and by this overlay (logto, logto-jobs, backup-cronjobs, the
 # mission-control read-only-role Job) — is re-pinned here to the SAME digest base uses (the entry
-# also idempotently re-pins base's copy in the staging render). svhd/logto was a floating
-# `:latest` on the IAM substrate — the most acute app-image drift — now frozen to a digest (the
-# `:latest` tag is kept only as a legibility/provenance label; the digest is what actually pulls).
-# Reproducibility / supply-chain, NOT cosign-verified (ADR-PC-007 §A2 covers the signed
-# first-party images). Bumped deliberately by the scheduled cd-thirdparty-digest-audit workflow.
-# Digests resolved 2026-07-09 via `mise exec -- crane digest`.
+# also idempotently re-pins base's copy in the staging render). The Logto IAM substrate now runs the
+# OFFICIAL upstream image ghcr.io/logto-io/logto pinned to an explicit version tag (1.41.0) + digest
+# (bd babelstone-zla1.12.34): it replaces the earlier svhd/logto:latest Docker Hub mirror — which was
+# byte-identical (SAME digest 7f79547…) but carried a floating `:latest` and an opaque provenance —
+# with the first-party source of truth and a pinned version, so the tag reads as a real release, not a
+# movable label, and the digest is what actually pulls. Reproducibility / supply-chain, NOT
+# cosign-verified (ADR-PC-007 §A2 covers the signed first-party images). Bumped deliberately by the
+# scheduled cd-thirdparty-digest-audit workflow. Digests resolved 2026-07-09 via `mise exec -- crane digest`.
 images:
   - name: postgres
     newTag: 18-alpine
     digest: sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
-  - name: svhd/logto
-    newTag: latest
+  - name: ghcr.io/logto-io/logto
+    newTag: 1.41.0
     digest: sha256:7f79547e3d1fe569a3ecae757968a7cfc579687aa8164eec35113c0adc983c5b
 
 # Single-replica everywhere — a single node; the HA topology (overlays/ha) would

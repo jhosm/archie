@@ -6,7 +6,7 @@ name: CD — third-party image digest audit
 # In plain English: the Kubernetes manifests pin every third-party image (postgres, kong,
 # redpanda, logto, the k3s control-plane upgrader, …) to an immutable sha256 digest so a redeploy
 # pulls the exact bytes we validated. Those digests go stale as upstream rebuilds a rolling tag
-# (postgres:18-alpine, svhd/logto:latest, …). This scheduled job is the DELIBERATE bump lever: it
+# (postgres:18-alpine, ghcr.io/logto-io/logto:1.41.0, …). This scheduled job is the DELIBERATE bump lever: it
 # re-resolves each pinned tag with crane and, on drift, opens a PR proposing the new digests — so a
 # maintainer reviews the change instead of the pins rotting silently. It NEVER pushes to main.
 #
