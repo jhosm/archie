@@ -37,10 +37,17 @@ public sealed class LifecycleTransitionsTests
     // Every transition the table governs — the legality machine must answer for all of them.
     private static readonly Transition[] AllTransitions = Enum.GetValues<Transition>();
 
-    // The BUSINESS transitions (everything except the cross-cutting regulatory Erase). Terminality is
-    // defined against THESE — a closed deposit rejects every one of them.
+    // The BUSINESS transitions (everything except the cross-cutting regulatory Erase AND the
+    // orthogonal undeliverable-payout recovery pair). Terminality is defined against THESE — a closed
+    // deposit rejects every one of them. PayoutPend/LandPayout (ADR-PC-043 slot 5, bd babelstone-98mj.6)
+    // are EXCLUDED for the same reason Erase is: they are a reversible marker orthogonal to the business
+    // lifecycle (PayoutPend fires FROM the business-terminal Matured to hold an undeliverable payout at
+    // source), so "terminal to normal business operations" and "still holdable/resolvable" coexist — the
+    // payout-pending pair is tested separately below.
     private static readonly Transition[] BusinessTransitions =
-        AllTransitions.Where(t => t != Transition.Erase).ToArray();
+        AllTransitions
+            .Where(t => t is not Transition.Erase and not Transition.PayoutPend and not Transition.LandPayout)
+            .ToArray();
 
     // ---- opening / rejecting: only from the seed Pending state -----------------------------------
 
@@ -97,6 +104,40 @@ public sealed class LifecycleTransitionsTests
                     IsLegal(terminal, transition),
                     $"{transition} must be illegal from business-terminal state {terminal}");
             }
+        }
+    }
+
+    // ---- undeliverable-payout hold: the reversible marker on the closed side of maturity ---------
+    // ADR-PC-043 slot 5 / bd babelstone-98mj.6.
+
+    [Fact]
+    public void Payout_hold_is_legal_only_from_Matured_and_lands_only_from_PayoutPending()
+    {
+        // A matured deposit whose payout cannot land holds it at source (Matured → PayoutPending), and the
+        // held payout lands only from PayoutPending (PayoutPending → Matured). Each leg fires from exactly
+        // its one source state — the reversible marker, never from Active/Pending/another terminal.
+        Assert.True(IsLegal(DepositLifecycle.Matured, Transition.PayoutPend));
+        Assert.True(IsLegal(DepositLifecycle.PayoutPending, Transition.LandPayout));
+
+        Assert.False(IsLegal(DepositLifecycle.Active, Transition.PayoutPend));
+        Assert.False(IsLegal(DepositLifecycle.PayoutPending, Transition.PayoutPend));
+        Assert.False(IsLegal(DepositLifecycle.Matured, Transition.LandPayout));
+        Assert.False(IsLegal(DepositLifecycle.Active, Transition.LandPayout));
+    }
+
+    [Fact]
+    public void PayoutPending_is_not_business_terminal_it_still_holds_pii_and_can_land()
+    {
+        // PayoutPending is a reversible, non-terminal marker: it can land (LandPayout) and — because the
+        // deposit still holds the subject's PII while held — it is erasable (Erase). But it is NOT open to
+        // the normal business transitions (accrue/mature/renew/…), which fire only from Active.
+        Assert.True(IsLegal(DepositLifecycle.PayoutPending, Transition.LandPayout));
+        Assert.True(IsLegal(DepositLifecycle.PayoutPending, Transition.Erase));
+        foreach (var transition in BusinessTransitions)
+        {
+            Assert.False(
+                IsLegal(DepositLifecycle.PayoutPending, transition),
+                $"{transition} must be illegal from PayoutPending (a held-at-source marker, not a live deposit)");
         }
     }
 

@@ -18,6 +18,14 @@ public enum DepositLifecycle
     /// <summary>Matured and paid out — terminal for the AT_MATURITY slice.</summary>
     Matured,
 
+    /// <summary>Matured but the payout could not be delivered, so the funds are held AT SOURCE
+    /// (ADR-PC-043 slot 5; bd babelstone-98mj.6). A NON-terminal, reversible marker on the closed side of
+    /// maturity: the deposit stays payout-pending until a live destination exists, at which point the
+    /// lifecycle-driver's <c>PayoutPendingRetryRule</c> re-fires the payout and the deposit resolves back
+    /// to <see cref="Matured"/> (<c>DepositPayoutLanded</c>). Reached from <see cref="Matured"/> via
+    /// <c>DepositPayoutPending</c> — the money is never disgorged into a void nor an anonymous pot.</summary>
+    PayoutPending,
+
     /// <summary>Constitution was rejected by a config/rule check — no deposit was opened (terminal).</summary>
     Failed,
 

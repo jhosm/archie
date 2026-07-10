@@ -286,3 +286,48 @@ public sealed record LoanWrittenOff(
     // Write-off is a closing snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
     public override bool IsLifecycleBoundary => true;
 }
+
+/// <summary>The approved disbursement could not be delivered to the borrower's account, so the loan is
+/// held DISBURSEMENT-PENDING at source rather than disgorged (ADR-PC-043 slot 5; bd babelstone-98mj.6).
+/// In plain English: the loan was approved but the money had nowhere to land — the borrower's account is
+/// closed, dormant-past-revival, or does not exist — so instead of losing the disbursement the source
+/// KEEPS the funds and marks itself disbursement-pending. The lifecycle-driver's re-attempt rule
+/// (<c>DisbursementPendingRetryRule</c>) watches this flag and re-fires the disbursement once a live
+/// destination exists (the re-attempt lands exactly once, keyed on the same economic intent). A
+/// NON-terminal, reversible marker: <see cref="LoanLifecycle.Pending"/> →
+/// <see cref="LoanLifecycle.DisbursementPending"/>, resolved by <see cref="LoanDisbursementLanded"/>.
+/// The closed-end-asset analogue of the deposit's <c>DepositPayoutPending</c>.</summary>
+/// <remarks>STORE-ONLY (ADR-IC-017 — an internal source-side hold marker, not a bus event; the
+/// undeliverable credit's attributed IOU is the engine's cross-cutting <c>operations.CreditUnapplied</c>).
+/// STRUCTURAL only, no PII (ADR-PC-004): opaque refs, a machine reason code, and an input date.</remarks>
+/// <param name="LoanId">The loan stream held disbursement-pending — never PII (ADR-PC-004).</param>
+/// <param name="DisbursementAccountRef">The opaque borrower account the disbursement could not reach — a
+/// reference the engine resolves internally, never PII (ADR-PC-004).</param>
+/// <param name="Reason">The stable machine reason the disbursement was undeliverable (e.g.
+/// <c>BENEFICIARY_ACCOUNT_CLOSED</c>) — never free-text PII.</param>
+/// <param name="PendingSince">The economic date the disbursement became pending — an input date, never a
+/// clock read in a fold (ADR-PC-023).</param>
+public sealed record LoanDisbursementPending(
+    Guid LoanId,
+    string DisbursementAccountRef,
+    string Reason,
+    DateOnly PendingSince) : DomainEvent;
+
+/// <summary>The held disbursement was delivered once a live destination existed, so the loan leaves
+/// disbursement-pending and becomes active/amortizing (ADR-PC-043 slot 5; bd babelstone-98mj.6). In plain
+/// English: the account that could not receive the disbursement became receivable again, the re-attempt
+/// landed the credit, and the loan is finally live. The resolve leg of the reversible marker:
+/// <see cref="LoanLifecycle.DisbursementPending"/> → <see cref="LoanLifecycle.Active"/>.</summary>
+/// <remarks>STORE-ONLY (ADR-IC-017). STRUCTURAL only, no PII (ADR-PC-004).</remarks>
+/// <param name="LoanId">The loan stream whose disbursement landed — never PII (ADR-PC-004).</param>
+/// <param name="DisbursementAccountRef">The opaque account the disbursement finally landed on — never PII.</param>
+/// <param name="LandedOn">The economic date the disbursement landed — an input date, never a clock read.</param>
+public sealed record LoanDisbursementLanded(
+    Guid LoanId,
+    string DisbursementAccountRef,
+    DateOnly LandedOn) : DomainEvent
+{
+    // Landing the held disbursement is a snapshot lifecycle boundary (ADR-PC-003 §P2) — the loan becomes
+    // live/amortizing, interpretable on its own.
+    public override bool IsLifecycleBoundary => true;
+}

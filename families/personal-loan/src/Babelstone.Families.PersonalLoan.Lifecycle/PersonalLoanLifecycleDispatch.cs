@@ -97,4 +97,43 @@ public static class PersonalLoanLifecycleDispatch
     /// stamps the event's valid_time from, and the instant the forecast milestone falls due at.</summary>
     public static DateTimeOffset DueInstant(DateOnly dueDate) =>
         new(dueDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+    /// <summary>The STABLE command-kind the disbursement re-attempt idempotency key is derived under. MUST
+    /// equal the engine disbursement endpoint's own derivation kind so the driver-derived id and the
+    /// engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3). Named here, not referenced, to
+    /// keep the family lifecycle contribution free of a family-application compile dependency.</summary>
+    public const string CommandKindDisburse = "disburse";
+
+    /// <summary>Disbursement is the degenerate ONE-SHOT occurrence (exactly one per loan), so its stable
+    /// occurrence key is the constant <c>1</c> (ADR-PC-036 §Decision 3) — a re-attempt re-fires under the
+    /// same constant so the driver's dedupe and the engine's command_dedup collapse it to one landing.</summary>
+    public const long DisbursementOccurrence = 1;
+
+    /// <summary>
+    /// The re-attempt command for a loan whose approved disbursement was held DISBURSEMENT-PENDING
+    /// (ADR-PC-043 slot 5, bd babelstone-98mj.6): re-fire the disbursement endpoint under the ONE-SHOT
+    /// occurrence key so the engine's <c>command_dedup</c> (and the ADR-PC-043 slot-4 intent key) collapse a
+    /// late original apply and this re-attempt to exactly ONE landing — the loan cannot be double-disbursed.
+    /// The re-attempt fires only when the destination is receivable again (the rule's projection-driven gate),
+    /// so the disbursement lands rather than being re-held.
+    /// </summary>
+    /// <param name="loanId">The disbursement-pending loan stream the re-attempt targets.</param>
+    /// <param name="disbursementAccountRef">The loan's OPAQUE disbursement-account reference — never an IBAN,
+    /// no PII (ADR-PC-004 §P2).</param>
+    /// <param name="startDate">The loan's own disbursement start date — rides as <c>disbursed_at</c>, so the
+    /// re-attempt records the correct business valid_time (ADR-PC-002).</param>
+    public static LifecycleCommandDecision DisbursementRetryDecision(
+        Guid loanId, string disbursementAccountRef, DateOnly startDate) =>
+        new(
+            InstanceId: loanId,
+            CommandKind: CommandKindDisburse,
+            OccurrenceKey: DisbursementOccurrence,
+            RequestPath: $"/v1/loans/{loanId:D}/disbursement",
+            Body: new Dictionary<string, object?>
+            {
+                ["disbursement_account_ref"] = disbursementAccountRef,
+                ["disbursed_at"] = DueInstant(startDate),
+            },
+            DueAt: startDate,
+            ServicePrincipalScope: MoneyMoverScope);
 }

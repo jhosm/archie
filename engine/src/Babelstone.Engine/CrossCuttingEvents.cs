@@ -521,5 +521,14 @@ public static class CrossCuttingEventRegistrations
             new DispatchableHandler<TState, HoldCaptured>(new HoldCapturedHandler<TState>())),
         new("operations.HoldExpired", typeof(HoldExpired),
             new DispatchableHandler<TState, HoldExpired>(new HoldExpiredHandler<TState>())),
+        // The ADR-PC-043 slot-5 undeliverable-credit pair (CreditUnappliedEvents.cs): the two
+        // cross-cutting facts a family appends when a payout has nowhere to land (CreditUnapplied)
+        // and when the destination later exists (CreditReapplied). Bound for EVERY family so the
+        // events decode (and replay fail-closed) on any family stream that can carry them; the folds
+        // are no-ops because the undeliverable-credit IOU/escheat ledger is a SPINE-owned fold.
+        new("operations.CreditUnapplied", typeof(CreditUnapplied),
+            new DispatchableHandler<TState, CreditUnapplied>(new CreditUnappliedHandler<TState>())),
+        new("operations.CreditReapplied", typeof(CreditReapplied),
+            new DispatchableHandler<TState, CreditReapplied>(new CreditReappliedHandler<TState>())),
     ];
 }

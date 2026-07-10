@@ -87,4 +87,19 @@ public static class TermDepositLifecycleDispatch
     /// binds and stamps the event's valid_time from, and the instant the forecast milestone falls due at.</summary>
     public static DateTimeOffset DueInstant(DateOnly maturityDate) =>
         new(maturityDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+    /// <summary>
+    /// The re-attempt command for a deposit whose maturity payout was held PAYOUT-PENDING (ADR-PC-043 slot 5,
+    /// bd babelstone-98mj.6): re-fire the SAME maturity endpoint under the SAME one-shot occurrence key so the
+    /// engine's <c>command_dedup</c> (and the ADR-PC-043 slot-4 intent key) collapse the re-attempt to exactly
+    /// ONE landing — a late original apply and this re-attempt cannot double-pay. The re-attempt fires only
+    /// when the destination is receivable again (the rule's projection-driven gate), so the payout lands
+    /// rather than being re-held. Identical kind/occurrence/path/body to <see cref="MatureDecision"/>: it is
+    /// the same economic occurrence, retried — NOT a new one.
+    /// </summary>
+    /// <param name="depositId">The payout-pending deposit stream the re-attempt targets.</param>
+    /// <param name="maturityDate">The deposit's own maturity date — rides as <c>matured_at</c>, so the
+    /// re-attempt records the correct business valid_time (ADR-PC-002).</param>
+    public static LifecycleCommandDecision PayoutRetryDecision(Guid depositId, DateOnly maturityDate) =>
+        MatureDecision(depositId, maturityDate);
 }

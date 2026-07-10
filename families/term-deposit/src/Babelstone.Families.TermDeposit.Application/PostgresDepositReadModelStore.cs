@@ -183,6 +183,40 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         return ids;
     }
 
+    public async Task<IReadOnlyList<DepositReadModelRow>> ListPayoutPendingAsync(CancellationToken ct = default)
+    {
+        // The undeliverable-payout hold population (ADR-PC-043 slot 5, bd babelstone-98mj.6): every deposit
+        // whose matured payout could not land, so it is held payout-pending at source. nameof keeps the
+        // literal in lock-step with the enum — a rename breaks the build, not the query silently. ORDER BY
+        // stream_id is a deterministic, stable order (cf. ListActiveStreamIdsAsync); the
+        // deposits_lifecycle_idx B-tree (migration 0002) answers the predicate with an index scan. Full rows
+        // — the retry rule needs the beneficiary/maturity facts, not ids only.
+        const string sql = """
+            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
+                   term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
+                   payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated,
+                   product_config_version
+            FROM read_model.deposits
+            WHERE lifecycle = @lifecycle
+            ORDER BY stream_id ASC;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("lifecycle", nameof(DepositLifecycle.PayoutPending));
+
+        var rows = new List<DepositReadModelRow>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            rows.Add(Map(reader));
+        }
+
+        return rows;
+    }
+
     public async Task TruncateAsync(CancellationToken ct = default)
     {
         // ADR-IC-005 §P5 rebuild. ASSUMPTION: exactly one read-model runner owns
