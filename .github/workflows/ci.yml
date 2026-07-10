@@ -1050,6 +1050,28 @@ jobs:
           echo "$np" | grep -q 'otel-collector' \
             || { echo "::error::ADR-IC-007 §P1: allow-grafana-lgtm-ingress does not scope grafana-lgtm ingress to the otel-collector"; exit 1; }
           echo "staging OTLP hop assertion passed (4317/4318 published + collector-only NetworkPolicy present)"
+      - name: Assert the ha overlay publishes the OTLP fan-out hop behind the collector-only NetworkPolicy (bd babelstone-zla1.18)
+        # ADR-IC-007 §P1 (amended 2026-07-09): the production-shaped ha overlay republishes the
+        # appliance's OTLP intake (4317/4318) on the grafana-lgtm Service so the Collector's fan-out
+        # lands — WITHOUT this the hop is black-holed and every trace/log/metric is dropped (the same
+        # latent defect staging fixed in bd babelstone-zla1.16). The §P1 single-entry boundary is
+        # preserved by the allow-grafana-lgtm-ingress NetworkPolicy (otel-collector only). Assert BOTH
+        # halves so the boundary never regresses to a bare open port — the ha counterpart of the
+        # staging assertion above.
+        run: |
+          set -euo pipefail
+          ha="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/ha)"
+          grafana_svc="$(echo "$ha" | awk 'BEGIN{RS="\n---\n"} /kind: Service/ && /name: grafana-lgtm/')"
+          for p in 4317 4318; do
+            echo "$grafana_svc" | grep -Eq "port: $p" \
+              || { echo "::error::ha grafana-lgtm Service is missing OTLP port $p — the Collector fan-out hop would be black-holed (bd babelstone-zla1.18)"; exit 1; }
+          done
+          np="$(echo "$ha" | awk 'BEGIN{RS="\n---\n"} /kind: NetworkPolicy/ && /name: allow-grafana-lgtm-ingress/')"
+          [ -n "$np" ] \
+            || { echo "::error::ADR-IC-007 §P1: ha exposes OTLP on grafana-lgtm but the collector-only allow-grafana-lgtm-ingress NetworkPolicy is absent"; exit 1; }
+          echo "$np" | grep -q 'otel-collector' \
+            || { echo "::error::ADR-IC-007 §P1: allow-grafana-lgtm-ingress does not scope grafana-lgtm ingress to the otel-collector"; exit 1; }
+          echo "ha OTLP hop assertion passed (4317/4318 published + collector-only NetworkPolicy present)"
       - name: Assert the event-store migration ConfigMap lists every Sql file (bd babelstone-zla1.5.1)
         # The apps/ migration Job applies the event-store SQL via a configMapGenerator that
         # lists each engine/src/.../Sql/0*.sql file by hand (a flat ConfigMap can't glob a

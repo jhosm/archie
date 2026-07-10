@@ -1,0 +1,72 @@
+# In-cluster network wall for the telemetry hop in the HA overlay (bd babelstone-zla1.18;
+# ADR-IC-007 §P1 amendment 2026-07-09).
+#
+# Plain English: the ha overlay republishes the Grafana LGTM appliance's OTLP intake
+# (4317/4318) on the grafana-lgtm Service (grafana-otlp-svc.patch.yaml) so the OTel Collector's
+# fan-out hop lands and telemetry stops being black-holed. Publishing a port is only half the
+# fix: ADR-IC-007 §P1 requires the Collector to stay the SINGLE OTLP entry point, so a service
+# must not be able to ship telemetry direct-to-backend. This file moves that boundary to the
+# network layer — grafana-lgtm's OTLP ports are admitted from the otel-collector pod ONLY.
+#
+# Scope note — why this is collector-only, not staging's full default-deny wall: the ha overlay
+# renders ONLY the base backing-infra stack (it does not pull in apps/ — see the ha
+# kustomization), so the broad per-service allow rules staging carries (engine, orchestrator,
+# mcp-server, Postgres, Redpanda, Kong, …) have no pods to select here. The telemetry hop is the
+# one edge this overlay does render, so this file walls exactly it. A full HA network wall for a
+# real app-tier bring-up is a downstream lane (the Q.6 promotion path), not this static-authoring
+# fix. This mirrors the collector-to-grafana-lgtm rule in
+# infra/k8s/overlays/staging/network-policies.yaml (policy 11).
+#
+# Enforcement note: k3s ships an embedded NetworkPolicy controller (kube-router derived), so this
+# is enforced with no extra install. `kubectl port-forward` traffic enters through the kubelet,
+# not the pod network, so operator port-forwards are unaffected.
+---
+# OTel Collector (4317 gRPC / 4318 HTTP) — every pod in the namespace may emit telemetry
+# (ADR-IC-007 §P1: the Collector is the ONE ingest point). A namespace-wide allow on exactly
+# these two ports is the least-privilege shape that doesn't need editing for every new emitter.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+---
+# Grafana LGTM — OTLP (4317/4318) from the Collector ONLY (the §P1 boundary: services must not
+# ship telemetry direct-to-backend, and now the network agrees). The grafana-otlp-svc.patch.yaml
+# republishes these ports on the grafana-lgtm Service; this policy keeps them Collector-only, so
+# the Collector's fan-out hop (grafana-lgtm:4317) lands while no other pod can dial the backend
+# directly. The Grafana UI (3000) is not walled here — the ha overlay fronts no public edge, so
+# there is no Ingress/Traefik source to admit (staging's edge/query rules have no counterpart
+# here); operators reach the UI via `kubectl port-forward`, which bypasses NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-lgtm-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-lgtm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318

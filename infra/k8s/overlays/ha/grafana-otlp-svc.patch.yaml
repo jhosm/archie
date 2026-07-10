@@ -1,0 +1,28 @@
+# Publish the LGTM appliance's OTLP intake (4317 gRPC / 4318 HTTP) on the grafana-lgtm
+# Service so the OTel Collector's fan-out hop actually lands (bd babelstone-zla1.18).
+#
+# Plain English: the Collector receives every service's telemetry and forwards it to this
+# appliance over OTLP at grafana-lgtm:4317 — but the base Service publishes only 3000, so in
+# k8s that forward times out and ALL traces/logs/metrics are dropped. This adds the two OTLP
+# ports (strategic-merge by port: ADDED alongside the base 3000, which is not touched). This is
+# the SAME latent break the staging overlay carried before bd babelstone-zla1.16; the ha
+# (production-shaped) overlay had it too, unaddressed — this ports that fix here.
+#
+# ADR-IC-007 §P1 is preserved, with the boundary moved to the network layer: the sibling
+# network-policies.yaml's allow-grafana-lgtm-ingress admits 4317/4318 from the otel-collector
+# pod ONLY, so the Collector stays the single OTLP entry point and no service can export
+# direct-to-backend. The base render stays OTLP-free (it has no NetworkPolicy to lean on), so the
+# §P1 base CI assertion is unchanged. See the ADR-IC-007 §P1 amendment (2026-07-09) for the
+# rationale, and the staging sibling infra/k8s/overlays/staging/grafana-otlp-svc.patch.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-lgtm
+spec:
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

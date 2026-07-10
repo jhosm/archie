@@ -38,6 +38,15 @@ resources:
   # §P2/§P4).
   - postgres-pitr-resources.yaml
   - openbao-dr-ha.yaml
+  # Telemetry hop (bd babelstone-zla1.18; ADR-IC-007 §P1 amendment 2026-07-09): the
+  # collector-only in-cluster wall for the OTLP fan-out to grafana-lgtm. The
+  # grafana-otlp-svc.patch below republishes 4317/4318 on the grafana-lgtm Service; this
+  # NetworkPolicy admits them from the otel-collector pod ONLY, so the Collector stays the single
+  # OTLP entry point (§P1). WITHOUT the pair the Collector's fan-out hop is black-holed and every
+  # trace/log/metric is dropped — the same latent defect the staging overlay fixed in
+  # bd babelstone-zla1.16. Scoped to just the telemetry edge (the ha overlay renders backing-infra
+  # only, no apps/) — see network-policies.yaml's scope note.
+  - network-policies.yaml
 
 # Third-party image digest pins for the images THIS overlay adds on top of base (bd
 # babelstone-2t16.31.1; ADR-PC-007 §A3). A base `images:` transformer reaches only base's own
@@ -95,6 +104,13 @@ patches:
       version: v1
       kind: StatefulSet
       name: postgres
+  # Publish the appliance's OTLP intake (4317/4318) on the grafana-lgtm Service so the OTel
+  # Collector's fan-out hop lands — without it every trace/log/metric is dropped in k8s
+  # (bd babelstone-zla1.18). §P1 is preserved at the network layer: allow-grafana-lgtm-ingress
+  # (network-policies.yaml above) admits 4317/4318 from the otel-collector ONLY. Mirrors the
+  # staging overlay's grafana-otlp-svc.patch (bd babelstone-zla1.16); see the ADR-IC-007 §P1
+  # amendment 2026-07-09.
+  - path: grafana-otlp-svc.patch.yaml
 
 configMapGenerator:
   # Primary first-boot replication setup (replicator role + physical slot),
