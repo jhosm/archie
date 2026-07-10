@@ -25,25 +25,11 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// outcome rather than re-applying it.
 /// </para>
 /// <para>
-/// TRUST-SCOPE DECISION — the optional defense-in-depth service-principal gate (bd babelstone-sx4v,
-/// honouring ADR-IC-006 §P2 gateway-attests/engine-enforces + §P5 Boundary-2 mTLS). The question that
-/// issue settles: WHICH principal may authorize a debit, and is a further engine-side attestation gate
-/// adopted on top of the mTLS boundary? DECISION for this run: authorize stays UNGATED (no
-/// <c>ScaPreconditionFilter</c> wrap), and the debit-authorizing principal — WHEN a gate is later adopted —
-/// carries a DISTINCT scope, <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.AuthorizeDebitScope"/>,
-/// never the lifecycle-sweep principal's
-/// <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.LifecycleMoneyMoverScope"/>: authorizing an
-/// arbitrary debit is a materially wider power than firing a scheduled maturity / coupon / installment, so
-/// the two are disjoint scopes (a leaked lifecycle-driver token must not reach this surface). That distinct
-/// scope + <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.AuthorizeOperation"/> are reserved on
-/// <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal"/> but NOT yet in its <c>AuthorisedOperations</c>
-/// allowance — so adopting the gate later is a WIRING change (wrap the route in a
-/// <c>MapGroup(...).AddEndpointFilter&lt;ScaPreconditionFilter&gt;()</c> and add
-/// <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.AuthorizeOperation"/> to the allowance), not a
-/// fresh trust-scope decision,
-/// and would be an ADR-PC-034-amending step (the ungated posture is the accepted decision today). Wiring it
-/// now would fail the internal callers CLOSED — they forward a service principal, not a human SCA
-/// precondition, so the filter's human-SCA fallback would 422 them and break AUTHORIZATION_SYNC_IDEMPOTENT.
+/// The authorize route stays UNGATED here (no <c>ScaPreconditionFilter</c> wrap). The reserved
+/// <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.AuthorizeOperation"/> /
+/// <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal.AuthorizeDebitScope"/> document the trust-scope
+/// decision — why a debit-authorizing principal would carry a DISTINCT scope and why an engine-side gate is
+/// not wired this run — see <see cref="Babelstone.Engine.Hosting.ScaServicePrincipal"/>.
 /// </para>
 /// </summary>
 public static class AccountsEndpoints
