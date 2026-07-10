@@ -281,6 +281,106 @@ public sealed class SettlementProcessSagaTests
         }
     }
 
+    // ---- The counterparty router (ADR-PC-043 slots 1-2 — route by ce_settlementtarget, header-only) ----
+
+    [Fact]
+    public void Router_routes_by_the_settlement_target_header_alone_never_the_payload()
+    {
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=x;Database=y",
+            EngineBaseUrl = "http://engine.invalid",
+            SettlementBaseUrl = "http://acl.legacy",
+            EngineCaSettlementBaseUrl = "http://engine-ca.test",
+        };
+        var router = new SettlementCommandRouter(options);
+
+        // engine-ca on the header → the engine-CA base URL; the PATH is counterparty-invariant.
+        var engineCa = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementCommandRouter.SettlementTargetHeader] = SettlementCommandRouter.EngineCaValue,
+        };
+        var caRoute = router.Resolve(SettlementProcess.ConfirmCredit, engineCa);
+        Assert.NotNull(caRoute);
+        Assert.Equal("http://engine-ca.test", caRoute!.BaseUrl);
+        Assert.Equal("/v1/credits", caRoute.Path);
+
+        // legacy-dda on the header → the legacy counterparty (the SAME path).
+        var legacy = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementCommandRouter.SettlementTargetHeader] = SettlementCommandRouter.LegacyDdaValue,
+        };
+        var legacyRoute = router.Resolve(SettlementProcess.ConfirmCredit, legacy);
+        Assert.NotNull(legacyRoute);
+        Assert.Equal("http://acl.legacy", legacyRoute!.BaseUrl);
+        Assert.Equal("/v1/credits", legacyRoute.Path);
+
+        // The router reads ONLY settlementtarget — an AccountRef-like body hint in the headers is IGNORED
+        // (ADR-IC-018 §D5: never Movement.AccountRef). A header carrying an engine-CA-ish account ref but a
+        // legacy target still routes legacy.
+        var payloadHint = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementCommandRouter.SettlementTargetHeader] = SettlementCommandRouter.LegacyDdaValue,
+            ["accountref"] = "ACCT-engine-ca-looking-token",
+        };
+        Assert.Equal("http://acl.legacy", router.Resolve(SettlementProcess.ConfirmCredit, payloadHint)!.BaseUrl);
+    }
+
+    [Fact]
+    public void Router_defaults_to_legacy_when_no_settlement_target_header_is_present_unchanged()
+    {
+        // ADR-PC-043: an ABSENT settlement-target header defaults to legacy-DDA — so every pre-ADR-PC-043
+        // caller (the single-arg Resolve, and the header-aware Resolve with a null/empty map) reaches the
+        // SAME legacy routes it always did. Legacy routing is UNCHANGED.
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=x;Database=y",
+            EngineBaseUrl = "http://engine.invalid",
+            SettlementBaseUrl = "http://acl.legacy",
+            EngineCaSettlementBaseUrl = "http://engine-ca.test",
+        };
+        var router = new SettlementCommandRouter(options);
+
+        foreach (var cmd in new[]
+        {
+            SettlementProcess.ReserveAccountBalance, SettlementProcess.ConfirmDebit,
+            SettlementProcess.ConfirmCredit, SettlementProcess.QueryCoreDebitStatus,
+            SettlementProcess.QueryCoreCreditStatus,
+        })
+        {
+            // The pre-existing single-arg overload — the legacy default.
+            Assert.Equal("http://acl.legacy", router.Resolve(cmd)!.BaseUrl);
+            // The header-aware overload with no header — also legacy.
+            Assert.Equal("http://acl.legacy", router.Resolve(cmd, extensionHeaders: null)!.BaseUrl);
+            Assert.Equal("http://acl.legacy",
+                router.Resolve(cmd, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase))!.BaseUrl);
+        }
+    }
+
+    [Fact]
+    public void Router_fails_closed_for_an_engine_ca_leg_when_no_engine_ca_base_url_is_configured()
+    {
+        // An estate that has not stood up the engine-CA surface leaves EngineCaSettlementBaseUrl null. An
+        // engine-CA-targeted leg then resolves to NO route (fail-closed) rather than silently settling
+        // engine-CA money on the legacy core — the drain surfaces a terminal routing failure.
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=x;Database=y",
+            EngineBaseUrl = "http://engine.invalid",
+            SettlementBaseUrl = "http://acl.legacy",
+            // EngineCaSettlementBaseUrl deliberately unset.
+        };
+        var router = new SettlementCommandRouter(options);
+
+        var engineCa = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementCommandRouter.SettlementTargetHeader] = SettlementCommandRouter.EngineCaValue,
+        };
+        Assert.Null(router.Resolve(SettlementProcess.ConfirmCredit, engineCa));
+        // But the legacy legs still route (the unconfigured engine-CA surface does not break legacy routing).
+        Assert.Equal("http://acl.legacy", router.Resolve(SettlementProcess.ConfirmCredit)!.BaseUrl);
+    }
+
     // ---- The payload factory (byte-stable, PII-free, process-id-derived) ------------------------------
 
     [Fact]

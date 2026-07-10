@@ -1,3 +1,4 @@
+using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Saga;
 using Babelstone.Orchestrator.Saga.Settlement;
 using Xunit;
@@ -31,6 +32,14 @@ public sealed class MovementHeaderAutoStartContractTests
     private const string OriginatedValue = "Originated";
     private const string DebitValue = "Debit";
     private const string CreditValue = "Credit";
+
+    // The ce_settlementtarget counterparty wire values the engine promotes (ADR-PC-043 slot 1) — again
+    // duplicated as literals because the substrate does not reference the engine (ADR-PC-019 §P2). The engine
+    // producer's own tests pin these are its SettlementTarget enum's wire tokens; this pins the substrate
+    // router's SettlementCommandRouter constants match them, so the two halves agree across the bus.
+    private const string SettlementTargetKey = "settlementtarget";
+    private const string EngineCaValue = "engine-ca";
+    private const string LegacyDdaValue = "legacy-dda";
 
     private static readonly SettlementSagaModule Module = new(
         new SagaModuleContext(
@@ -99,5 +108,35 @@ public sealed class MovementHeaderAutoStartContractTests
         // And the resolved branch is a real transition out of SETTLEMENT_STARTED (the producer's value drives
         // the saga forward, not a dead end).
         Assert.True(machine.TryAdvance(SettlementProcess.States.SettlementStarted, effective, out _));
+    }
+
+    [Fact]
+    public void The_router_keys_the_counterparty_on_the_producer_emitted_settlement_target_values()
+    {
+        // The ce_settlementtarget producer↔consumer contract (ADR-PC-043 slots 1-2): the router's wire literals
+        // are exactly the tokens the engine's MovementHeaders promotes. First pin the substrate's own constants
+        // agree with the producer's wire strings (the engine's tests pin the producer side).
+        Assert.Equal(SettlementTargetKey, SettlementCommandRouter.SettlementTargetHeader);
+        Assert.Equal(EngineCaValue, SettlementCommandRouter.EngineCaValue);
+        Assert.Equal(LegacyDdaValue, SettlementCommandRouter.LegacyDdaValue);
+
+        // Then prove the router actually routes on the producer-emitted value — engine-ca diverts to the
+        // engine-CA base URL, legacy-dda / absent stays on the legacy one (header-only, never the payload).
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=x;Database=y",
+            EngineBaseUrl = "http://engine.invalid",
+            SettlementBaseUrl = "http://acl.legacy",
+            EngineCaSettlementBaseUrl = "http://engine-ca.test",
+        };
+        var router = new SettlementCommandRouter(options);
+
+        var engineCa = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementTargetKey] = EngineCaValue,
+        };
+        Assert.Equal("http://engine-ca.test",
+            router.Resolve(SettlementProcess.ConfirmCredit, engineCa)!.BaseUrl);
+        Assert.Equal("http://acl.legacy", router.Resolve(SettlementProcess.ConfirmCredit)!.BaseUrl);
     }
 }

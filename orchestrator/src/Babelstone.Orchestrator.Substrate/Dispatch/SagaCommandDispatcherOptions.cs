@@ -32,8 +32,18 @@ public sealed record SagaCommandDispatcherOptions
 
     /// <summary>The Core-ACL / settlement base URL the settlement commands target (a WireMock stub at
     /// v1; the real ACL is DEF-1, bd ub9s). Configurable so v1 can point it at the stub and a later
-    /// deploy at the real adapter without a code change.</summary>
+    /// deploy at the real adapter without a code change. This is the LEGACY-DDA counterparty
+    /// (<c>ce_settlementtarget = legacy-dda</c>, the default), and the target for any leg with no promoted
+    /// settlement-target header (ADR-PC-043 — legacy routing UNCHANGED).</summary>
     public required string SettlementBaseUrl { get; init; }
+
+    /// <summary>The engine-OWNED current-account settlement base URL — the ADR-PC-043 engine-CA counterparty a
+    /// leg is routed to when its promoted <c>ce_settlementtarget</c> header is <c>engine-ca</c>. Optional: when
+    /// null (or blank) no leg is engine-CA-routed and every settlement command stays on
+    /// <see cref="SettlementBaseUrl"/> — so an estate that has not stood up the engine-CA surface keeps the
+    /// pre-ADR-PC-043 behaviour with no config change. The engine's own command surface (ADR-PC-029), which the
+    /// settlement-facing CA <c>/capture</c> and <c>/credit</c> endpoints live behind.</summary>
+    public string? EngineCaSettlementBaseUrl { get; init; }
 
     /// <summary>Max rows drained per poll cycle (the PENDING tail, ORDER BY seq).</summary>
     public int BatchSize { get; init; } = 256;

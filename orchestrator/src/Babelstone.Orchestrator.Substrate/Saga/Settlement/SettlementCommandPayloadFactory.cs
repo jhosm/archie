@@ -35,7 +35,8 @@ public static class SettlementCommandPayloadFactory
     /// <summary>
     /// Build the full typed payload for <paramref name="commandType"/>, or null if there is no recipe for it
     /// (the caller surfaces that as a fail-closed wiring error). PURE and byte-stable: no clock, no GUID
-    /// minting (ADR-PC-010 §P5) — every reference is a deterministic function of the process id.
+    /// minting (ADR-PC-010 §P5) — every reference is a deterministic function of the process id AND, for the
+    /// engine-CA confirm legs, the economic-intent id in <paramref name="intent"/>.
     /// </summary>
     /// <param name="commandType">The command NAME the state machine decided (a
     /// <see cref="SettlementProcess"/> command-name constant).</param>
@@ -43,13 +44,32 @@ public static class SettlementCommandPayloadFactory
     /// <param name="causationMessageId">The triggering event's message id (the §P7 causation reference) — a
     /// pre-existing id carried through, never minted here.</param>
     /// <param name="correlationId">The originating request's correlation reference, carried unchanged.</param>
+    /// <param name="intent">The ADR-PC-043 slot-4 economic intent — the exactly-once <c>IntentId</c> the
+    /// engine-CA confirm legs' <c>command_id</c> derives from (NOT the HTTP Idempotency-Key) and the source
+    /// <c>Movement.Amount</c> (integer cents) the CA writer lands. <c>null</c> for the legacy-DDA path (and
+    /// for the platform-layer default before a family threads the promoted intent) — the confirm legs then
+    /// fall back to the process-id-derived reference (unchanged) and carry no amount (zero cents). See the
+    /// source→destination threading note in <see cref="SettlementIntent"/>.</param>
     public static SettlementCommandPayload? Build(
         string commandType,
         Guid processId,
         Guid causationMessageId,
-        Guid? correlationId)
+        Guid? correlationId,
+        SettlementIntent? intent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
+
+        // ADR-PC-043 slot 4: the engine-CA confirm legs' idempotency reference is derived from the body's
+        // economic-INTENT id, so a saga reissue with a fresh dispatch message_id collapses to ONE append. When
+        // no intent is threaded (legacy-DDA, or the pre-threading platform default) the reference stays the
+        // process-id derivation, byte-identical to before — legacy routing is UNCHANGED.
+        var confirmDebitRef = intent is { } di
+            ? SettlementReferences.DeriveFromIntent(SettlementReferences.CoreHoldPrefix, di.IntentId)
+            : SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId);
+        var confirmCreditRef = intent is { } ci
+            ? SettlementReferences.DeriveFromIntent(SettlementReferences.CreditPrefix, ci.IntentId)
+            : SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId);
+        var amountCents = intent?.AmountCents ?? 0L;
 
         return commandType switch
         {
@@ -66,7 +86,8 @@ public static class SettlementCommandPayloadFactory
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
+                CoreHoldRef = confirmDebitRef,
+                AmountCents = amountCents,
             },
             SettlementProcess.ConfirmCredit => new ConfirmCreditCommand
             {
@@ -74,25 +95,56 @@ public static class SettlementCommandPayloadFactory
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
                 AccountRef = SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId),
-                CreditRef = SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId),
+                CreditRef = confirmCreditRef,
+                AmountCents = amountCents,
             },
             SettlementProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                // The SAME derived hold reference the indeterminate ConfirmDebit used (deterministic, not
-                // minted), so the clearance query resolves exactly that in-flight operation.
-                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
+                // The SAME reference the indeterminate ConfirmDebit used (the intent-derived one on the CA
+                // path, the process-id one on the legacy path) — deterministic, not minted — so the clearance
+                // query resolves exactly that in-flight operation and the retry never double-moves.
+                CoreHoldRef = confirmDebitRef,
             },
             SettlementProcess.QueryCoreCreditStatus => new QueryCoreCreditStatusCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                CreditRef = SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId),
+                CreditRef = confirmCreditRef,
             },
             _ => null,
         };
     }
 }
+
+/// <summary>
+/// The ADR-PC-043 slot-4 economic intent that pins a settlement leg's exactly-once identity — the
+/// <c>IntentId = f(source_id, occurrence)</c> the engine-CA confirm legs' append <c>command_id</c> derives
+/// from, plus the source <c>Movement.Amount</c> the CA writer lands (integer cents, the in-band
+/// <c>WRONG-AMOUNT</c> guard). In plain English: it names WHICH economic payout a settlement command effects
+/// and HOW MUCH, so a reissue or a re-route of that payout collapses to exactly one landing.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Source→destination threading (ADR-PC-043 §Idempotency).</b> The intent id originates at the SOURCE
+/// family (the deposit / loan) as <c>SettlementReferences.DeriveIntentId(source_id, occurrence)</c> — the
+/// same stable occurrence key the source-family payout <c>LifecycleCommandKey</c> uses (ADR-PC-036), so it
+/// is deterministic across reissues. The source promotes it (with the target header, STEP B) onto the
+/// Movement-bearing event; the substrate carries it UNTOUCHED here and derives the CA-apply reference from it
+/// — NEVER from a fresh value and NEVER from the HTTP Idempotency-Key. Resolution/retry keys derive from the
+/// SAME intent id via <see cref="SettlementReferences.DeriveResolutionIntentId"/>, so a late original apply
+/// and an operator re-target collapse to one landing by construction.
+/// </para>
+/// <para>
+/// <b>Structural, PII-free (ADR-PC-004 §P2).</b> The intent id is an opaque token; the amount rides as
+/// integer cents (a reference to a value, never a raw amount-bearing identity). The substrate does not
+/// reference the engine's <c>Money</c> type (ADR-PC-019 §P2) — the receiver re-hydrates it.
+/// </para>
+/// </remarks>
+/// <param name="IntentId">The economic-intent id from
+/// <see cref="SettlementReferences.DeriveIntentId"/> — the per-payout exactly-once key.</param>
+/// <param name="AmountCents">The source <c>Movement.Amount</c> in integer cents the CA writer lands.</param>
+public sealed record SettlementIntent(string IntentId, long AmountCents);
