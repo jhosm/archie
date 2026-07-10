@@ -5,7 +5,7 @@ using Xunit;
 namespace Babelstone.Engine.Tests;
 
 /// <summary>
-/// The undeliverable-credit cross-cutting pair (ADR-PC-043 slot 5, CreditUnappliedEvents.cs): the
+/// The undeliverable-credit cross-cutting pair (ADR-PC-043 slot 5, CrossCuttingEvents.cs): the
 /// engine-declared <see cref="CreditUnapplied"/> / <see cref="CreditReapplied"/> facts a family appends
 /// when a matured payout has nowhere to land, and when a live destination later exists. In plain English:
 /// if a payout cannot be delivered the money is NOT lost into a void nor swept into an anonymous pot — it

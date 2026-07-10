@@ -171,13 +171,18 @@ public sealed class AvroCatalogSweepTests
 
     // A distinct-valued Movement for the carrier sample (the same distinctness discipline as the scalar
     // factory): every field a non-default value of its type so a dropped Movement field breaks equality.
+    // Origin is Observed, not Originated: Observed is a valid MovementOrigin symbol in BOTH the full
+    // shared carrier (["Originated","Observed"]) AND the CA landing carriers narrowed to Observed-only
+    // (AccountCredited/AccountDebited, ADR-PC-043 loop-breaker), so ONE sample round-trips every
+    // catalogued Movement-bearing schema. Originated would fail Avro enum encoding against the narrowed
+    // CA schemas.
     private static Movement SampleMovement(int seed) => new(
         AccountRef: $"acct-{seed}",
         Direction: SettlementDirection.Credit,
         Amount: new Money(5_000 + seed),
         ValueDate: new DateOnly(2026, 1, 1).AddDays(seed),
         Operation: MovementOperation.Disburse,
-        Origin: MovementOrigin.Originated,
+        Origin: MovementOrigin.Observed,
         CommandId: DeterministicGuid(seed + 1000));
 
     // Guid.NewGuid() would make a failure non-reproducible; derive a stable Guid from the seed.
