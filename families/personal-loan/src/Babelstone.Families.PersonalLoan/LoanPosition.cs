@@ -20,7 +20,7 @@ public enum LoanLifecycle
     /// marker: the loan stays disbursement-pending until a live destination exists, at which point the
     /// lifecycle-driver's <c>DisbursementPendingRetryRule</c> re-fires the disbursement and the loan
     /// resolves to <see cref="Active"/> (<c>LoanDisbursementLanded</c>). Reached from
-    /// <see cref="Pending"/> via <c>LoanDisbursementPending</c> — the money is never disgorged into a
+    /// <see cref="Pending"/> via <c>LoanDisbursementHeld</c> — the money is never disgorged into a
     /// void nor an anonymous pot.</summary>
     DisbursementPending,
 

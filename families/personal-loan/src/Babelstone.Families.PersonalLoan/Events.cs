@@ -307,7 +307,7 @@ public sealed record LoanWrittenOff(
 /// <c>BENEFICIARY_ACCOUNT_CLOSED</c>) — never free-text PII.</param>
 /// <param name="PendingSince">The economic date the disbursement became pending — an input date, never a
 /// clock read in a fold (ADR-PC-023).</param>
-public sealed record LoanDisbursementPending(
+public sealed record LoanDisbursementHeld(
     Guid LoanId,
     string DisbursementAccountRef,
     string Reason,

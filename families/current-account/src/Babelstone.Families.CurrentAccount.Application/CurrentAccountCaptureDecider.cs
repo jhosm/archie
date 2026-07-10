@@ -100,12 +100,13 @@ public static class CurrentAccountCaptureDecider
         Direction: SettlementDirection.Debit,
         Amount: new Money(command.AmountCents),
         ValueDate: command.ValueDate,
-        // The generic money-OUT verb the CA capture debit lands under (ADR-PC-032 — a confirmed debit is
-        // deposit funding / an installment collection). The CA is family-agnostic and does not learn the
-        // source's specific occurrence, so it reuses the closest existing MovementOperation rather than
-        // widening the closed enum (a dedicated CA settle-debit verb + its governed Avro carrier symbol is a
-        // later change). The operation is a fold LABEL; the Debit DIRECTION is what moves the balance.
-        Operation: MovementOperation.CollectInstallment,
+        // The DEDICATED CA settle-debit verb the capture debit lands under (ADR-PC-043; bd babelstone-98mj.8):
+        // SettleDebit names the current-account settlement DEBIT-capture honestly, REPLACING the earlier
+        // CollectInstallment stopgap the CA borrowed before it had its own governed label. A confirmed debit
+        // is deposit funding / an installment collection; the CA is family-agnostic and does not learn the
+        // source's specific occurrence, so a dedicated CA verb — not a source-family label — is the correct
+        // fold LABEL here. The Debit DIRECTION is what moves the balance; the verb only names the occurrence.
+        Operation: MovementOperation.SettleDebit,
         Origin: MovementOrigin.Observed,
         CommandId: command.CommandId);
 }

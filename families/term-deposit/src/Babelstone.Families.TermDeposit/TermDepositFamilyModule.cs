@@ -54,8 +54,8 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
         // The undeliverable-payout pair (ADR-PC-043 slot 5, bd babelstone-98mj.6): held-at-source and its
         // resolve-back leg (Matured → PayoutPending → Matured).
-        new("term_deposit.DepositPayoutPending", typeof(DepositPayoutPending),
-            new DispatchableHandler<DepositPosition, DepositPayoutPending>(new DepositPayoutPendingHandler())),
+        new("term_deposit.DepositPayoutHeld", typeof(DepositPayoutHeld),
+            new DispatchableHandler<DepositPosition, DepositPayoutHeld>(new DepositPayoutHeldHandler())),
         new("term_deposit.DepositPayoutLanded", typeof(DepositPayoutLanded),
             new DispatchableHandler<DepositPosition, DepositPayoutLanded>(new DepositPayoutLandedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this

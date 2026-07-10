@@ -67,12 +67,13 @@ public static class CurrentAccountCreditAdmissionDecider
             Direction: SettlementDirection.Credit,
             Amount: new Money(command.AmountCents),
             ValueDate: command.ValueDate,
-            // The generic money-IN verb the CA credit lands under (ADR-PC-032 — a maturity/coupon/
-            // disbursement payout are all credit-in). The CA is family-agnostic and does not learn the
-            // source's specific occurrence, so it reuses the closest existing MovementOperation rather than
-            // widening the closed enum (a dedicated CA credit verb + its governed Avro carrier symbol is a
-            // later change). The operation is a fold LABEL; the Credit DIRECTION is what moves the balance.
-            Operation: MovementOperation.PayMaturity,
+            // The DEDICATED CA credit-receive verb the credit lands under (ADR-PC-043; bd babelstone-98mj.8):
+            // ReceiveCredit names the current-account settlement CREDIT-in honestly, REPLACING the earlier
+            // PayMaturity stopgap the CA borrowed before it had its own governed label. A maturity/coupon/
+            // disbursement payout are all credit-in; the CA is family-agnostic and does not learn the source's
+            // specific occurrence, so a dedicated CA verb — not a source-family label — is the correct fold
+            // LABEL here. The Credit DIRECTION is what moves the balance; the verb only names the occurrence.
+            Operation: MovementOperation.ReceiveCredit,
             // Observed, in the ADR-PC-043 "engine-internal already-effected" sense: the settlement saga
             // already drove the cash leg and the CA records the landing — no Originated header, so the
             // settlement predicate starts no SECOND saga on the account's own event (the loop-breaker).

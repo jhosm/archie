@@ -1,0 +1,81 @@
+asyncapi: '3.0.0'
+info:
+  title: AccountDebited
+  version: '1'
+  description: |
+    A settlement CAPTURE landed a real DEBIT on the demand account (ADR-PC-043: ConfirmDebit ->
+    HoldCaptured + Debit Movement) — an earlier reservation turned into money actually leaving. An
+    authorize earmarked funds (an operations.HoldPlaced); when the settlement saga confirms the debit
+    (funding a deposit at constitution, collecting a loan installment), the earmark is captured and the
+    money truly moves, so the account records a Debit Movement the spine's ledger folds into the balance.
+
+    Emitted: when the settlement saga confirms a debit capture on an engine-owned current account. The
+    matching operations.HoldCaptured (the spine-owned earmark release) is appended in the SAME batch, so
+    the hold leaves the active set and this Debit posts atomically.
+
+    NOT a settlement trigger: the Debit Movement is Observed in the ADR-PC-043 'engine-internal
+    already-effected' sense — the saga already drove the cash leg — so no ce_movementorigin=Originated
+    header is emitted and no SECOND saga starts on the account's own event (the loop-breaker).
+
+    No PII (ADR-PC-004 §P2): opaque account/hold/intent references, integer cents, an input value-date.
+  x-owner: current-account
+  x-owner-contact: accounts-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - acl                 # downstream core-banking balance/statement mirror (ADR-IC-012)
+    - notification        # customer-facing debit advice (ADR-IC-011)
+channels:
+  current_account:
+    description: |
+      Event-carried-state-transfer stream for the current_account aggregate. Topic name ==
+      `aggregate_type` (OutboxDrainer convention). One Avro schema per event type (Option A, doc 08).
+    x-compacted: false
+    messages:
+      AccountDebited:
+        $ref: '#/components/messages/AccountDebited'
+operations:
+  publishAccountDebited:
+    action: send
+    channel:
+      $ref: '#/channels/current_account'
+    messages:
+      - $ref: '#/channels/current_account/messages/AccountDebited'
+components:
+  messages:
+    AccountDebited:
+      name: AccountDebited
+      title: Account Debited
+      summary: A settlement capture landed a real debit on the demand account.
+      contentType: application/avro
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: 'aggregate_id (AccountId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.accounts.AccountDebited.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific account this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. current_account.' }
+      x-schema-registry-subject: accounts.current_account.AccountDebited-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/accounts/current_account/AccountDebited.avsc'

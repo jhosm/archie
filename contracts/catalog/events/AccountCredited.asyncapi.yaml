@@ -1,0 +1,82 @@
+asyncapi: '3.0.0'
+info:
+  title: AccountCredited
+  version: '1'
+  description: |
+    A settlement CREDIT landed on the demand account (ADR-PC-043: ConfirmCredit -> Credit Movement) —
+    the current_account family's ability to RECEIVE money. A matured deposit, a loan disbursement, or a
+    coupon paid money INTO this account, so the account records the credit as a Credit Movement the
+    spine's account-keyed movement ledger folds into the accounting balance.
+
+    Emitted: when the settlement saga confirms a credit into an engine-owned current account and the
+    engine records the landing. The credit was admitted UPSTREAM at ingestion by the family's
+    credit-admission decider (a Closed/Erased account is refused by construction), so this fact is only
+    ever appended for an account that could receive it.
+
+    NOT a settlement trigger: the Credit Movement is Observed in the ADR-PC-043 'engine-internal
+    already-effected' sense — the saga already drove the cash leg — so no ce_movementorigin=Originated
+    header is emitted and the settlement predicate starts no SECOND saga on the account's own event (the
+    loop-breaker).
+
+    No PII (ADR-PC-004 §P2): opaque account/intent references, integer cents, an input value-date.
+  x-owner: current-account
+  x-owner-contact: accounts-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - acl                 # downstream core-banking balance/statement mirror (ADR-IC-012)
+    - notification        # customer-facing credit-received advice (ADR-IC-011)
+channels:
+  current_account:
+    description: |
+      Event-carried-state-transfer stream for the current_account aggregate. Topic name ==
+      `aggregate_type` (OutboxDrainer convention). One Avro schema per event type (Option A, doc 08).
+    x-compacted: false
+    messages:
+      AccountCredited:
+        $ref: '#/components/messages/AccountCredited'
+operations:
+  publishAccountCredited:
+    action: send
+    channel:
+      $ref: '#/channels/current_account'
+    messages:
+      - $ref: '#/channels/current_account/messages/AccountCredited'
+components:
+  messages:
+    AccountCredited:
+      name: AccountCredited
+      title: Account Credited
+      summary: A settlement credit landed on the demand account.
+      contentType: application/avro
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: 'aggregate_id (AccountId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.accounts.AccountCredited.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific account this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. current_account.' }
+      x-schema-registry-subject: accounts.current_account.AccountCredited-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/accounts/current_account/AccountCredited.avsc'

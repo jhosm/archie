@@ -23,7 +23,7 @@ public enum DepositLifecycle
     /// maturity: the deposit stays payout-pending until a live destination exists, at which point the
     /// lifecycle-driver's <c>PayoutPendingRetryRule</c> re-fires the payout and the deposit resolves back
     /// to <see cref="Matured"/> (<c>DepositPayoutLanded</c>). Reached from <see cref="Matured"/> via
-    /// <c>DepositPayoutPending</c> — the money is never disgorged into a void nor an anonymous pot.</summary>
+    /// <c>DepositPayoutHeld</c> — the money is never disgorged into a void nor an anonymous pot.</summary>
     PayoutPending,
 
     /// <summary>Constitution was rejected by a config/rule check — no deposit was opened (terminal).</summary>

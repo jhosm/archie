@@ -1,0 +1,27 @@
+{
+  "type": "record",
+  "namespace": "accounts.current_account",
+  "name": "AccountCredited",
+  "doc": "A settlement CREDIT landed on the demand account (ADR-PC-043: ConfirmCredit -> Credit Movement) — the account RECEIVED money (a matured deposit, a loan disbursement, a coupon paid in). The credit was admitted UPSTREAM at ingestion by the family's credit-admission decider (a Closed/Erased account is refused by construction), so this fact is only ever appended for an account that could receive it. The Credit Movement is Observed in the ADR-PC-043 'engine-internal already-effected' sense (the settlement saga already drove the cash leg and the CA records the landing), so no Originated header is emitted and the settlement predicate starts no SECOND saga on the account's own event (the loop-breaker). Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2) — opaque refs, integer cents, an input date.",
+  "fields": [
+    { "name": "account_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "AccountId (Guid) — the account stream the credit is appended to. Never PII (ADR-PC-004 §P2)." },
+    { "name": "account_ref", "type": "string", "doc": "The account's opaque spine key the credit Movement posts against (AccountPosition.AccountRef) — a reference the engine resolves internally, NEVER an IBAN/PII (ADR-PC-004 §P2)." },
+    { "name": "amount_cents", "type": "long", "doc": "The credited amount as a positive integer EUR cents (Money.Cents, ADR-PC-010 §P1) — the source Movement.Amount the writer lands (the in-band WRONG-AMOUNT guard, ADR-PC-043). Posted as a Credit so the accounting balance moves up." },
+    { "name": "intent_reference", "type": "string", "doc": "The ADR-PC-043 slot-4 economic-intent reference the append command_id is derived from (via SettlementReferences.DeriveFromIntent) — carried for audit/lineage, NEVER the HTTP Idempotency-Key. A structural token, never PII (ADR-PC-004 §P2)." },
+    { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "ValueDate (DateOnly) as days since epoch — the credit's economic value-date, a caller-supplied input, never a clock read in a fold (ADR-PC-023)." },
+    { "name": "movements", "type": { "type": "array", "items": {
+      "type": "record",
+      "name": "Movement",
+      "doc": "One recorded change of value against a single engine-owned account (ADR-PC-032), carried append-first inside this event. Inlined from contracts/avro/_shared/Movement.avsc.json — a CA credit records ONE Observed Credit Movement against account_ref (the credit ENTERS that account). Observed in the ADR-PC-043 engine-internal-already-effected sense, so it starts no settlement saga (the loop-breaker).",
+      "fields": [
+        { "name": "account_ref", "type": "string", "doc": "The engine-owned account the value moves against — an OPAQUE token the engine resolves internally, NEVER an IBAN/PII (ADR-PC-004 §P2)." },
+        { "name": "direction", "type": { "type": "enum", "name": "MovementDirection", "symbols": ["Debit", "Credit"] }, "doc": "Debit | Credit, ALWAYS relative to account_ref. A CA credit is Credit (value enters the account)." },
+        { "name": "amount_cents", "type": "long", "doc": "The amount moved as integer EUR cents (Money.Cents, ADR-PC-010 §P1). Never a float." },
+        { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "The economic date the value moves (valid_time) as days since epoch — never wall-clock (ADR-PC-032 slot 1)." },
+        { "name": "operation", "type": { "type": "enum", "name": "MovementOperation", "symbols": ["Disburse", "CollectInstallment", "PayMaturity", "PayCoupon", "PayEarlyTermination", "RepayEarly", "RolloverDebit", "AccrueOverdraftInterest", "ReceiveCredit", "SettleDebit"] }, "doc": "The CLOSED engine-side operation code (ADR-PC-032 slot 1). A CA credit lands under the dedicated ReceiveCredit verb (ADR-PC-043, bd 98mj.8) — re-pointing the PayMaturity stopgap. Widen forward-only by ADDING a symbol at the END (ADR-IC-002)." },
+        { "name": "origin", "type": { "type": "enum", "name": "MovementOrigin", "symbols": ["Originated", "Observed"] }, "doc": "Who initiated the movement (ADR-PC-032 slot 2). A CA settlement credit is Observed in the ADR-PC-043 engine-internal-already-effected sense — the engine records the landing, no cash leg to drive, no saga to start." },
+        { "name": "command_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The ADR-PC-029 append-idempotency CommandId, derived from the slot-4 intent reference (the deliberate slot-4 inversion, ADR-PC-043)." }
+      ]
+    } }, "default": [], "doc": "The credit as ONE Observed Credit Movement against account_ref (ADR-PC-032 slot 5). A REQUIRED array (an empty array, never null) defaulted to [] so pre-Movement records still decode (forward-only, ADR-IC-002 §P3 / BACKWARD compat). No Originated header is emitted (the loop-breaker), so this event starts no settlement saga." }
+  ]
+}

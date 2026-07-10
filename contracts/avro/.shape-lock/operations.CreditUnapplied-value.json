@@ -1,0 +1,37 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "intent_id",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "beneficiary_account_ref",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "amount_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "reason",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "unapplied_at",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "CreditUnapplied",
+  "namespace": "operations",
+  "subject": "operations.CreditUnapplied-value"
+}

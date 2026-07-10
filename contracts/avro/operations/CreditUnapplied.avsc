@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "operations",
+  "name": "CreditUnapplied",
+  "doc": "A matured/approved payout could not be delivered, so its credit is held UNAPPLIED rather than disgorged (ADR-PC-043 slot 5). The money had nowhere to land (the beneficiary account is closed, dormant-past-revival, or does not exist), so instead of losing it the engine records a NAMED IOU: this amount is owed to this beneficiary under this economic intent, and the source keeps the funds (it stays payout-pending). A CROSS-CUTTING engine-declared event (the same posture as operations.Hold*), declared once in the spine under the synthetic `operations` aggregate_type (event-store §4.3) and folded per family as a no-op (the IOU/escheat ledger is spine-owned). The RESOLUTION key is NOT on this event: it is derived from intent_id by SettlementReferences.DeriveResolutionIntentId when a reapply is attempted, so a late original apply and the resolution collapse to one landing (the double-pay guard, ADR-PC-043 §Idempotency). Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2) — opaque refs, integer cents, a machine reason code, an input date.",
+  "fields": [
+    { "name": "intent_id", "type": "string", "doc": "The ADR-PC-043 slot-4 economic-intent id the undeliverable payout belongs to (from SettlementReferences.DeriveIntentId) — the exactly-once axis AND the root the resolution key is derived from. A structural token, never PII (ADR-PC-004 §P2)." },
+    { "name": "beneficiary_account_ref", "type": "string", "doc": "The opaque beneficiary account the credit was meant to land on — a reference the engine resolves internally, NEVER an IBAN/PII (ADR-PC-004 §P2)." },
+    { "name": "amount_cents", "type": "long", "doc": "The undeliverable amount as integer EUR cents (Money.Cents, ADR-PC-010 §P1) — held, never disgorged." },
+    { "name": "reason", "type": "string", "doc": "The stable machine reason code the credit was undeliverable (e.g. BENEFICIARY_ACCOUNT_CLOSED, BENEFICIARY_ACCOUNT_NOT_FOUND) — never free-text PII (ADR-PC-004 §P2)." },
+    { "name": "unapplied_at", "type": { "type": "int", "logicalType": "date" }, "doc": "UnappliedAt (DateOnly) as days since epoch — the economic date the credit was recorded unapplied, a command-supplied input, never a clock read (ADR-PC-023)." }
+  ]
+}

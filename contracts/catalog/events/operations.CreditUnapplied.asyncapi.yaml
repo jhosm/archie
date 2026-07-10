@@ -1,0 +1,84 @@
+asyncapi: '3.0.0'
+info:
+  title: CreditUnapplied
+  version: '1'
+  description: |
+    A matured/approved payout could not be delivered, so its credit is held UNAPPLIED rather than
+    disgorged (ADR-PC-043 slot 5). The money had nowhere to land — the beneficiary account is closed,
+    dormant-past-revival, or does not exist — so instead of losing it into a void or an anonymous pot,
+    the engine records a NAMED IOU: this amount is owed to this beneficiary under this economic intent,
+    and the source keeps the funds (it stays payout-pending).
+
+    Emitted: when a settlement credit is undeliverable and the engine records the held IOU. The
+    RESOLUTION key is NOT on this event — it is derived from intent_id by
+    SettlementReferences.DeriveResolutionIntentId when a reapply is attempted, so a late original apply
+    and the resolution collapse to one landing (the double-pay guard).
+
+    A CROSS-CUTTING engine-declared event (the same posture as operations.Hold*), declared once in the
+    spine under the synthetic `operations` aggregate_type (event-store §4.3) and folded per family as a
+    no-op (the IOU/escheat ledger is spine-owned).
+
+    No PII (ADR-PC-004 §P2): opaque beneficiary/intent references, integer cents, a machine reason code,
+    an input date.
+  x-owner: platform
+  x-owner-contact: platform-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - acl                 # downstream core-banking escheat/IOU reconciliation (ADR-IC-012)
+    - notification        # customer-facing 'payout held, action needed' advice (ADR-IC-011)
+channels:
+  operations:
+    description: |
+      The engine-declared cross-cutting operational stream (event-store §4.1/§4.3). Topic name ==
+      `aggregate_type` — the synthetic `operations` aggregate_type for facts that apply to ANY instance
+      regardless of product family. One Avro schema per event type (Option A, doc 08).
+    x-compacted: false
+    messages:
+      CreditUnapplied:
+        $ref: '#/components/messages/CreditUnapplied'
+operations:
+  publishCreditUnapplied:
+    action: send
+    channel:
+      $ref: '#/channels/operations'
+    messages:
+      - $ref: '#/channels/operations/messages/CreditUnapplied'
+components:
+  messages:
+    CreditUnapplied:
+      name: CreditUnapplied
+      title: Credit Unapplied
+      summary: An undeliverable payout is held as a named IOU rather than disgorged.
+      contentType: application/avro
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: 'intent_id — the Kafka record key (the economic-intent axis).'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.operations.CreditUnapplied.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'intent_id — the economic intent this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type — operations.' }
+      x-schema-registry-subject: operations.CreditUnapplied-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/operations/CreditUnapplied.avsc'
