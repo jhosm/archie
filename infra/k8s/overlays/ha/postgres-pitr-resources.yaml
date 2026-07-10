@@ -41,7 +41,17 @@ spec:
           restartPolicy: Never
           containers:
             - name: pgbackrest-backup
-              image: pgbackrest/pgbackrest:2.54.2
+              # Community-maintained pgBackRest image (bd babelstone-2t16.31.4): the
+              # pgBackRest project ships NO official Docker Hub image, and the ref this
+              # once carried — pgbackrest/pgbackrest:2.54.2 — points at an absent repo
+              # (crane returns UNAUTHORIZED = repo does not exist). woblerr/pgbackrest is
+              # the popular community image (single-maintainer, NOT vendor-official); its
+              # digest is pinned in kustomization.yaml `images:` (ADR-PC-007 §A3,
+              # reproducibility pin — NOT cosign-verified). The image's own ENTRYPOINT
+              # (/entrypoint.sh) is deliberately bypassed here: `command:` overrides it so
+              # the CronJob runs pgbackrest directly against the /etc/pgbackrest config
+              # mount (pgBackRest's default config dir); the binary is on PATH.
+              image: woblerr/pgbackrest:2.58.0
               command:
                 - /bin/sh
                 - -c
