@@ -118,6 +118,12 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeRequest", typeof(Account.AuthorizeRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ExpireHoldRequest", typeof(Account.ExpireHoldRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "OverdraftAccrualRequest", typeof(Account.OverdraftAccrualRequest), Mode.Request },
+        // The two SETTLEMENT money-movers (ADR-PC-043): /credit and /capture both answer with the one
+        // SettlementApplyResponse (its own account_id/status/commit_sequence + a nullable reconciliation
+        // for a partial/over-capture, ADR-PC-037); each request has its own body DTO.
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ReceiveCreditRequest", typeof(Account.ReceiveCreditRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "CaptureAccountRequest", typeof(Account.CaptureAccountRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "SettlementApplyResponse", typeof(Account.SettlementApplyResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AccountCommandResponse", typeof(Account.AccountCommandResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeResponse", typeof(Account.AuthorizeResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "AccountResponse", typeof(Account.AccountResponse), Mode.Response },
