@@ -28,7 +28,10 @@ namespace Babelstone.Orchestrator.Dispatch;
 ///   <item><b>4xx</b> (the engine REFUSES — illegal lifecycle transition / validation) → a TERMINAL
 ///   delivery outcome. The row is flipped to <b>FAILED</b> with the engine's status + reason recorded,
 ///   so the saga's compensation path can react (ADR-PC-029 slot 5). It is NEVER silently dropped and
-///   NEVER retried forever.</item>
+///   NEVER retried forever. EXCEPTION — a saga's bridge MAY mark a specific 4xx as RETRIABLE via
+///   <see cref="IResultEventBridge.IsRetriableStayPending"/> (reading the ProblemDetails error code): the
+///   settlement saga reads a <c>422 SCA_REQUIRED</c> on a cash confirm as retriable, so the row STAYS
+///   PENDING for a re-drive on a fresh SCA proof rather than flipping FAILED (ADR-PC-043).</item>
 ///   <item><b>5xx / timeout / transport error</b> → TRANSIENT. The row stays <b>PENDING</b> and the loop
 ///   retries; idempotency makes the retry safe.</item>
 ///   <item><b>No route</b> for the command type → also a TERMINAL FAILED (an undeliverable command),
@@ -390,6 +393,8 @@ public sealed class SagaCommandDispatchDrainer
         using var response = await client.SendAsync(request, ct);
         var status = (int)response.StatusCode;
 
+        _bridges.TryGetValue(row.SagaType, out var bridge);
+
         // Saga-specific status REINTERPRETATION (ADR-IC-018 §P6). A saga's bridge MAY read a particular
         // status on a particular command as a non-default terminal kind — the substrate names no family,
         // it asks the routed bridge. The constitution saga uses this for Scenario C
@@ -401,7 +406,7 @@ public sealed class SagaCommandDispatchDrainer
         // (ADR-IC-003 §P4). A ConfirmDebit *timeout* is NOT this — it stays Transient (the catch block
         // leaves the row PENDING for an idempotent retry); INDETERMINATE is an explicit signal, not the
         // absence of a response. A saga whose bridge returns null here falls through to the default below.
-        if (_bridges.TryGetValue(row.SagaType, out var bridge)
+        if (bridge is not null
             && bridge.ClassifyResponse(row.CommandType, status) is { } reinterpreted)
         {
             return reinterpreted switch
@@ -425,6 +430,19 @@ public sealed class SagaCommandDispatchDrainer
         if (response.StatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError)
         {
             var reason = await ReadReasonAsync(response, ct);
+
+            // Saga-specific RETRIABLE-4xx carve-out (ADR-PC-043). The bridge MAY read a 4xx body's
+            // ProblemDetails error code as a NON-terminal outcome — the leg must stay PENDING and be
+            // re-driven rather than flip FAILED. The settlement saga uses this for a 422 SCA_REQUIRED on a
+            // cash confirm: the money never moved, so a fresh SCA proof re-drives the SAME leg under the
+            // SAME process_id, never dropping the payout (FAILED) and never a fresh occurrence (a double
+            // move). Every other 4xx (a genuine decline) still becomes the terminal Refused below. The
+            // reason body carries the code, so no extra read is needed.
+            if (bridge is not null && bridge.IsRetriableStayPending(row.CommandType, status, reason))
+            {
+                return DeliveryOutcome.TransientOutcome;
+            }
+
             return DeliveryOutcome.RefusedOutcome(status, reason);
         }
 

@@ -45,4 +45,18 @@ public interface IResultEventBridge
     /// saga that needs no reinterpretation returns null (the default).
     /// </summary>
     CommandDeliveryKind? ClassifyResponse(string commandType, int httpStatusCode) => null;
+
+    /// <summary>
+    /// Whether a delivered 4xx is a RETRIABLE non-terminal outcome for this saga — the leg must stay
+    /// <c>PENDING</c> under the SAME <c>process_id</c> and be re-driven later, NOT flipped terminal
+    /// (neither PUBLISHED nor FAILED). The settlement saga uses this for a <c>422 SCA_REQUIRED</c> on a
+    /// cash confirm: the money never moved, so a fresh SCA proof re-drives the SAME leg rather than
+    /// dropping the payout (FAILED) or double-moving it (a fresh occurrence). Reads the response
+    /// <paramref name="responseBody"/> because the disposition turns on the ProblemDetails error
+    /// <c>code</c>, not the status alone (ADR-PC-043). Default <c>false</c>: the substrate names no
+    /// family, so a saga with no retriable-4xx carve-out treats every 4xx as the default terminal
+    /// refusal. Checked BEFORE <see cref="ClassifyResponse(string, int)"/>, so a retriable 4xx never
+    /// reaches the terminal classification.
+    /// </summary>
+    bool IsRetriableStayPending(string commandType, int httpStatusCode, string? responseBody) => false;
 }
