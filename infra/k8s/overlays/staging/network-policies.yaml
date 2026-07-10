@@ -292,6 +292,22 @@ spec:
       ports:
         - protocol: TCP
           port: 8200
+    # The Secrets Store CSI mount: the vault-csi-provider (in kube-system, its own pod IP)
+    # is what actually dials OpenBao's k8s-auth + KV to sync babelstone-app-secrets into the
+    # engine pod. It is NOT an in-namespace pod, so the same-namespace podSelector above does
+    # not admit it — without this the CSI mount is default-denied and the engine never goes
+    # Ready (bd babelstone-zla1.12.31). kube-system carries the auto-added
+    # kubernetes.io/metadata.name label; the podSelector keeps this least-privilege.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault-csi-provider
+      ports:
+        - protocol: TCP
+          port: 8200
 ---
 # 10 · OTel Collector (4317 gRPC / 4318 HTTP) — every pod in the namespace may
 # emit telemetry (ADR-IC-007 §P1: the Collector is the ONE ingest point). A
