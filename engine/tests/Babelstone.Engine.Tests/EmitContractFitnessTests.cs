@@ -165,18 +165,19 @@ public sealed class EmitContractFitnessTests
         // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
         // subset (many are store-only with no .avsc, so a regex that silently dropped one would leave
         // a schemaless event unguarded). If a family adds/removes an event, update this count knowingly.
-        // Current total = 24: 11 from term_deposit + 6 from personal_loan (LoanDisbursed,
+        // Current total = 26: 11 from term_deposit + 6 from personal_loan (LoanDisbursed,
         // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff) +
-        // 7 from current_account (AccountOpened, AccountOpeningFailed, AccountMarkedDormant,
+        // 9 from current_account (AccountOpened, AccountOpeningFailed, AccountMarkedDormant,
         // AccountReactivated, AccountClosed, AuthorizationDeclined — the ADR-PC-037 §D6 authorize refusal fact —
-        // and OverdraftInterestAccrued, the ADR-PC-037 §D5 store-only descoberto accrual fact carrying the fee
-        // Movement).
+        // OverdraftInterestAccrued, the ADR-PC-037 §D5 store-only descoberto accrual fact carrying the fee
+        // Movement, and AccountCredited + AccountDebited — the ADR-PC-043 store-only IMovementBearing settlement
+        // events: a received credit and a captured debit).
         // GDPR Article 17 erasure is NO LONGER a family event: it is the engine-declared cross-cutting
         // operations.PersonalDataErasureRequested (ADR-PC-004 A4), so it lives in the spine
         // (CrossCuttingEvents.cs), not families/**/Events.cs, and is not counted by this family scan.
         // Holds/movements are likewise cross-cutting operations.* records, not current_account events —
         // an APPROVED authorize appends operations.HoldPlaced, so only the DECLINED fact is family-owned.
-        Assert.Equal(24, eventTypes.Count);
+        Assert.Equal(26, eventTypes.Count);
 
         var violations = eventTypes
             .Select(name => (name, suffix: MatchedClockDrivenSuffix(name)))

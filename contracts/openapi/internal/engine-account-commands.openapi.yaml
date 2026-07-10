@@ -280,6 +280,93 @@ paths:
           description: Concurrent modification (optimistic-concurrency conflict on the account stream).
         '422':
           description: Not authorizable from the current lifecycle (a domain rejection, distinct from a business DECLINED).
+  /v1/accounts/{id}/credit:
+    post:
+      operationId: receiveAccountCredit
+      summary: Land a received settlement CREDIT on the account (ADR-PC-043).
+      description: >
+        The SETTLEMENT-facing credit-receive money-mover (ADR-PC-043): land a Credit into the account
+        the substrate SettlementProcess saga drives against the engine-owned current_account. Appends the
+        store-only current_account.AccountCredited (an IMovementBearing Credit Movement); an Active
+        account credits directly, a Dormant one reactivates + credits in ONE atomic batch, and a
+        Closed / Erased account is refused BY CONSTRUCTION. UNLIKE every other CA command, the append
+        command_id is derived from the BODY's economic-intent reference (SettlementIntentKey.Derive),
+        NOT the HTTP Idempotency-Key (the scoped ADR-PC-029 carve-out), so a saga reissue with a
+        byte-identical body collapses to ONE append at command_dedup — there is no Idempotency-Key
+        header on this surface. intent_reference is MANDATORY (a settlement credit has no fall-back
+        key). A rejected admission is a 4xx (422 → the dispatcher classifies it as needing the source
+        to hold the funds), NEVER a 200-with-Declined it would mis-classify as Applied. De-settled and
+        ungated: strong customer authentication is an upstream stage-1/2 concern, not this decision.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiveCreditRequest'
+      responses:
+        '200':
+          description: >
+            The credit-apply outcome (SettlementApplyResponse): the account id, its folded lifecycle
+            status, and commit_sequence — the ADR-IC-005 §P3 read-your-writes token. A byte-identical
+            saga reissue replays the ORIGINAL outcome with no second append. reconciliation is null on
+            a credit (it carries a non-normal capture release only, ADR-PC-037).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementApplyResponse'
+        '400':
+          description: A missing intent_reference or a non-positive amount_cents (ADR-PC-043 / ADR-PC-010).
+        '422':
+          description: >
+            The account cannot receive the credit — Closed (ACCOUNT_CLOSED) or Erased (ACCOUNT_ERASED),
+            the credit-admission gate (ADR-PC-043). A 4xx the dispatcher classifies as hold-at-source,
+            never a phantom landing.
+  /v1/accounts/{id}/capture:
+    post:
+      operationId: captureAccountHold
+      summary: Capture an authorize reservation into a real settlement DEBIT (ADR-PC-043 / ADR-PC-037).
+      description: >
+        The SETTLEMENT-facing capture money-mover (ADR-PC-043 / ADR-PC-037): turn an authorize
+        reservation into a real debit — release the placed hold (operations.HoldCaptured, REUSED) and
+        land a Debit Movement (the store-only current_account.AccountDebited, an IMovementBearing fact)
+        in ONE atomic append. target_hold_id MUST match the authorize's hold id, and the capture applies
+        only WHERE the hold state is ACTIVE (the double guard). UNLIKE every other CA command, the append
+        command_id is derived from the BODY's economic-intent reference (SettlementIntentKey.Derive),
+        NOT the HTTP Idempotency-Key (the scoped ADR-PC-029 carve-out), so a saga reissue with a
+        byte-identical body collapses to ONE Debit at command_dedup — there is no Idempotency-Key header
+        on this surface. intent_reference and target_hold_id are MANDATORY. A partial / over-capture
+        (ADR-PC-037) releases the remainder and surfaces the non-normal reconciliation on the response;
+        a clean capture leaves reconciliation null. De-settled and ungated, as authorize is.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureAccountRequest'
+      responses:
+        '200':
+          description: >
+            The capture-apply outcome (SettlementApplyResponse): the account id, its folded lifecycle
+            status, and commit_sequence — the ADR-IC-005 §P3 read-your-writes token. reconciliation
+            surfaces a non-normal hold release (a partial / over-capture, ADR-PC-037), or is null when
+            the capture landed cleanly. A byte-identical saga reissue replays the ORIGINAL outcome with
+            no second Debit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementApplyResponse'
+        '400':
+          description: A missing intent_reference / target_hold_id, or a non-positive amount_cents (ADR-PC-043 / ADR-PC-010).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict on the account stream).
+        '422':
+          description: >
+            target_hold_id names no active authorization hold (the hold-match guard, ADR-PC-043; pinned
+            by CurrentAccountCaptureTests) — a 4xx, never a phantom debit.
   /v1/accounts/{id}/holds/{holdId}/expire:
     post:
       operationId: expireAccountHold
@@ -606,6 +693,98 @@ components:
           outcome: DECLINED
           declined_reason: INSUFFICIENT_AVAILABLE_BALANCE
           commit_sequence: 3
+    ReceiveCreditRequest:
+      type: object
+      description: >
+        The settlement credit-receive command (ReceiveCreditRequest, snake_case). The account is the
+        path id; this body carries the credit amount (integer cents, ADR-PC-010 §P1), its economic
+        value_date, and the ADR-PC-043 slot-4 economic-intent reference the append command_id derives
+        from — NOT the HTTP Idempotency-Key (the scoped ADR-PC-029 carve-out; there is no
+        Idempotency-Key header on this surface). intent_reference is MANDATORY (a settlement credit has
+        no fall-back key). actor defaults to the machine/saga settlement-dispatch principal — a
+        structural role, never PII (ADR-PC-004).
+      required: [amount_cents, value_date, intent_reference]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The credit amount to land, integer cents (ADR-PC-010) — must be positive.
+        value_date:
+          type: string
+          format: date
+          description: The credit's economic effective value-date (ADR-PC-023).
+        intent_reference:
+          type: string
+          description: The ADR-PC-043 slot-4 economic-intent reference — the exactly-once key the append command_id derives from. A structural token, never PII.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the settlement-dispatch principal); a role, never PII.
+      examples:
+        - amount_cents: 50000
+          value_date: "2026-03-05"
+          intent_reference: settle-credit-8b3e6f21a4c9
+    CaptureAccountRequest:
+      type: object
+      description: >
+        The settlement capture command (CaptureAccountRequest, snake_case). The account is the path id;
+        this body carries the target hold id (which MUST match the authorize's hold), the captured
+        amount (integer cents, ADR-PC-010 §P1), its economic value_date, and the ADR-PC-043 slot-4
+        economic-intent reference the append command_id derives from — NOT the HTTP Idempotency-Key (the
+        scoped ADR-PC-029 carve-out; there is no Idempotency-Key header on this surface).
+        intent_reference and target_hold_id are MANDATORY. actor defaults to the machine/saga
+        settlement-dispatch principal — a structural role, never PII (ADR-PC-004).
+      required: [target_hold_id, amount_cents, value_date, intent_reference]
+      properties:
+        target_hold_id:
+          type: string
+          description: The reservation to capture — the authorize's hold id (ADR-PC-043; pinned by CurrentAccountCaptureTests). An opaque structural token, never PII.
+        amount_cents:
+          type: integer
+          format: int64
+          description: The captured (settled) amount, integer cents (ADR-PC-010) — may be less than the placed amount (a partial capture releases the remainder, ADR-PC-037).
+        value_date:
+          type: string
+          format: date
+          description: The capture's economic effective value-date (ADR-PC-023).
+        intent_reference:
+          type: string
+          description: The ADR-PC-043 slot-4 economic-intent reference — the exactly-once key the append command_id derives from. A structural token, never PII.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the settlement-dispatch principal); a role, never PII.
+      examples:
+        - target_hold_id: hold-4d9f2a1c8b7e4f0a9c1d2e3f4a5b6c7d
+          amount_cents: 30000
+          value_date: "2026-03-05"
+          intent_reference: settle-capture-8b3e6f21a4c9
+    SettlementApplyResponse:
+      type: object
+      description: >
+        A settlement-apply outcome (SettlementApplyResponse, credit / capture): the account id, its
+        folded lifecycle status, and commit_sequence — the ADR-IC-005 §P3 read-your-writes token the
+        caller hands back on the follow-up read. For a capture, reconciliation surfaces a non-normal
+        hold release (a partial / over-capture, ADR-PC-037), or is null when the capture landed cleanly
+        (credit is always null). Structural facts only, no PII.
+      required: [account_id, status, commit_sequence]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id.
+        status:
+          type: string
+          description: The folded lifecycle status (e.g. ACTIVE, DORMANT) — an uppercased structural string.
+        commit_sequence:
+          type: integer
+          format: int64
+          description: The per-stream commit sequence this outcome reached (ADR-IC-005 §P3).
+        reconciliation:
+          type: string
+          description: A non-normal capture-release code (a partial / over-capture, ADR-PC-037); absent / null on a clean capture and on every credit.
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          status: ACTIVE
+          commit_sequence: 4
     ExpireHoldRequest:
       type: object
       description: >
