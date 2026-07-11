@@ -127,6 +127,16 @@ filter covers `backstage/**` + `infra/backstage/**`, so a merge rebuilds `:lates
    `auto` provider), and completing the login lands you back in the catalogue. A user with no catalog
    `User` entity still gets in — that is the gate-only design.
 
+> **CD enforcement (bd babelstone-zla1.10.19).** The `configure-logto` job now **fail-loud verifies**
+> this registration on every staging promote: `scripts/iam/verify-oidc-clients.py` reads the deployed
+> `BACKSTAGE_OIDC_CLIENT_ID` from the rendered overlay and `GET`s it against Logto's Management API,
+> **blocking the promote** if the App ID is not registered or its redirect URI is missing — the same
+> net Mission Control has via `register-ops-console.py`. So a re-onboard that leaves this app
+> unregistered (or the committed id stale) is caught by CI, not by an operator hitting
+> `oidc.invalid_client` at the login screen. It only **verifies** — hand-registration (§1–§2 above)
+> stays the curated [ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
+> §C6 path; the gate does not auto-register.
+
 If the pod is stuck `CrashLoopBackOff` / not-ready after the deploy, the secret is almost certainly
 missing or still a placeholder (fail-closed) — check `LOGTO_BACKSTAGE_CLIENT_SECRET` in the live
 Secret, and the backstage pod logs for the Logto discovery/auth error.
