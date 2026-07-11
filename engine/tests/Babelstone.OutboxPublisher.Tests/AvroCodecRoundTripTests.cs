@@ -340,6 +340,37 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositMatured_SettlementTarget_is_producer_only_and_never_rides_the_avro_wire()
+    {
+        // The engine-CA counterparty selector (ADR-PC-043 slot 1, bd babelstone-u79p.2) is an init-only
+        // routing signal OUTSIDE DepositMatured's primary constructor, so the Avro codec — which maps ONLY
+        // the primary-constructor parameters — never serializes it. This is what keeps the change HEADER-ONLY
+        // (ADR-IC-018 §D5): the target is promoted to the ce_settlementtarget header at emission, but it does
+        // NOT widen the durable bus contract (no .avsc field). Proof: an engine-CA-targeted event encodes,
+        // and the decoded copy carries the default LegacyDda — the wire never learned about EngineCa. The
+        // record-equality assertion is the mutation backstop: were the property ever promoted onto the .avsc
+        // (a positional param), the decoded copy would equal the original and this test would fail loud.
+        var serializer = NewSerializer();
+        var engineCaTargeted = new DepositMatured(
+            PrincipalReturned: new Money(1_000_000),
+            NetInterestPaid: new Money(21_900),
+            TotalPayout: new Money(1_021_900),
+            MaturedOn: new DateOnly(2026, 12, 31))
+        {
+            SettlementTarget = SettlementTarget.EngineCa,
+        };
+
+        var decoded = (DepositMatured)serializer.Decode(
+            serializer.Encode(engineCaTargeted).Bytes, typeof(DepositMatured));
+
+        // The Avro-mapped facts (money legs, date) round-trip exactly; the producer-only target does NOT.
+        Assert.Equal(SettlementTarget.EngineCa, engineCaTargeted.SettlementTarget);
+        Assert.Equal(SettlementTarget.LegacyDda, decoded.SettlementTarget);
+        Assert.NotEqual(engineCaTargeted, decoded);
+        Assert.Equal(engineCaTargeted with { SettlementTarget = SettlementTarget.LegacyDda }, decoded);
+    }
+
+    [Fact]
     public void DepositMatured_decodes_pre_field_bytes_written_without_auto_renewal_policy()
     {
         // BACKWARD compatibility (ADR-IC-002 §P2): bytes written by an OLD producer whose DepositMatured

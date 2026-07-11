@@ -122,15 +122,32 @@ public sealed record DepositConstituted(
     IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     /// <summary>
+    /// The settlement COUNTERPARTY a RENEWAL constitution's rollover-debit leg settles against (ADR-PC-043
+    /// slot 1). NOT an Avro-mapped field: it is an init-only routing signal OUTSIDE the primary constructor,
+    /// so the Avro codec (which maps only the primary-constructor parameters) never serializes it — this is a
+    /// pure PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
+    /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
+    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> — the legacy demand core over the ACL (ADR-PC-016),
+    /// so a family that has not opted a leg into engine-CA settlement keeps legacy routing UNCHANGED; the
+    /// term-deposit service sets it to <see cref="SettlementTarget.EngineCa"/> for an engine-CA-targeted leg.
+    /// </summary>
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+
+    /// <summary>
     /// Promote a RENEWAL constitution's rollover-debit Movement origin/direction to the
     /// <c>ce_movementorigin</c> / <c>ce_movementdirections</c> CloudEvents extension headers the
-    /// substrate-owned settlement saga auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC
-    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). A FRESH constitution carries no
-    /// Movement, so it declares no settlement header and starts no settlement saga — its principal debit stays
-    /// the CONSTITUTION saga's gated step (bd babelstone-t7o3.4), untouched by this seam.
+    /// substrate-owned settlement saga auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), plus — when the
+    /// leg settles against the engine-owned current account — the <c>ce_settlementtarget = engine-ca</c>
+    /// counterparty header (ADR-PC-043 slot 1), via the GENERIC counterparty-aware engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>). The routing header is HEADER-ONLY:
+    /// the substrate keys the counterparty on it alone and never reads <see cref="Movement.AccountRef"/> from
+    /// the body (ADR-IC-018 §D5). A <see cref="SettlementTarget.LegacyDda"/> leg promotes no target header, so
+    /// its shape is byte-identical to the no-target seam (legacy routing UNCHANGED). A FRESH constitution
+    /// carries no Movement, so it declares no settlement header and starts no settlement saga — its principal
+    /// debit stays the CONSTITUTION saga's gated step (bd babelstone-t7o3.4), untouched by this seam.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
-        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+        MovementHeaders.ForOriginatedMovements(Movements ?? [], SettlementTarget);
 
     // Constitution is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
     // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.
@@ -176,21 +193,38 @@ public sealed record DepositMatured(
     IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     /// <summary>
+    /// The settlement COUNTERPARTY the maturity payout's Credit leg settles against (ADR-PC-043 slot 1). NOT
+    /// an Avro-mapped field: it is an init-only routing signal OUTSIDE the primary constructor, so the Avro
+    /// codec (which maps only the primary-constructor parameters) never serializes it — a pure PRODUCER-side
+    /// decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c> header by
+    /// <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold. Defaults to
+    /// <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016), so legacy
+    /// routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/> for
+    /// an engine-CA-targeted payout account.
+    /// </summary>
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+
+    /// <summary>
     /// Declares the maturity payout's Movement origin/direction (<c>movementorigin</c> /
-    /// <c>movementdirections</c>, ADR-PC-032 §A7/§A8) AND the renewal policy (<c>autorenewalpolicy</c>) as
-    /// CloudEvents extension attributes (ADR-IC-018 §P5), which the outbox relay promotes to the
-    /// <c>ce_*</c> headers. The substrate-owned settlement saga auto-starts on <c>movementorigin == Originated</c>
-    /// (bd babelstone-t7o3.13); a renewal saga still filters header-only on <c>autorenewalpolicy</c>. The two
-    /// producers COMPOSE on one hop — distinct keys, no double-populate. Movement headers come via the GENERIC
-    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>), so they name no family. Both are
-    /// emitted only when present: a movement-free / empty-policy event declares the corresponding header(s) only
-    /// when it has them. All values are closed-enum / structural tokens, never PII (ADR-PC-004 §P2).
+    /// <c>movementdirections</c>, ADR-PC-032 §A7/§A8) — plus, when the payout settles against the engine-owned
+    /// current account, the <c>ce_settlementtarget = engine-ca</c> counterparty header (ADR-PC-043 slot 1) —
+    /// AND the renewal policy (<c>autorenewalpolicy</c>) as CloudEvents extension attributes (ADR-IC-018 §P5),
+    /// which the outbox relay promotes to the <c>ce_*</c> headers. The substrate-owned settlement saga
+    /// auto-starts on <c>movementorigin == Originated</c> (bd babelstone-t7o3.13) and, when present, diverts
+    /// the counterparty HEADER-ONLY on <c>ce_settlementtarget</c> — never reading <see cref="Movement.AccountRef"/>
+    /// from the body (ADR-IC-018 §D5); a renewal saga still filters header-only on <c>autorenewalpolicy</c>.
+    /// The producers COMPOSE on one hop — distinct keys, no double-populate. Movement + target headers come via
+    /// the GENERIC counterparty-aware engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>),
+    /// so they name no family. Each header is emitted only when present: a movement-free / empty-policy event
+    /// declares the corresponding header(s) only when it has them, and a <see cref="SettlementTarget.LegacyDda"/>
+    /// leg promotes no target header (legacy routing UNCHANGED). All values are closed-enum / structural tokens,
+    /// never PII (ADR-PC-004 §P2).
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders
     {
         get
         {
-            var movementHeaders = MovementHeaders.ForOriginatedMovements(Movements ?? []);
+            var movementHeaders = MovementHeaders.ForOriginatedMovements(Movements ?? [], SettlementTarget);
             var hasPolicy = !string.IsNullOrEmpty(AutoRenewalPolicy);
             if (movementHeaders is null && !hasPolicy)
             {
@@ -267,14 +301,30 @@ public sealed record InterestPaid(
     IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     /// <summary>
+    /// The settlement COUNTERPARTY the coupon (or ADVANCE upfront-interest) Credit leg settles against
+    /// (ADR-PC-043 slot 1). NOT an Avro-mapped field: it is an init-only routing signal OUTSIDE the primary
+    /// constructor, so the Avro codec (which maps only the primary-constructor parameters) never serializes it
+    /// — a pure PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
+    /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
+    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016),
+    /// so legacy routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/>
+    /// for an engine-CA-targeted payout/funding account.
+    /// </summary>
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+
+    /// <summary>
     /// Promote the coupon Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
-    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). Null/empty movements declare no settlement
-    /// header, starting no saga.
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5) — plus, when the coupon settles against the
+    /// engine-owned current account, the <c>ce_settlementtarget = engine-ca</c> counterparty header (ADR-PC-043
+    /// slot 1) — via the GENERIC counterparty-aware engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>). The routing header is HEADER-ONLY:
+    /// the substrate keys the counterparty on it alone and never reads <see cref="Movement.AccountRef"/> from
+    /// the body (ADR-IC-018 §D5); a <see cref="SettlementTarget.LegacyDda"/> leg promotes no target header
+    /// (legacy routing UNCHANGED). Null/empty movements declare no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
-        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+        MovementHeaders.ForOriginatedMovements(Movements ?? [], SettlementTarget);
 }
 
 /// <summary>The deposit auto-renews into a new term: a fresh deposit (<paramref name="NewDepositId"/>)
@@ -321,14 +371,30 @@ public sealed record DepositTerminatedEarly(
     IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     /// <summary>
+    /// The settlement COUNTERPARTY the early-termination payout's Credit leg settles against (ADR-PC-043
+    /// slot 1). NOT an Avro-mapped field: it is an init-only routing signal OUTSIDE the primary constructor,
+    /// so the Avro codec (which maps only the primary-constructor parameters) never serializes it — a pure
+    /// PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
+    /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
+    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016),
+    /// so legacy routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/>
+    /// for an engine-CA-targeted payout account.
+    /// </summary>
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+
+    /// <summary>
     /// Promote the early-termination payout Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
-    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement})"/>). Null/empty movements declare no settlement
-    /// header, starting no saga.
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5) — plus, when the payout settles against the
+    /// engine-owned current account, the <c>ce_settlementtarget = engine-ca</c> counterparty header (ADR-PC-043
+    /// slot 1) — via the GENERIC counterparty-aware engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>). The routing header is HEADER-ONLY:
+    /// the substrate keys the counterparty on it alone and never reads <see cref="Movement.AccountRef"/> from
+    /// the body (ADR-IC-018 §D5); a <see cref="SettlementTarget.LegacyDda"/> leg promotes no target header
+    /// (legacy routing UNCHANGED). Null/empty movements declare no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
-        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+        MovementHeaders.ForOriginatedMovements(Movements ?? [], SettlementTarget);
 
     // Early termination is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
     public override bool IsLifecycleBoundary => true;
