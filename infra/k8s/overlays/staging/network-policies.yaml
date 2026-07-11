@@ -29,6 +29,15 @@
 # `traefik`; pointing them at kube-system silently denies all edge→backend traffic and
 # every host 502s (the first-stand-up symptom bd zla1.14 chased).
 #
+# Maintainer note — the Cloudflare Tunnel is the live public edge (bd zla1.12.14): since the
+# origin-bypass close, external traffic no longer arrives on Traefik's node :80/:443 (those
+# firewall ports were removed) but through the in-cluster `cloudflared` connector, which dials
+# each app Service DIRECTLY, bypassing Traefik. So policies 2/11/13/14/15 admit BOTH the
+# `traefik` namespace AND the cloudflared pod (app.kubernetes.io/name=cloudflared, this
+# namespace). Omitting the cloudflared source is a silent all-hosts 502 — the tunnel registers
+# and connects, but default-deny rejects its origin dial (the exact gap this file now closes;
+# it also breaks the in-cluster OIDC backchannels that hairpin through the tunnel — see policy 15).
+#
 # Maintainer note — future workloads: default-deny means a NEW workload gets no
 # inbound traffic until an allow is added here, and policy 2 admits ONLY
 # the traefik-namespace Traefik into kong:8000 — so a future in-namespace caller of the
@@ -51,8 +60,9 @@ spec:
   policyTypes:
     - Ingress
 ---
-# 2 · Kong proxy (8000) — only the public edge (Traefik, in the `traefik` namespace) may
-# reach it; every product-API request keeps entering through the ADR-IC-006 edge.
+# 2 · Kong proxy (8000) — only the public edge may reach it: the Cloudflare Tunnel connector
+# (cloudflared, the live edge since bd zla1.12.14) and Traefik (the `traefik` namespace, retained
+# for the direct-origin path); every product-API request keeps entering through the ADR-IC-006 edge.
 # The Admin API (8001) gets NO allow on purpose: nothing in-cluster dials it
 # (operator deck-sync goes through kubectl port-forward; the cd.yml CI leg's
 # port-forward step is the follow-up named in kong-admin-localhost.patch.yaml),
@@ -72,6 +82,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
       ports:
         - protocol: TCP
           port: 8000
@@ -336,10 +349,10 @@ spec:
 # services must not ship telemetry direct-to-backend, and now the network agrees),
 # the Tempo/Prometheus/Loki query APIs (3200/9090/3100) from Mission Control's
 # Telemetry, Metrics and Logs lens proxies, and — since
-# bd zla1.10.1/zla1.10.6 — the Grafana UI (3000) from the public edge (Traefik) so
-# operators reach it at grafana.babelstone.dev (gated by Grafana's own login + Logto
-# SSO + a Cloudflare Access identity gate, bd zla1.10.6). The OTLP ports stay
-# Collector-only, never the edge.
+# bd zla1.10.1/zla1.10.6 — the Grafana UI (3000) from the public edge (the Cloudflare Tunnel
+# connector cloudflared since bd zla1.12.14, plus Traefik) so operators reach it at
+# grafana.babelstone.dev (gated by Grafana's own login + Logto SSO + a Cloudflare Access
+# identity gate, bd zla1.10.6). The OTLP ports stay Collector-only, never the edge.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -378,6 +391,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
       ports:
         - protocol: TCP
           port: 3000
@@ -403,7 +419,8 @@ spec:
         - protocol: TCP
           port: 5000
 ---
-# 13 · Backstage portal (7007) — the public edge (Traefik) only.
+# 13 · Backstage portal (7007) — the public edge only: the Cloudflare Tunnel connector
+# (cloudflared, since bd zla1.12.14) and Traefik.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -419,11 +436,15 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
       ports:
         - protocol: TCP
           port: 7007
 ---
-# 14 · Mission Control (9000) — the public edge (Traefik) only.
+# 14 · Mission Control (9000) — the public edge only: the Cloudflare Tunnel connector
+# (cloudflared, since bd zla1.12.14) and Traefik.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -439,11 +460,15 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
       ports:
         - protocol: TCP
           port: 9000
 ---
-# 15 · Logto (3001, the core listener) — the public edge (Traefik) only. One port covers BOTH
+# 15 · Logto (3001, the core listener) — the public edge: the Cloudflare Tunnel connector
+# (cloudflared, since bd zla1.12.14) and Traefik. One port covers BOTH
 # public hosts: auth.babelstone.dev (the OIDC issuer) and auth-admin.babelstone.dev (the admin
 # console). Under ADMIN_DISABLE_LOCALHOST=true Logto never opens the separate 3002 admin listener
 # (logto.yaml) — it serves the console on this same 3001 listener, routed to the admin tenant by
@@ -453,8 +478,11 @@ spec:
 # host — Grafana's operator SSO (generic_oauth) and, since bd zla1.10.8.3, Mission Control's
 # Boundary-1 login gate (serve.py's OIDC discovery + code→token exchange against
 # OIDC_ISSUER=https://auth.babelstone.dev/oidc). Both dial the PUBLIC https://auth.babelstone.dev,
-# so the request HAIRPINS out of the pod and re-enters through Traefik — the source is a
-# traefik-namespace pod, already admitted below. Egress is unrestricted (this file is
+# so the request HAIRPINS out of the pod, through Cloudflare's edge, and re-enters via the
+# Cloudflare Tunnel (cloudflared, bd zla1.12.14) — the pod that dials logto:3001 is cloudflared,
+# admitted below, NOT a traefik-namespace pod anymore: since the tunnel replaced the node
+# :80/:443 edge, the hairpin no longer traverses Traefik, so the cloudflared source is what keeps
+# Grafana SSO + Mission Control login working. Egress is unrestricted (this file is
 # policyTypes: [Ingress] only, see the header), so NO mission-control→logto:3001 egress rule is
 # needed or wanted: that internal Service is never dialled (Logto advertises its PUBLIC endpoints
 # in the discovery document, so the backchannel goes to the public host, not the ClusterIP).
@@ -473,6 +501,9 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
       ports:
         - protocol: TCP
           port: 3001
