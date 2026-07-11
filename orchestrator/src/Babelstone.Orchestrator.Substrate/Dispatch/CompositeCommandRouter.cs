@@ -69,10 +69,10 @@ public sealed class CompositeCommandRouter : ICommandRouter
     /// Resolve the HTTP target for <paramref name="commandType"/> emitted by the saga of
     /// <paramref name="sagaType"/>, threading the leg's projected <c>ce_settlementtarget</c> extension
     /// header through to the owning saga's sub-router so the COUNTERPARTY selection (engine-CA vs
-    /// legacy-DDA, ADR-PC-043 slots 1–2) happens in PRODUCTION, not only in tests (bd babelstone-u79p.3).
+    /// legacy-DDA, ADR-PC-043) happens in PRODUCTION, not only in tests.
     /// The composite stays family-agnostic — it names no family and reads no header itself; it forwards the
     /// header dict to the sub-router the outbox row's <c>saga_type</c> selected, which alone decides the
-    /// counterparty (header-only routing, ADR-IC-018 §D5). A header-BLIND sub-router uses the interface's
+    /// counterparty (header-only routing, ADR-IC-018). A header-BLIND sub-router uses the interface's
     /// default (ignores the headers), so its routing is unchanged. Returns <c>null</c> when no router is
     /// registered for the saga type, no route for the command, or an <c>engine-ca</c> leg has no engine-CA
     /// base URL configured (the sub-router fails closed).

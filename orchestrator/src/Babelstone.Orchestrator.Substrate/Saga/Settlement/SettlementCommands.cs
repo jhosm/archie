@@ -74,7 +74,7 @@ public sealed record ReserveAccountBalanceCommand : SettlementCommandPayload
 {
     /// <summary>The opaque account reference to reserve against (a token, not an IBAN). On an engine-CA leg
     /// this is the promoted customer conta-à-ordem account_ref the engine-CA authorize WRITER reads as the
-    /// destination (ADR-PC-043 §D5 amendment (b)); on a legacy leg the ACL resolves the real account behind
+    /// destination (ADR-PC-043); on a legacy leg the ACL resolves the real account behind
     /// the OpenBao boundary.</summary>
     [JsonPropertyName("account_ref")]
     public required string AccountRef { get; init; }
@@ -82,11 +82,11 @@ public sealed record ReserveAccountBalanceCommand : SettlementCommandPayload
     /// <summary>The saga-chosen idempotency reference for THIS reservation — a derived, stable reference (the
     /// process id namespaced for the reserve leg), NOT a minted GUID, so the body is byte-stable on re-emit
     /// and the ACL dedups on it. Also the HOLD-LINKING key the engine-CA ingress derives the authorize hold
-    /// from (bd babelstone-u79p.5), so the confirm leg's <c>intent_reference</c> captures exactly it.</summary>
+    /// from, so the confirm leg's <c>intent_reference</c> captures exactly it.</summary>
     [JsonPropertyName("reservation_ref")]
     public required string ReservationRef { get; init; }
 
-    /// <summary>The shared HOLD-LINKING + exactly-once reference (bd babelstone-u79p.5): equal to
+    /// <summary>The shared HOLD-LINKING + exactly-once reference: equal to
     /// <see cref="ReservationRef"/>, so the engine-CA ingress reconstructs the SAME deterministic authorize
     /// hold on the reserve and confirm legs. Snake_case on the ingress wire. Optional so a body built before
     /// this field is unchanged — the ingress falls back to <see cref="ReservationRef"/> when it is null.</summary>
@@ -109,14 +109,14 @@ public sealed record ConfirmDebitCommand : SettlementCommandPayload
     [JsonPropertyName("core_hold_ref")]
     public required string CoreHoldRef { get; init; }
 
-    /// <summary>The promoted DESTINATION account_ref the captured debit lands on (bd babelstone-u79p.5;
-    /// ADR-PC-043 §D5 amendment (b)). On an engine-CA leg the customer's real conta-à-ordem account_ref the
+    /// <summary>The promoted DESTINATION account_ref the captured debit lands on (ADR-PC-043).
+    /// On an engine-CA leg the customer's real conta-à-ordem account_ref the
     /// engine-CA capture WRITER reads; substrate-forwarded untouched. Optional (null on the legacy-DDA path /
     /// the pre-promotion default), so a body built before this field is unchanged.</summary>
     [JsonPropertyName("account_ref")]
     public string? AccountRef { get; init; }
 
-    /// <summary>The shared HOLD-LINKING key (bd babelstone-u79p.5): equal to the reserve leg's
+    /// <summary>The shared HOLD-LINKING key: equal to the reserve leg's
     /// <c>reservation_ref</c>, so the engine-CA ingress captures exactly the hold the reserve's authorize
     /// placed (<c>target_hold_id = f(intent_reference)</c>). Optional; the ingress falls back to
     /// <see cref="CoreHoldRef"/> when null. Snake_case on the ingress wire.</summary>
@@ -143,8 +143,8 @@ public sealed record ConfirmCreditCommand : SettlementCommandPayload
 {
     /// <summary>The opaque account reference the value enters (a token, not an IBAN). For a credit, the
     /// <c>Movement.Direction</c> is relative to THIS account: <c>Credit</c> = value enters it. On an engine-CA
-    /// leg the promoted customer conta-à-ordem account_ref the engine-CA credit WRITER lands on (ADR-PC-043
-    /// §D5 amendment (b)).</summary>
+    /// leg the promoted customer conta-à-ordem account_ref the engine-CA credit WRITER lands on
+    /// (ADR-PC-043).</summary>
     [JsonPropertyName("account_ref")]
     public required string AccountRef { get; init; }
 
@@ -157,8 +157,8 @@ public sealed record ConfirmCreditCommand : SettlementCommandPayload
     [JsonPropertyName("credit_ref")]
     public required string CreditRef { get; init; }
 
-    /// <summary>The exactly-once reference the engine-CA ingress derives the credit's append command_id from
-    /// (bd babelstone-u79p.5): equal to <see cref="CreditRef"/>. Optional; the ingress falls back to
+    /// <summary>The exactly-once reference the engine-CA ingress derives the credit's append command_id from:
+    /// equal to <see cref="CreditRef"/>. Optional; the ingress falls back to
     /// <see cref="CreditRef"/> when null. Snake_case on the ingress wire.</summary>
     [JsonPropertyName("intent_reference")]
     public string? IntentReference { get; init; }

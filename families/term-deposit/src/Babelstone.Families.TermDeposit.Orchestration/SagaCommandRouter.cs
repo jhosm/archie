@@ -13,12 +13,12 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 ///   <item><b>Settlement funding legs → the selected settlement COUNTERPARTY</b> — the
 ///   reversible/irreversible money legs (ReserveAccountBalance / ConfirmDebit /
 ///   ReleaseBalanceReservation / ReverseCoreDebit). The BASE URL is chosen the SAME way the
-///   substrate-owned <c>SettlementCommandRouter</c> chooses it (bd babelstone-u79p.3, ADR-PC-043
-///   slots 1–2): a leg carrying <c>ce_settlementtarget = engine-ca</c> routes to the engine-owned CA
+///   substrate-owned <c>SettlementCommandRouter</c> chooses it (ADR-PC-043):
+///   a leg carrying <c>ce_settlementtarget = engine-ca</c> routes to the engine-owned CA
 ///   settlement surface (<see cref="SagaCommandDispatcherOptions.EngineCaSettlementBaseUrl"/>); a
 ///   legacy-DDA or header-absent leg routes to the legacy Core ACL
 ///   (<see cref="SagaCommandDispatcherOptions.SettlementBaseUrl"/>, UNCHANGED — a WireMock stub at
-///   v1; the real ACL is DEF-1, bd ub9s). The PATH + METHOD are counterparty-INVARIANT; only the base
+///   v1; the real ACL is DEF-1). The PATH + METHOD are counterparty-INVARIANT; only the base
 ///   URL flips (ADR-PC-043 flips the base URL, never the path).</item>
 /// </list>
 /// </summary>
@@ -35,12 +35,12 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 /// command, never a silent guess.
 /// </para>
 /// <para>
-/// <b>Header-only counterparty selection (bd babelstone-u79p.3; ADR-PC-043 §D5 amendment (b),
-/// ADR-IC-018 §D5).</b> The engine-CA / legacy-DDA choice reads the projected <c>ce_settlementtarget</c>
+/// <b>Header-only counterparty selection (ADR-PC-043, ADR-IC-018).</b>
+/// The engine-CA / legacy-DDA choice reads the projected <c>ce_settlementtarget</c>
 /// extension header ALONE — the router stays payload-blind for ROUTING, never reading
 /// <c>Movement.AccountRef</c> from the body to decide where a leg goes. The wire literals (the
 /// <c>settlementtarget</c> key + the <c>engine-ca</c> value) MIRROR the engine relay's promoted
-/// closed-enum (the orchestrator stays extraction-ready, ADR-PC-019 §P2 — it pins the literals rather
+/// closed-enum (the orchestrator stays extraction-ready, ADR-PC-019 — it pins the literals rather
 /// than referencing the engine-side constant; the producer↔consumer contract test asserts they
 /// agree). An <c>engine-ca</c> leg with no engine-CA base URL configured returns <c>null</c> →
 /// fail-closed (never a silent fall-back that settles engine-CA money on the legacy core).
@@ -76,10 +76,10 @@ public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : IS
 
         // The settlement funding legs — routed to the SELECTED counterparty (engine-CA vs legacy) by the
         // ce_settlementtarget header alone. The routes are counterparty-INVARIANT; only the base URL flips.
-        // The engine-CA funding wire (bd babelstone-u79p.3): the fresh deposit funds itself by debiting the
+        // The engine-CA funding wire: the fresh deposit funds itself by debiting the
         // customer's engine current account, so ReserveAccountBalance → the CA authorize/hold and
         // ConfirmDebit → the CA capture, reached through the counterparty-invariant /v1/reservations,
-        // /v1/debits paths on the engine-CA base URL (the engine ingress, bd babelstone-u79p.5, maps them
+        // /v1/debits paths on the engine-CA base URL (the engine ingress maps them
         // onto the CA family's authorize/capture writers).
         ConstitutionProcess.ReserveAccountBalance =>
             Route("/v1/reservations", extensionHeaders),
@@ -111,9 +111,9 @@ public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : IS
         return baseUrl is null ? null : new CommandRoute(baseUrl, path, HttpMethod.Post);
     }
 
-    // Select the counterparty base URL from the ce_settlementtarget header alone (ADR-PC-043 slots 1–2;
-    // header-only routing, ADR-IC-018 §D5). The engine relay promotes the closed-enum wire string; the
-    // orchestrator is extraction-ready (ADR-PC-019 §P2), so it matches the WIRE STRINGS as literals, never
+    // Select the counterparty base URL from the ce_settlementtarget header alone (ADR-PC-043;
+    // header-only routing, ADR-IC-018). The engine relay promotes the closed-enum wire string; the
+    // orchestrator is extraction-ready (ADR-PC-019), so it matches the WIRE STRINGS as literals, never
     // a shared engine type. An engine-ca leg with no engine-CA base URL configured returns null →
     // fail-closed. The VALUE compare is Ordinal (exact): the promoted value is GUARANTEED lowercase
     // ("engine-ca"), so no case folding is needed on the value.
@@ -135,7 +135,7 @@ public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : IS
     /// <summary>The ce_-stripped, lowercased extension-attribute key the router keys the counterparty on
     /// (mirrors <c>Babelstone.Engine.MovementHeaders.SettlementTargetKey</c> and
     /// <c>SettlementCommandRouter.SettlementTargetHeader</c>). Pinned as a literal — the orchestrator stays
-    /// extraction-ready (ADR-PC-019 §P2); the producer↔consumer contract test asserts the two agree.</summary>
+    /// extraction-ready (ADR-PC-019); the producer↔consumer contract test asserts the two agree.</summary>
     public const string SettlementTargetHeader = "settlementtarget";
 
     /// <summary>The engine-CA settlement-target wire value (mirrors

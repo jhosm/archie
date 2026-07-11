@@ -170,7 +170,7 @@ public enum AutoStartMatch
 /// LEGACY-DDA counterparty (ADR-PC-043; an absent settlement target routes here).</param>
 /// <param name="EngineCaSettlementBaseUrl">The engine-OWNED current-account settlement base URL — the
 /// ADR-PC-043 engine-CA counterparty a leg routes to when its promoted <c>ce_settlementtarget</c> header is
-/// <c>engine-ca</c> (bd babelstone-u79p.3). OPTIONAL: null (or blank) means no leg is engine-CA-routed and
+/// <c>engine-ca</c>. OPTIONAL: null (or blank) means no leg is engine-CA-routed and
 /// every settlement command stays on <paramref name="SettlementBaseUrl"/> — so an estate that has not
 /// stood up the engine-CA surface keeps the pre-ADR-PC-043 behaviour with no config change. A family module
 /// that composes a header-aware command router (the constitution + settlement routers) pins it onto its

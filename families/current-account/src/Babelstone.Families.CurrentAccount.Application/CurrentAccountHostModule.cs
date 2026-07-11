@@ -186,7 +186,7 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         AccountsEndpoints.Map(app);
-        // The engine-CA SETTLEMENT INGRESS (bd babelstone-u79p.5; ADR-PC-043): the three counterparty-invariant
+        // The engine-CA SETTLEMENT INGRESS (ADR-PC-043): the three counterparty-invariant
         // settlement paths (/v1/reservations, /v1/debits, /v1/credits) the orchestrator's settlement dispatcher
         // POSTs to when a leg is ce_settlementtarget=engine-ca. The adapter maps them onto this family's
         // authorize/capture/credit writers for the account the leg's account_ref names — mTLS-only internal

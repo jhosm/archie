@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Routing;
 namespace Babelstone.Families.CurrentAccount.Application;
 
 /// <summary>
-/// The engine-CA SETTLEMENT INGRESS (bd babelstone-u79p.5; ADR-PC-043). In plain English: the settlement
+/// The engine-CA SETTLEMENT INGRESS (ADR-PC-043). In plain English: the settlement
 /// saga always POSTs to the SAME three counterparty-invariant paths (<c>/v1/reservations</c>,
 /// <c>/v1/debits</c>, <c>/v1/credits</c>) and only flips the base URL to reach the engine-owned current
 /// account instead of the legacy Core ACL. But the engine does not serve those paths — the current_account
@@ -31,23 +31,23 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// </list>
 /// </para>
 /// <para>
-/// <b>Account resolution — the destination the WRITER reads, never the substrate router (ADR-PC-043 §D5
-/// amendment (b)).</b> The leg's <c>account_ref</c> is the current-account family's opaque stream id
+/// <b>Account resolution — the destination the WRITER reads, never the substrate router (ADR-PC-043).</b>
+/// The leg's <c>account_ref</c> is the current-account family's opaque stream id
 /// (<c>AccountRef == AccountId.ToString()</c>, ADR-PC-033), so the ingress resolves the destination account
-/// by parsing it as the account GUID. This is the exact carve-out the §D5 amendment sanctions: the SUBSTRATE
+/// by parsing it as the account GUID. This is the exact carve-out ADR-PC-043 sanctions: the SUBSTRATE
 /// stayed payload-blind for routing (it chose the counterparty from the header alone), and only HERE — the
 /// engine-CA WRITER side — is the promoted <c>account_ref</c> read as the destination. A body whose
 /// <c>account_ref</c> is not a GUID (a legacy ACT-token that reached the engine-CA path by misconfiguration)
 /// is a 400 — fail loud, never guess an account.
 /// </para>
 /// <para>
-/// <b>Intent-derived idempotency + the deterministic hold link (ADR-PC-043 slot 4 / ADR-PC-029).</b> The
+/// <b>Intent-derived idempotency + the deterministic hold link (ADR-PC-043 / ADR-PC-029).</b> The
 /// exactly-once key on this surface is the BODY's economic-intent reference, NOT the HTTP Idempotency-Key
 /// (the scoped ADR-PC-029 inversion): the CA-apply command_id is <see cref="SettlementIntentKey.Derive"/>d
 /// from it, so a saga reissue with a byte-identical body collapses at <c>command_dedup</c> to ONE append. The
 /// reserve→confirm HOLD LINK is deterministic the same way: the authorize command_id is derived from a
 /// hold-namespaced projection of the intent reference, so the authorize places <c>hold-{id:N}</c> and the
-/// confirm reconstructs the SAME id to capture exactly that hold — no round-trip of the returned hold_id
+/// confirm reconstructs the SAME id to target that hold — no round-trip of the returned hold_id
 /// through the saga is needed.
 /// </para>
 /// <para>
@@ -70,20 +70,15 @@ public static class SettlementIngressEndpoints
     /// derivation, mirroring the leg-namespacing SettlementReferences does for the wire references.</summary>
     private const string AuthorizeHoldTag = "AUTHORIZE-HOLD:";
 
-    /// <summary>Register the three counterparty-invariant settlement routes (bd babelstone-u79p.5). Called by
+    /// <summary>Register the three counterparty-invariant settlement routes. Called by
     /// <c>CurrentAccountHostModule.MapEndpoints</c>; the Layer-4 route sweep discovers them through the same
     /// composition and matches them against the committed engine-settlement-ingress OpenAPI spec.</summary>
     public static void Map(IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        // ReserveAccountBalance → authorize (place the reversible hold).
         app.MapPost("/v1/reservations", ReserveAsync);
-
-        // ConfirmDebit → capture (turn the hold into a real Debit).
         app.MapPost("/v1/debits", ConfirmDebitAsync);
-
-        // ConfirmCredit → credit-receive (land the value as a Credit).
         app.MapPost("/v1/credits", ConfirmCreditAsync);
     }
 
@@ -120,7 +115,7 @@ public static class SettlementIngressEndpoints
             var verdict = await service.AuthorizeAsync(command, clock.GetUtcNow(), ct);
             // A DECLINED authorize is a 422 on THIS settlement surface, never a 200-with-Declined (which the
             // dispatcher would mis-read as Applied and march to COMPLETED with zero funds held). The source
-            // holds the funds (ADR-PC-043 / SETTLEMENT_CA_DECLINE_IS_4XX).
+            // holds the funds; a decline surfaces as a 4xx on this settlement surface (ADR-PC-043 error model).
             return verdict.Outcome == AuthorizeOutcomes.Authorized
                 ? SettlementResult(accountId, verdict.CommitSequence)
                 : Results.Problem(
@@ -271,7 +266,7 @@ public static class SettlementIngressEndpoints
         if (string.IsNullOrWhiteSpace(request.AccountRef) || !Guid.TryParse(request.AccountRef, out _))
         {
             return Results.Problem(
-                "account_ref must be the engine current-account id (a GUID) on an engine-ca leg (ADR-PC-043 §D5).",
+                "account_ref must be the engine current-account id (a GUID) on an engine-ca leg (ADR-PC-043).",
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
@@ -308,7 +303,7 @@ public static class SettlementIngressEndpoints
 }
 
 /// <summary>
-/// The one settlement-leg request body the engine-CA ingress binds (bd babelstone-u79p.5). The settlement
+/// The one settlement-leg request body the engine-CA ingress binds. The settlement
 /// saga's reserve / confirm-debit / confirm-credit bodies all share this snake_case shape on the wire; the
 /// ingress reads the destination <c>account_ref</c>, the amount, and the leg's exactly-once
 /// <c>intent_reference</c> (with backward-compatible fall-backs to the reserve / debit / credit references a
@@ -316,10 +311,10 @@ public static class SettlementIngressEndpoints
 /// id, the references are process/intent-derived tokens, money is integer cents.
 /// </summary>
 /// <param name="AccountRef">The destination account_ref — the engine current-account id (a GUID string) the
-/// leg lands on (ADR-PC-043 §D5 amendment (b)). Required; a non-GUID is a 400.</param>
+/// leg lands on (ADR-PC-043). Required; a non-GUID is a 400.</param>
 /// <param name="AmountCents">The amount to land, integer cents (ADR-PC-010) — the source Movement.Amount (the
 /// in-band WRONG-AMOUNT guard). The ingress rejects a non-positive amount (400).</param>
-/// <param name="IntentReference">The ADR-PC-043 slot-4 economic-intent reference — the exactly-once + hold-
+/// <param name="IntentReference">The ADR-PC-043 economic-intent reference — the exactly-once + hold-
 /// linking key. Required in effect: absent, the ingress falls back to <paramref name="ReservationRef"/> /
 /// <paramref name="CoreHoldRef"/> / <paramref name="CreditRef"/> before failing 400.</param>
 /// <param name="ReservationRef">The reserve leg's reservation reference (fall-back intent key).</param>

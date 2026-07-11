@@ -4,7 +4,7 @@ using Xunit;
 namespace Babelstone.Families.CurrentAccount.Application.Tests;
 
 /// <summary>
-/// The engine-CA SETTLEMENT INGRESS wire + idempotency commitments (bd babelstone-u79p.5; ADR-PC-043). In
+/// The engine-CA SETTLEMENT INGRESS wire + idempotency commitments (ADR-PC-043). In
 /// plain English: the settlement saga POSTs to three fixed paths and the ingress adapts them onto the
 /// current-account authorize/capture/credit writers. These pin the two DB-free invariants the adapter rests
 /// on: (1) it binds the settlement leg wire — the snake_case account_ref / amount_cents / intent_reference the
@@ -78,7 +78,7 @@ public sealed class SettlementIngressTests
     [Fact]
     public void The_reserve_and_confirm_legs_link_to_the_same_deterministic_hold()
     {
-        // The reserve->confirm HOLD LINK (bd babelstone-u79p.5): the ingress derives the authorize command_id
+        // The reserve->confirm HOLD LINK: the ingress derives the authorize command_id
         // (and thus the placed hold id, hold-{id:N}) from a hold-namespaced projection of the intent
         // reference — deterministically, no round-trip of the returned hold id. Given the SAME intent
         // reference the reserve and confirm legs carry, both reconstruct the SAME hold id.

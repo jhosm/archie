@@ -104,7 +104,7 @@ var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
     ?? builder.Configuration.GetConnectionString("Engine")
     ?? "http://localhost:8080";
 var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
-// The engine-OWNED current-account settlement target (bd babelstone-u79p.3; ADR-PC-043). OPTIONAL — when
+// The engine-OWNED current-account settlement target (ADR-PC-043). OPTIONAL — when
 // unset, no leg is engine-CA-routed and every settlement command stays on Settlement:BaseUrl (the legacy
 // ACL), so the pre-ADR-PC-043 behaviour is preserved with no config change. The demo/staging bring-up
 // points Settlement:EngineCaBaseUrl at the engine's own command surface so the constitution funding debit
@@ -307,7 +307,7 @@ builder.Services.AddSingleton(new SagaCommandDispatcherOptions
     ConnectionString = sagaModuleContext.RuntimeConnectionString,
     EngineBaseUrl = engineBaseUrl,
     SettlementBaseUrl = settlementBaseUrl,
-    // The engine-CA settlement counterparty (bd babelstone-u79p.3; ADR-PC-043). Null keeps every leg on the
+    // The engine-CA settlement counterparty (ADR-PC-043). Null keeps every leg on the
     // legacy ACL (SettlementBaseUrl) — the substrate settlement router fails an engine-ca leg closed when it
     // is unset, so an engine-ca-targeted leg never silently settles on the legacy core.
     EngineCaSettlementBaseUrl = engineCaSettlementBaseUrl,

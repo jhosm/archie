@@ -71,21 +71,21 @@ public static class SettlementCommandPayloadFactory
             : SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId);
         var amountCents = intent?.AmountCents ?? 0L;
 
-        // The destination account_ref (ADR-PC-043 §D5 amendment (b); bd babelstone-u79p.5). On an engine-CA
+        // The destination account_ref (ADR-PC-043). On an engine-CA
         // leg the source family promotes the customer's REAL persistent conta-à-ordem account_ref onto the
         // intent, and the substrate FORWARDS it UNTOUCHED here as the credit/debit destination the CA writer
         // lands on — never re-derived. When no account_ref is threaded (the legacy-DDA path, or the
         // platform-layer default before a family promotes it) it falls back to the process-id-derived
         // ACCT-{processId} placeholder, byte-identical to before — the legacy core resolves the account from
         // the process-scoped business reference. Routing stays header-only: this value is a DESTINATION the
-        // engine-CA WRITER reads, NOT a routing input the substrate router reads (ADR-IC-018 §D5).
+        // engine-CA WRITER reads, NOT a routing input the substrate router reads (ADR-IC-018).
         var accountRef = string.IsNullOrWhiteSpace(intent?.AccountRef)
             ? SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId)
             : intent!.AccountRef!;
 
         // The reserve leg's reservation reference — ALSO the hold-linking intent reference the confirm leg
         // carries, so the engine-CA ingress captures exactly the hold the reserve's authorize placed
-        // (deterministic, process-id-derived; ADR-PC-010 §P5, no mint/clock).
+        // (deterministic, process-id-derived; ADR-PC-010, no mint/clock).
         var reservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId);
 
         return commandType switch
@@ -172,12 +172,12 @@ public static class SettlementCommandPayloadFactory
 /// <param name="IntentId">The economic-intent id from
 /// <see cref="SettlementReferences.DeriveIntentId"/> — the per-payout exactly-once key.</param>
 /// <param name="AmountCents">The source <c>Movement.Amount</c> in integer cents the CA writer lands.</param>
-/// <param name="AccountRef">The promoted DESTINATION account_ref (ADR-PC-043 §D5 amendment (b); bd
-/// babelstone-u79p.5) — the customer's REAL persistent conta-à-ordem account_ref the engine-CA credit/debit
+/// <param name="AccountRef">The promoted DESTINATION account_ref (ADR-PC-043) — the customer's REAL
+/// persistent conta-à-ordem account_ref the engine-CA credit/debit
 /// writer lands the value on. The source family promotes it; the substrate FORWARDS it untouched onto the
 /// command body (never re-derived). <c>null</c> for the legacy-DDA path and for the platform-layer default
 /// before a family threads it — the factory then falls back to the process-id-derived <c>ACCT-{processId}</c>
 /// placeholder (byte-identical to before). Orthogonal to <paramref name="IntentId"/>: two payouts on ONE
 /// account carry the SAME <c>AccountRef</c> while their intent ids differ (the account-identity axis vs the
-/// exactly-once axis). Structural, PII-free (ADR-PC-004 §P2) — an opaque token, never a raw IBAN.</param>
+/// exactly-once axis). Structural, PII-free (ADR-PC-004) — an opaque token, never a raw IBAN.</param>
 public sealed record SettlementIntent(string IntentId, long AmountCents, string? AccountRef = null);
