@@ -339,6 +339,49 @@ jobs:
             kubectl delete -f "$render" -l babelstone.io/recreate-on-apply=true --ignore-not-found
           fi
           kubectl apply -f "$render"
+      # 4d2 — roll grafana-lgtm so ConfigMap-only edits actually reach the running pod (bd
+      #       babelstone-zla1.10.18). Grafana's OIDC/RBAC + Prometheus-rule config rides in the
+      #       stable-named grafana-rbac / grafana-lgtm-rules ConfigMaps (kustomization.yaml sets
+      #       disableNameSuffixHash) and is subPath-mounted into the appliance (grafana-oidc.patch.yaml).
+      #       A subPath ConfigMap mount is frozen at pod creation and NEVER live-updated by the kubelet,
+      #       and the stable ConfigMap name leaves the Deployment spec byte-identical across a config
+      #       edit — so the `kubectl apply` above triggers NO rollout, and the OLD config (e.g. a stale
+      #       Logto client_id → oidc.invalid_client, the 2026-07-11 Grafana SSO outage) stays live until
+      #       the pod is recreated. Force that recreation on every staging promote; grafana-lgtm is
+      #       single-replica, so a few seconds' restart is acceptable. Only grafana-lgtm needs this —
+      #       Mission Control + Backstage carry their OIDC client_id as Deployment env, so a change rolls
+      #       THEM automatically. Staging-only: the grafana rbac/rules ConfigMaps are generated only in
+      #       overlays/staging (base leaves the rbac config unmounted).
+      #       Readiness is polled with `kubectl get`, NOT `kubectl rollout status`: the least-privilege
+      #       cd-deployer (bootstrap/cd-deploy-rbac.yaml) holds get/list/patch on apps/deployments but no
+      #       `watch` verb and no replicasets grant, and `rollout status` watches — so it would 403.
+      #       `rollout restart` only PATCHes the pod-template annotation, which the deployer CAN do.
+      - name: Roll grafana-lgtm so subPath-mounted config changes take effect (staging)
+        if: ${{ github.event.inputs.overlay == 'staging' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: |
+          set -euo pipefail
+          ns=babelstone-staging
+          kubectl -n "$ns" rollout restart deployment/grafana-lgtm
+          # Wait for the restarted rollout to complete with get-only polling. Ready ⇔ the controller
+          # has observed the post-restart generation AND updated == available == desired replicas.
+          # Read `gen`/`desired` once (they are set by the restart above); poll the status fields.
+          gen=$(kubectl -n "$ns" get deployment grafana-lgtm -o jsonpath='{.metadata.generation}')
+          desired=$(kubectl -n "$ns" get deployment grafana-lgtm -o jsonpath='{.spec.replicas}')
+          for i in $(seq 1 60); do
+            obs=$(kubectl -n "$ns" get deployment grafana-lgtm -o jsonpath='{.status.observedGeneration}')
+            updated=$(kubectl -n "$ns" get deployment grafana-lgtm -o jsonpath='{.status.updatedReplicas}')
+            avail=$(kubectl -n "$ns" get deployment grafana-lgtm -o jsonpath='{.status.availableReplicas}')
+            if [ "${obs:-0}" = "${gen:-1}" ] && [ "${updated:-0}" = "${desired:-1}" ] && [ "${avail:-0}" = "${desired:-1}" ]; then
+              echo "grafana-lgtm rolled: generation=$gen updated=${updated:-0} available=${avail:-0} (after ~$((i * 3))s)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::grafana-lgtm did not become Ready within ~180s of the restart — inspect the new pod (likely a bad grafana.ini or a missing GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET)."
+          kubectl -n "$ns" get deployment grafana-lgtm -o wide || true
+          exit 1
       # 4e — open the kubelet tunnel to the Kong Admin API for the deck sync in 4f.
       #      Staging binds the Admin API to the pod's loopback and drops its 8001 Service
       #      port (overlays/staging/kong-admin-localhost.patch.yaml, bd babelstone-zla1.12.8),
@@ -421,21 +464,28 @@ jobs:
       - name: Assert the Logto-config path parses and stays wired (no network, no token)
         run: |
           set -euo pipefail
-          # 1. All three reconcile scripts must byte-compile.
+          # 1. All four Logto-config scripts (three reconciles + the verify) must byte-compile.
           python3 -m py_compile \
             scripts/iam/register-mcp-resource.py \
             scripts/iam/enable-default-mfa.py \
-            scripts/iam/register-ops-console.py
+            scripts/iam/register-ops-console.py \
+            scripts/iam/verify-oidc-clients.py
           # 2. Each must still read its Management-API token from the environment (never a literal).
-          for f in register-mcp-resource enable-default-mfa register-ops-console; do
+          for f in register-mcp-resource enable-default-mfa register-ops-console verify-oidc-clients; do
             grep -q 'LOGTO_MGMT_TOKEN' "scripts/iam/$f.py" \
               || { echo "::error::scripts/iam/$f.py no longer reads LOGTO_MGMT_TOKEN from the environment"; exit 1; }
           done
           # 3. The ops-console fail-loud target var must still be honoured.
           grep -q 'OPS_EXPECT_CLIENT_ID' scripts/iam/register-ops-console.py \
             || { echo "::error::register-ops-console.py dropped the OPS_EXPECT_CLIENT_ID fail-loud check"; exit 1; }
-          # 4. This workflow must still invoke all three from the live configure-logto job.
-          for f in register-mcp-resource enable-default-mfa register-ops-console; do
+          # 3b. The verify must still honour BOTH hand-registered surfaces' fail-loud target vars
+          #     (bd babelstone-zla1.10.19) — else the Grafana/Backstage registration gate goes dark.
+          for v in GRAFANA_EXPECT_CLIENT_ID BACKSTAGE_EXPECT_CLIENT_ID; do
+            grep -q "$v" scripts/iam/verify-oidc-clients.py \
+              || { echo "::error::verify-oidc-clients.py dropped the $v fail-loud check"; exit 1; }
+          done
+          # 4. This workflow must still invoke all four from the live configure-logto job.
+          for f in register-mcp-resource enable-default-mfa register-ops-console verify-oidc-clients; do
             grep -q "scripts/iam/$f.py" .github/workflows/cd.yml \
               || { echo "::error::cd.yml no longer invokes scripts/iam/$f.py"; exit 1; }
           done
@@ -507,16 +557,49 @@ jobs:
           fi
           echo "deployed Mission Control OIDC_CLIENT_ID = $cid"
           echo "client_id=$cid" >> "$GITHUB_OUTPUT"
-      # 6c — mint a Management-API token in-process and run the three idempotent reconcile scripts.
+      # 6b2 — the two OTHER Boundary-6 login surfaces' deployed client_ids (bd babelstone-zla1.10.19).
+      #       Same source-of-truth as the mc step: read from the RENDERED overlay, so a patch that
+      #       overrides either id is still caught. Backstage carries its id as the BACKSTAGE_OIDC_CLIENT_ID
+      #       Deployment env; Grafana carries its as the `client_id =` ini assignment inside the
+      #       grafana-rbac ConfigMap's custom.ini. One render, two outputs; verify-oidc-clients.py
+      #       (run in 6c) fails the promote loud if either id is not a registered Logto app.
+      - name: Extract the deployed Grafana + Backstage OIDC client_ids
+        id: clients
+        run: |
+          set -euo pipefail
+          rendered=$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging)
+          # Grafana's client_id is an ini assignment (`client_id = <id>`) inside the grafana-rbac
+          # ConfigMap's custom.ini block — the `=` anchor distinguishes it from any YAML `client_id:`
+          # a kong/oauth2 plugin might render.
+          gcid=$(printf '%s\n' "$rendered" \
+            | grep -E '^[[:space:]]*client_id[[:space:]]*=' | head -1 \
+            | sed -E 's/^[[:space:]]*client_id[[:space:]]*=[[:space:]]*//; s/[[:space:]]*$//')
+          bcid=$(printf '%s\n' "$rendered" \
+            | grep -A1 -E '^[[:space:]]*-?[[:space:]]*name:[[:space:]]+BACKSTAGE_OIDC_CLIENT_ID[[:space:]]*$' \
+            | grep -E '^[[:space:]]*value:' | head -1 \
+            | sed -E 's/^[[:space:]]*value:[[:space:]]*//; s/^"//; s/"$//')
+          if [ -z "$gcid" ]; then
+            echo "::error::could not extract the Grafana client_id (grafana-rbac ConfigMap custom.ini) from the rendered staging overlay"; exit 1
+          fi
+          if [ -z "$bcid" ]; then
+            echo "::error::could not extract BACKSTAGE_OIDC_CLIENT_ID from the rendered staging overlay"; exit 1
+          fi
+          echo "deployed Grafana client_id = $gcid ; Backstage client_id = $bcid"
+          echo "grafana_client_id=$gcid"   >> "$GITHUB_OUTPUT"
+          echo "backstage_client_id=$bcid" >> "$GITHUB_OUTPUT"
+      # 6c — mint a Management-API token in-process and run the idempotent reconcile scripts, then the
+      #      fail-loud verify.
       #      The token is a LOCAL shell var (masked, never written to $GITHUB_OUTPUT/$GITHUB_ENV),
       #      so it lives only inside this step. register-mcp-resource + enable-default-mfa run first
       #      (pure idempotent config); register-ops-console runs last so its fail-loud mismatch check
       #      cannot skip the other two reconciles.
-      - name: Reconcile Logto config (MCP resource + scopes, default MFA, ops-console client)
+      - name: Reconcile Logto config + verify Grafana/Backstage registration
         env:
           LOGTO_MGMT_APP_ID: ${{ secrets.LOGTO_MGMT_APP_ID }}
           LOGTO_MGMT_APP_SECRET: ${{ secrets.LOGTO_MGMT_APP_SECRET }}
           OPS_EXPECT_CLIENT_ID: ${{ steps.mc.outputs.client_id }}
+          GRAFANA_EXPECT_CLIENT_ID: ${{ steps.clients.outputs.grafana_client_id }}
+          BACKSTAGE_EXPECT_CLIENT_ID: ${{ steps.clients.outputs.backstage_client_id }}
         run: |
           set -euo pipefail
           if [ -z "${LOGTO_MGMT_APP_ID:-}" ] || [ -z "${LOGTO_MGMT_APP_SECRET:-}" ]; then
@@ -537,6 +620,11 @@ jobs:
           echo "::group::register-mcp-resource"; python3 scripts/iam/register-mcp-resource.py; echo "::endgroup::"
           echo "::group::enable-default-mfa";    python3 scripts/iam/enable-default-mfa.py;    echo "::endgroup::"
           echo "::group::register-ops-console";  python3 scripts/iam/register-ops-console.py;  echo "::endgroup::"
+          # Fail-loud verify that the hand-registered surfaces (Grafana + Backstage) actually exist in
+          # Logto with the deployed client_id + redirect URI — the net Mission Control already has via
+          # register-ops-console. Reuses the in-step token; VERIFIES only (does not register — the
+          # curated ADR-IC-021 §C6 posture). bd babelstone-zla1.10.19.
+          echo "::group::verify-oidc-clients";   python3 scripts/iam/verify-oidc-clients.py;   echo "::endgroup::"
           echo "Logto Management-API config reconciled."
 
   # ── always-run aggregator (same gate pattern as ci.yml) ─────────────────────────────
