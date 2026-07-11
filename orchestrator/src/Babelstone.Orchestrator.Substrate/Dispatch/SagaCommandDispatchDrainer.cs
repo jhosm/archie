@@ -149,8 +149,15 @@ public sealed class SagaCommandDispatchDrainer
         }
 
         // No route for this command type → terminal. Two cases. Route by the owning saga's saga_type
-        // (bd babelstone-mtto PR1) so a second saga's commands resolve through its OWN sub-router.
-        var route = _router.Resolve(row.CommandType, row.SagaType);
+        // (bd babelstone-mtto PR1) so a second saga's commands resolve through its OWN sub-router, and
+        // thread the leg's projected ce_settlementtarget so the sub-router selects the settlement
+        // COUNTERPARTY (engine-CA vs legacy-DDA, ADR-PC-043 slots 1–2) on the PRODUCTION drain path
+        // (bd babelstone-u79p.3). The projection reads the row's OWN settlement-target marker ALONE — never
+        // Movement.AccountRef — so routing stays header-only (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b)):
+        // the substrate is payload-blind for WHERE a leg goes. A row with no target marker projects null →
+        // the sub-router routes legacy-DDA (UNCHANGED), so every pre-ADR-PC-043 command keeps its target.
+        var routingHeaders = ProjectSettlementTargetHeader(row.Payload);
+        var route = _router.Resolve(row.CommandType, row.SagaType, routingHeaders);
         if (route is null)
         {
             // [REVIEW-FLAG A] The no-route AUTO-PASS carve-out (bd babelstone-t7o3.8). A no-route command
@@ -650,6 +657,84 @@ public sealed class SagaCommandDispatchDrainer
 
         return headers;
     }
+
+    /// <summary>
+    /// Project the leg's <c>ce_settlementtarget</c> routing header from the outbox row's byte-stable command
+    /// body (bd babelstone-u79p.3; ADR-PC-043 slots 1–2). In plain English: the fresh deposit funds itself by
+    /// debiting the customer's engine current account, so the constitution funding legs must route to the
+    /// engine-CA counterparty rather than the legacy Core ACL — this reads the row's OWN settlement-target
+    /// marker and hands it to the router as the header the counterparty selection keys on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Header-only routing, never <c>Movement.AccountRef</c> (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b)).</b>
+    /// The projection reads the ONE explicit <c>settlement_target</c> discriminator the source family
+    /// promoted onto the command body — a counterparty selector, NOT the destination account. The substrate
+    /// stays payload-blind for the account-identity axis: it never reads <c>account_ref</c> here to decide
+    /// WHERE a leg goes (the engine-CA <c>/capture</c> and <c>/credit</c> WRITERS read the promoted
+    /// <c>account_ref</c> as the destination — the narrow §D5(b) carve-out — but the SUBSTRATE router does
+    /// not). A body with no <c>settlement_target</c> (every legacy leg, and any non-settlement command)
+    /// projects <c>null</c>, so the router routes legacy-DDA and legacy behaviour is UNCHANGED.
+    /// </para>
+    /// <para>
+    /// <b>Fail-soft parse.</b> The body is opaque bytes to the substrate; a body that is not a JSON object,
+    /// or carries no <c>settlement_target</c>, projects <c>null</c> (legacy-DDA) rather than throwing — a
+    /// malformed marker never fails the drain, it falls back to the safe default. Only a well-formed
+    /// <c>engine-ca</c> / <c>legacy-dda</c> string is forwarded; the router validates the value.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyDictionary<string, string>? ProjectSettlementTargetHeader(byte[] payload)
+    {
+        if (payload is null || payload.Length == 0)
+        {
+            return null;
+        }
+
+        string? target;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !document.RootElement.TryGetProperty(SettlementTargetPayloadField, out var value)
+                || value.ValueKind != System.Text.Json.JsonValueKind.String)
+            {
+                return null;
+            }
+
+            target = value.GetString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // The body is not JSON (or is truncated) — a settlement command body always is, so this is a
+            // non-settlement/legacy body: route legacy-DDA (null), never fail the drain on a parse blip.
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return null;
+        }
+
+        // Forward the SINGLE routing header keyed the way the sub-routers read it (ce_-stripped, lowercased).
+        // OrdinalIgnoreCase on the KEY mirrors the consume loop's extraction dictionary; the sub-router does
+        // the exact-Ordinal VALUE compare against the engine-ca literal.
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementTargetHeaderKey] = target,
+        };
+    }
+
+    /// <summary>The command-body field the source family promotes the settlement-target discriminator onto
+    /// (bd babelstone-u79p.3; snake_case on the wire). A counterparty selector — the ONLY body field the
+    /// substrate router reads for routing, and never the destination <c>account_ref</c> (ADR-PC-043 §D5
+    /// amendment (b) keeps the account-identity axis out of substrate routing).</summary>
+    private const string SettlementTargetPayloadField = "settlement_target";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key the router keys the settlement
+    /// counterparty on (mirrors <c>SettlementCommandRouter.SettlementTargetHeader</c> /
+    /// <c>Babelstone.Engine.MovementHeaders.SettlementTargetKey</c>). Pinned as a literal — the orchestrator
+    /// stays extraction-ready (ADR-PC-019 §P2).</summary>
+    private const string SettlementTargetHeaderKey = "settlementtarget";
 
     /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the attested OIDC <c>acr</c> on a
     /// propagated result event (mirrors <c>SagaAdvanceHandler.ScaAcrHeaderKey</c>).</summary>

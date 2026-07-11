@@ -135,6 +135,133 @@ public sealed class MultiSagaSubstrateTests
     }
 
     [Fact]
+    public void CompositeCommandRouter_threads_the_settlement_target_header_to_the_constitution_router()
+    {
+        // The engine-CA funding wire (bd babelstone-u79p.3; ADR-PC-043 slots 1–2): a ce_settlementtarget=
+        // engine-ca funding leg routes to the ENGINE-CA base URL through the counterparty-invariant path; a
+        // legacy leg (absent/legacy-dda) stays on the legacy Core-ACL base URL. The composite forwards the
+        // header to the sub-router — routing is header-only (the substrate never reads Movement.AccountRef).
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=unused",
+            EngineBaseUrl = "http://engine",
+            SettlementBaseUrl = "http://legacy-acl",
+            EngineCaSettlementBaseUrl = "http://engine-ca",
+        };
+        var composite = new CompositeCommandRouter([new SagaCommandRouter(options)]);
+
+        var engineCaHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["settlementtarget"] = "engine-ca",
+        };
+
+        // A funding debit leg carrying engine-ca → the engine-CA counterparty, counterparty-invariant path.
+        var reserveEngineCa = composite.Resolve(
+            ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.Type, engineCaHeaders);
+        Assert.NotNull(reserveEngineCa);
+        Assert.Equal("http://engine-ca", reserveEngineCa!.BaseUrl);
+        Assert.Equal("/v1/reservations", reserveEngineCa.Path);
+
+        var confirmEngineCa = composite.Resolve(
+            ConstitutionProcess.ConfirmDebit, ConstitutionProcess.Type, engineCaHeaders);
+        Assert.NotNull(confirmEngineCa);
+        Assert.Equal("http://engine-ca", confirmEngineCa!.BaseUrl);
+        Assert.Equal("/v1/debits", confirmEngineCa.Path);
+
+        // No header (legacy funding) → the legacy Core-ACL base URL, same route. Legacy routing UNCHANGED.
+        var reserveLegacy = composite.Resolve(
+            ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.Type, extensionHeaders: null);
+        Assert.NotNull(reserveLegacy);
+        Assert.Equal("http://legacy-acl", reserveLegacy!.BaseUrl);
+        Assert.Equal("/v1/reservations", reserveLegacy.Path);
+
+        // The engine-bound ActivateDeposit is counterparty-agnostic — always the engine, header or not.
+        var activate = composite.Resolve(
+            ConstitutionProcess.ActivateDeposit, ConstitutionProcess.Type, engineCaHeaders);
+        Assert.NotNull(activate);
+        Assert.Equal("http://engine", activate!.BaseUrl);
+        Assert.Equal("/v1/deposits", activate.Path);
+    }
+
+    [Fact]
+    public void CompositeCommandRouter_fails_closed_on_an_engine_ca_leg_with_no_engine_ca_base_url()
+    {
+        // An engine-ca leg with NO engine-CA base URL configured resolves to null — fail-closed (ADR-PC-043):
+        // the drain surfaces a routing failure rather than silently settling engine-CA money on the legacy
+        // core. Legacy legs are unaffected (they still route to SettlementBaseUrl).
+        var options = new SagaCommandDispatcherOptions
+        {
+            ConnectionString = "Host=unused",
+            EngineBaseUrl = "http://engine",
+            SettlementBaseUrl = "http://legacy-acl",
+            EngineCaSettlementBaseUrl = null,
+        };
+        var composite = new CompositeCommandRouter([new SagaCommandRouter(options)]);
+
+        var engineCaHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["settlementtarget"] = "engine-ca",
+        };
+
+        Assert.Null(composite.Resolve(
+            ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.Type, engineCaHeaders));
+
+        // A legacy leg still routes (the null engine-CA base URL only fails an engine-ca-targeted leg).
+        var legacy = composite.Resolve(
+            ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.Type, extensionHeaders: null);
+        Assert.NotNull(legacy);
+        Assert.Equal("http://legacy-acl", legacy!.BaseUrl);
+    }
+
+    [Fact]
+    public void ConstitutionPayloadFactory_tags_an_engine_owned_funding_account_as_engine_ca()
+    {
+        // The funding-account classification (bd babelstone-u79p.3): an engine-owned current account's
+        // account_ref IS the account GUID (AccountRef == AccountId.ToString()), so a GUID-shaped funding ref
+        // → engine-ca (the debit funds itself from the customer CA, carrying the promoted destination
+        // account_ref + amount + the hold-linking intent reference); a legacy opaque token → legacy-DDA (the
+        // funding-leg extras stay null so the body is byte-identical to the pre-ADR-PC-043 shape).
+        var processId = Guid.NewGuid();
+        var causation = Guid.NewGuid();
+        var engineCaAccount = Guid.NewGuid().ToString();
+        var engineCaRef = new SagaBusinessReference(
+            ProcessId: processId,
+            ProductRef: "dpz_pt_12m_juros_venc",
+            AmountMinorUnits: 500_000L,
+            SourceAccountRef: engineCaAccount,
+            InterestAccountRef: null,
+            DepositRef: "DEP-1",
+            ClientType: ClientType.Existing,
+            AutoApprovalThresholdMinorUnits: 1_000_000L);
+
+        var reserve = Assert.IsType<ReserveAccountBalanceCommand>(SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ReserveAccountBalance, processId, causation, correlationId: null, engineCaRef));
+        Assert.Equal("engine-ca", reserve.SettlementTarget);
+        Assert.Equal(engineCaAccount, reserve.AccountRef);
+
+        var confirm = Assert.IsType<ConfirmDebitCommand>(SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ConfirmDebit, processId, causation, correlationId: null, engineCaRef));
+        Assert.Equal("engine-ca", confirm.SettlementTarget);
+        Assert.Equal(engineCaAccount, confirm.AccountRef);
+        Assert.Equal(500_000L, confirm.AmountCents);
+        // The confirm's hold-linking intent reference is the SAME reservation reference the reserve leg used,
+        // so the engine ingress captures exactly the hold the reserve's authorize placed.
+        Assert.Equal(reserve.ReservationRef, confirm.IntentReference);
+
+        // A legacy funding account (a non-GUID opaque token) → no engine-ca extras, body unchanged.
+        var legacyRef = engineCaRef with { SourceAccountRef = "acct-ref-001" };
+        var legacyReserve = Assert.IsType<ReserveAccountBalanceCommand>(SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ReserveAccountBalance, processId, causation, correlationId: null, legacyRef));
+        Assert.Null(legacyReserve.SettlementTarget);
+        var legacyConfirm = Assert.IsType<ConfirmDebitCommand>(SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ConfirmDebit, processId, causation, correlationId: null, legacyRef));
+        Assert.Null(legacyConfirm.SettlementTarget);
+        Assert.Null(legacyConfirm.AccountRef);
+        Assert.Null(legacyConfirm.AmountCents);
+        Assert.Null(legacyConfirm.IntentReference);
+    }
+
+    [Fact]
     public void CompositeCommandRouter_rejects_a_duplicate_saga_type()
     {
         var options = new SagaCommandDispatcherOptions

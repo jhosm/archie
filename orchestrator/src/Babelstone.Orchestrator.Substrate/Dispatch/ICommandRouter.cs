@@ -28,6 +28,21 @@ public interface ICommandRouter
     /// <c>null</c> when no router is registered for the saga type or no route for the command.
     /// </summary>
     CommandRoute? Resolve(string commandType, string sagaType);
+
+    /// <summary>
+    /// Resolve the HTTP target for <paramref name="commandType"/> emitted by the saga of
+    /// <paramref name="sagaType"/>, threading the leg's projected <c>ce_settlementtarget</c> extension
+    /// header so the settlement COUNTERPARTY is selected (engine-CA vs legacy-DDA, ADR-PC-043 slots 1–2)
+    /// on the PRODUCTION drain path (bd babelstone-u79p.3). The dispatcher builds
+    /// <paramref name="extensionHeaders"/> from the outbox row and passes it here; the
+    /// <see cref="CompositeCommandRouter"/> forwards it to the sub-router the row's <c>saga_type</c>
+    /// selects, which alone reads the header (header-only routing, ADR-IC-018 §D5). The DEFAULT
+    /// implementation ignores the headers (delegates to <see cref="Resolve(string, string)"/>), so a
+    /// header-blind router is unchanged.
+    /// </summary>
+    CommandRoute? Resolve(
+        string commandType, string sagaType, IReadOnlyDictionary<string, string>? extensionHeaders)
+        => Resolve(commandType, sagaType);
 }
 
 /// <summary>
@@ -42,6 +57,27 @@ public interface ISagaCommandRouter : ICommandRouter
     /// <summary>The saga type this router's command map serves — matches
     /// <see cref="Saga.ISagaStateMachine.SagaType"/> and the persisted <c>saga_state.saga_type</c>.</summary>
     string SagaType { get; }
+
+    /// <summary>
+    /// Resolve the HTTP target for <paramref name="commandType"/>, selecting the settlement COUNTERPARTY
+    /// from the leg's projected <c>ce_settlementtarget</c> extension header (ADR-PC-043 slots 1–2) — the
+    /// header-aware routing seam the dispatcher drains through in PRODUCTION (bd babelstone-u79p.3). Routing
+    /// reads the header ALONE (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b): the substrate stays
+    /// payload-blind for routing — it never reads <c>Movement.AccountRef</c> to decide where a leg goes);
+    /// the path + method are counterparty-INVARIANT, only the base URL flips (<c>engine-ca</c> →
+    /// the engine-CA settlement surface, <c>legacy-dda</c> or absent → the legacy ACL — UNCHANGED).
+    /// </summary>
+    /// <param name="commandType">The command NAME the state machine emitted.</param>
+    /// <param name="extensionHeaders">The leg's projected CloudEvents extension attributes (ce_-stripped,
+    /// lowercased). A router reads ONLY <c>settlementtarget</c>; a null/absent value is the legacy-DDA
+    /// counterparty. The DEFAULT implementation ignores the headers (delegates to
+    /// <see cref="ICommandRouter.Resolve(string)"/>), so a header-BLIND router is unchanged — only a
+    /// counterparty-selecting router (the constitution + substrate settlement routers) overrides it.</param>
+    /// <returns>The resolved route on the selected counterparty's base URL, or <c>null</c> for a command
+    /// with no route OR an <c>engine-ca</c>-targeted leg with no engine-CA base URL configured (fail-closed
+    /// — never a silent fall-back to the legacy counterparty).</returns>
+    CommandRoute? Resolve(string commandType, IReadOnlyDictionary<string, string>? extensionHeaders)
+        => Resolve(commandType);
 }
 
 /// <summary>The resolved HTTP target for one command type — a base URL, a relative route, and the

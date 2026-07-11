@@ -78,8 +78,16 @@ public static class SagaCommandPayloadFactory
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
+                // On an engine-CA funding leg AccountRef is the customer's real conta-à-ordem account_ref
+                // (a GUID string the engine-CA authorize writer reads as the destination, ADR-PC-043 §D5
+                // amendment (b)); on a legacy leg it is the opaque ACL token, unchanged.
                 AccountRef = reference.SourceAccountRef,
                 ReservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId),
+                // The counterparty discriminator the dispatcher routes on (bd babelstone-u79p.3): engine-ca
+                // when the funding account is an engine-owned CA (its account_ref IS the account GUID —
+                // AccountRef == AccountId.ToString()); null (→ legacy-DDA, UNCHANGED) otherwise. A pure,
+                // deterministic classification of the pinned reference — no clock, no I/O.
+                SettlementTarget = FundingTarget(reference.SourceAccountRef),
             },
             ConstitutionProcess.ValidateProductLimits => new ValidateProductLimitsCommand
             {
@@ -104,6 +112,18 @@ public static class SagaCommandPayloadFactory
                 // rather than re-debiting. Do NOT mint a fresh ref here — the no-double-debit invariant
                 // at v1 (before DEF-1's ACL guard exists) rests on this reference being stable.
                 CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
+                // The engine-CA capture leg (bd babelstone-u79p.3/.5). AccountRef is the promoted destination
+                // (the customer CA account_ref); IntentReference is the SAME reservation reference the reserve
+                // leg used, so the engine ingress reconstructs the SAME deterministic hold the reserve's
+                // authorize placed and captures exactly it (target_hold_id = f(intent_reference)); AmountCents
+                // is the funded principal (the WRONG-AMOUNT guard). All null/zero on a legacy leg (unchanged).
+                // Every value is a deterministic function of the pinned reference — byte-stable, no mint/clock.
+                AccountRef = IsEngineCaFunding(reference.SourceAccountRef) ? reference.SourceAccountRef : null,
+                IntentReference = IsEngineCaFunding(reference.SourceAccountRef)
+                    ? SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId)
+                    : null,
+                AmountCents = IsEngineCaFunding(reference.SourceAccountRef) ? reference.AmountMinorUnits : null,
+                SettlementTarget = FundingTarget(reference.SourceAccountRef),
             },
             // ActivateDeposit is the ENGINE-bound constitution command (bd babelstone-t7o3.11 / 3k10 /
             // c8d8): its wire body is the engine's MINIMAL ConstituteDepositRequest (snake_case,
@@ -150,4 +170,27 @@ public static class SagaCommandPayloadFactory
             _ => null,
         };
     }
+
+    /// <summary>
+    /// The settlement-counterparty discriminator for a constitution funding leg (bd babelstone-u79p.3):
+    /// <c>engine-ca</c> when the pinned funding account is an engine-owned current account, else <c>null</c>
+    /// (→ the router routes legacy-DDA, UNCHANGED). In plain English: a deposit funded from the customer's
+    /// engine current account debits that CA (the engine-CA wire); a deposit funded from a legacy account
+    /// still settles over the Core ACL exactly as before.
+    /// </summary>
+    /// <remarks>
+    /// PURE and deterministic (ADR-PC-010 §P5) — a classification of the pinned <c>SourceAccountRef</c>
+    /// alone, no clock/I/O. An engine-owned CA's <c>account_ref</c> IS the account's GUID
+    /// (<c>AccountRef == AccountId.ToString()</c>, the current-account family's opaque-stream-id convention),
+    /// so a GUID-parseable funding ref is the engine-CA signal; a legacy opaque token (an ACL reference / a
+    /// masked IBAN handle) is not GUID-shaped and routes legacy. The wire value mirrors the router's
+    /// <c>engine-ca</c> literal (kept in sync by the producer↔consumer contract).
+    /// </remarks>
+    private static string? FundingTarget(string sourceAccountRef) =>
+        IsEngineCaFunding(sourceAccountRef) ? SagaCommandRouter.EngineCaValue : null;
+
+    // True iff the pinned funding account is an engine-owned current account (its account_ref is the account
+    // GUID). Deterministic string classification — no clock, no I/O (ADR-PC-010 §P5).
+    private static bool IsEngineCaFunding(string? sourceAccountRef) =>
+        !string.IsNullOrWhiteSpace(sourceAccountRef) && Guid.TryParse(sourceAccountRef, out _);
 }

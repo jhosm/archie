@@ -40,6 +40,11 @@ public sealed class TermDepositSagaModule : ISagaModule
             ConnectionString = context.RuntimeConnectionString,
             EngineBaseUrl = context.EngineBaseUrl,
             SettlementBaseUrl = context.SettlementBaseUrl,
+            // The engine-owned CA settlement base URL (bd babelstone-u79p.3; ADR-PC-043). When configured,
+            // an engine-ca funding leg routes here; when null the constitution funding stays on the legacy
+            // ACL (SettlementBaseUrl), unchanged — so an estate that has not stood up the engine-CA surface
+            // keeps the pre-ADR-PC-043 behaviour with no config change.
+            EngineCaSettlementBaseUrl = context.EngineCaSettlementBaseUrl,
         });
     }
 
