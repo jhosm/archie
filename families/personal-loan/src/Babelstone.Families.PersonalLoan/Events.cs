@@ -99,14 +99,14 @@ public sealed record LoanDisbursed(
     /// <summary>
     /// Promote the disbursement Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
-    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), AND stamp the settlement COUNTERPARTY as
+    /// auto-starts on (ADR-PC-032; ADR-IC-018), AND stamp the settlement COUNTERPARTY as
     /// <c>ce_settlementtarget = engine-ca</c> (ADR-PC-043 slot 1) so the disbursement CREDIT lands on the
     /// engine-OWNED current account rather than the legacy demand core. Routed through the counterparty-aware
     /// GENERIC engine-spine seam
-    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>, bd babelstone-t7o3.20 / babelstone-u79p.4) — it
+    /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>) — it
     /// names no family, so every Movement-bearing event gets the headers the same way; the substrate's router
     /// keys the counterparty selection on the promoted header ALONE, never <see cref="Movement.AccountRef"/>
-    /// (the payload-blind boundary, ADR-IC-018 §D5). Null/empty movements (pre-Movement streams) declare no
+    /// (the payload-blind boundary, ADR-IC-018). Null/empty movements (pre-Movement streams) declare no
     /// settlement header (the base-default behaviour), starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
@@ -177,13 +177,13 @@ public sealed record LoanInstallmentPaid(
     /// <summary>
     /// Promote the installment-collection Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
-    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), AND stamp the settlement COUNTERPARTY as
+    /// auto-starts on (ADR-PC-032; ADR-IC-018), AND stamp the settlement COUNTERPARTY as
     /// <c>ce_settlementtarget = engine-ca</c> (ADR-PC-043 slot 1) so the installment DEBIT settles against the
     /// engine-OWNED current account rather than the legacy demand core. Routed through the counterparty-aware
     /// GENERIC engine-spine seam
     /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>) — it names no family;
     /// the substrate's router keys the counterparty on the promoted header ALONE, never
-    /// <see cref="Movement.AccountRef"/> (ADR-IC-018 §D5). Null/empty movements (pre-Movement streams) declare
+    /// <see cref="Movement.AccountRef"/> (ADR-IC-018). Null/empty movements (pre-Movement streams) declare
     /// no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
@@ -237,13 +237,13 @@ public sealed record LoanRepaidEarly(
     /// <summary>
     /// Promote the early-repayment Movement's origin/direction to the <c>ce_movementorigin</c> /
     /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
-    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), AND stamp the settlement COUNTERPARTY as
+    /// auto-starts on (ADR-PC-032; ADR-IC-018), AND stamp the settlement COUNTERPARTY as
     /// <c>ce_settlementtarget = engine-ca</c> (ADR-PC-043 slot 1) so the early-repayment DEBIT settles against
     /// the engine-OWNED current account rather than the legacy demand core. Routed through the
     /// counterparty-aware GENERIC engine-spine seam
     /// (<see cref="MovementHeaders.ForOriginatedMovements(System.Collections.Generic.IReadOnlyList{Babelstone.Engine.Movement}, Babelstone.Engine.SettlementTarget)"/>) — it names no family;
     /// the substrate's router keys the counterparty on the promoted header ALONE, never
-    /// <see cref="Movement.AccountRef"/> (ADR-IC-018 §D5). Null/empty movements (pre-Movement streams) declare
+    /// <see cref="Movement.AccountRef"/> (ADR-IC-018). Null/empty movements (pre-Movement streams) declare
     /// no settlement header, starting no saga.
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>

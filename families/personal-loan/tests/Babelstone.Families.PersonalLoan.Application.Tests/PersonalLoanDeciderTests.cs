@@ -74,6 +74,8 @@ public sealed class PersonalLoanDeciderTests
         Assert.NotNull(headers);
         Assert.Equal("Originated", headers![MovementHeaders.OriginKey]);
         Assert.Equal("Credit", headers[MovementHeaders.DirectionsKey]);
+        // The disbursement CREDIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, headers[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
@@ -115,6 +117,8 @@ public sealed class PersonalLoanDeciderTests
         // The producer hop: a one-entry ce_movementdirections=Debit list for this standalone collection leg.
         Assert.Equal("Originated", paid.IntegrationHeaders![MovementHeaders.OriginKey]);
         Assert.Equal("Debit", paid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+        // The installment DEBIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, paid.IntegrationHeaders[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
@@ -200,6 +204,8 @@ public sealed class PersonalLoanDeciderTests
         // The producer hop: a one-entry ce_movementdirections=Debit list for this standalone repayment leg.
         Assert.Equal("Originated", repaid.IntegrationHeaders![MovementHeaders.OriginKey]);
         Assert.Equal("Debit", repaid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+        // The early-repayment DEBIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, repaid.IntegrationHeaders[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
