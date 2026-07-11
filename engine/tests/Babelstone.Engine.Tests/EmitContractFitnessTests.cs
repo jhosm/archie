@@ -99,12 +99,18 @@ public sealed class EmitContractFitnessTests
     ///   value the decide path consumes synchronously to REFUSE before any debit — not a GL/notify
     ///   signal port. Same ADR-PC-009 walking-skeleton config stand-in shape as the day-count primitive
     ///   <c>string</c> and the <c>EarlyTerminationPolicy</c> value object above; no I/O, nothing to gate.</item>
+    /// <item><c>SettlementTarget</c> — the engine-instance settlement COUNTERPARTY the family stamps on its
+    ///   payout / rollover legs (ADR-PC-043 slot 1, bd babelstone-u79p.2): a closed two-member enum config
+    ///   VALUE (<c>engine-ca</c> | <c>legacy-dda</c>), read into the pure decide→append to select the
+    ///   promoted <c>ce_settlementtarget</c> ROUTING header — HEADER-ONLY, never a synchronous call, never a
+    ///   GL/notify port. Same ADR-PC-009 walking-skeleton config stand-in shape as the <c>EarlyTerminationPolicy</c>
+    ///   value object above; no I/O, nothing to gate.</item>
     /// </list>
     /// </summary>
     private static readonly string[] AllowedDecideAppendDependencies =
     [
         "AggregateRuntime", "IRateSheetStore", "IProductConfigStore", "VerifiedPack",
-        "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
+        "EarlyTerminationPolicy", "string", "IReadOnlyCollection", "SettlementTarget",
     ];
 
     /// <summary>
