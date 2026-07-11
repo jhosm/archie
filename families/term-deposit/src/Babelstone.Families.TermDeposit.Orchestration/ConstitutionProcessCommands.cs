@@ -147,14 +147,28 @@ public sealed record SagaCommandEnvelopeBody : CommandPayload
 /// reference. No PII.</summary>
 public sealed record ReserveAccountBalanceCommand : CommandPayload
 {
-    /// <summary>The opaque account reference to reserve against (a token, not an IBAN). The ACL
-    /// resolves the real account behind the OpenBao boundary.</summary>
+    /// <summary>The opaque account reference to reserve against (a token, not an IBAN). On an
+    /// <c>engine-ca</c> funding leg this is the customer's real conta-à-ordem account_ref (a GUID string —
+    /// <c>AccountRef == AccountId.ToString()</c>), which the engine-CA authorize/hold WRITER reads as the
+    /// destination (ADR-PC-043 §D5 amendment (b)); on a legacy leg the ACL resolves the real account behind
+    /// the OpenBao boundary.</summary>
+    [JsonPropertyName("account_ref")]
     public required string AccountRef { get; init; }
 
     /// <summary>The saga-chosen idempotency reference for THIS reservation — a derived, stable
     /// reference (the process id namespaced for the reserve leg), NOT a minted GUID, so the body
     /// is byte-stable on re-emit and the ACL dedups on it.</summary>
+    [JsonPropertyName("reservation_ref")]
     public required string ReservationRef { get; init; }
+
+    /// <summary>The settlement-COUNTERPARTY discriminator the dispatcher routes on (bd babelstone-u79p.3;
+    /// ADR-PC-043 slots 1–2): <c>engine-ca</c> routes this funding hold to the engine-owned CA authorize
+    /// writer, <c>legacy-dda</c> (or null) to the legacy Core ACL (UNCHANGED). Header-only routing: this is
+    /// the ONLY body field the substrate router reads for the counterparty — never <c>account_ref</c>
+    /// (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b)). Null on a legacy leg so the byte-stable body is
+    /// identical to the pre-ADR-PC-043 shape.</summary>
+    [JsonPropertyName("settlement_target")]
+    public string? SettlementTarget { get; init; }
 
     /// <inheritdoc />
     public override string CommandType => ConstitutionProcess.ReserveAccountBalance;
@@ -182,7 +196,40 @@ public sealed record ConfirmDebitCommand : CommandPayload
 {
     /// <summary>The opaque Core hold reference to confirm (e.g. CORE-HOLD-…). A reference issued
     /// upstream by the ACL on the reserve leg — NOT minted here.</summary>
+    [JsonPropertyName("core_hold_ref")]
     public required string CoreHoldRef { get; init; }
+
+    /// <summary>The opaque destination account_ref the captured debit lands on (bd babelstone-u79p.3/.5;
+    /// ADR-PC-043 §D5 amendment (b)). On an <c>engine-ca</c> funding leg this is the customer's real
+    /// conta-à-ordem account_ref (a GUID string) the engine-CA capture WRITER reads as the destination; the
+    /// value is family-promoted and substrate-forwarded UNTOUCHED (never re-derived). Null on a legacy leg
+    /// (the legacy core resolves the account from the process-scoped business reference), so the byte-stable
+    /// body is identical to the pre-ADR-PC-043 shape.</summary>
+    [JsonPropertyName("account_ref")]
+    public string? AccountRef { get; init; }
+
+    /// <summary>The shared HOLD-LINKING + exactly-once reference (bd babelstone-u79p.3): the SAME derived
+    /// reference the reserve leg used (the reservation reference), so on an <c>engine-ca</c> leg the engine
+    /// ingress reconstructs the SAME deterministic hold the reserve leg's authorize placed
+    /// (<c>target_hold_id = f(intent_reference)</c>) and captures exactly it. Also the ADR-PC-043 slot-4
+    /// axis the CA capture's append command_id derives from. Null on a legacy leg (unchanged).</summary>
+    [JsonPropertyName("intent_reference")]
+    public string? IntentReference { get; init; }
+
+    /// <summary>The captured amount in integer cents — exactly the funded principal (the in-band
+    /// WRONG-AMOUNT guard the engine-CA capture writer enforces, ADR-PC-043 slot 1). Money-as-integer-cents
+    /// on the wire (ADR-PC-010), never a float. Null/zero on a legacy leg (the legacy ACL derives the amount
+    /// from the reserved hold), so the byte-stable body is unchanged there.</summary>
+    [JsonPropertyName("amount_cents")]
+    public long? AmountCents { get; init; }
+
+    /// <summary>The settlement-COUNTERPARTY discriminator the dispatcher routes on (bd babelstone-u79p.3;
+    /// ADR-PC-043 slots 1–2): <c>engine-ca</c> routes this capture to the engine-owned CA capture writer,
+    /// <c>legacy-dda</c> (or null) to the legacy Core ACL. Header-only routing — the ONLY body field the
+    /// substrate router reads for the counterparty (never <c>account_ref</c>; ADR-IC-018 §D5 / ADR-PC-043
+    /// §D5 amendment (b)). Null on a legacy leg (unchanged).</summary>
+    [JsonPropertyName("settlement_target")]
+    public string? SettlementTarget { get; init; }
 
     /// <inheritdoc />
     public override string CommandType => ConstitutionProcess.ConfirmDebit;

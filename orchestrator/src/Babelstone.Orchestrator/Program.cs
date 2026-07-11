@@ -104,6 +104,12 @@ var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
     ?? builder.Configuration.GetConnectionString("Engine")
     ?? "http://localhost:8080";
 var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
+// The engine-OWNED current-account settlement target (bd babelstone-u79p.3; ADR-PC-043). OPTIONAL — when
+// unset, no leg is engine-CA-routed and every settlement command stays on Settlement:BaseUrl (the legacy
+// ACL), so the pre-ADR-PC-043 behaviour is preserved with no config change. The demo/staging bring-up
+// points Settlement:EngineCaBaseUrl at the engine's own command surface so the constitution funding debit
+// (and the substrate settlement legs) reach the engine-CA authorize/capture/credit ingress.
+var engineCaSettlementBaseUrl = builder.Configuration["Settlement:EngineCaBaseUrl"];
 
 // The orchestrator hosts the FAMILY-AGNOSTIC substrate; each concrete saga is a FAMILY-OWNED MODULE
 // (ADR-IC-018 §D1/§D4/§P4). The host — the §D4 composition root, the standing exemption that MAY
@@ -120,7 +126,8 @@ var sagaModuleContext = new SagaModuleContext(
             "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
             "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
     EngineBaseUrl: engineBaseUrl,
-    SettlementBaseUrl: settlementBaseUrl);
+    SettlementBaseUrl: settlementBaseUrl,
+    EngineCaSettlementBaseUrl: engineCaSettlementBaseUrl);
 
 // At v1 this discovers the term-deposit family's TWO modules: the EdgeStarted constitution saga and
 // the EventAutoStarted renewal saga (which starts on the engine's DepositMatured fact with a non-NONE
@@ -300,6 +307,10 @@ builder.Services.AddSingleton(new SagaCommandDispatcherOptions
     ConnectionString = sagaModuleContext.RuntimeConnectionString,
     EngineBaseUrl = engineBaseUrl,
     SettlementBaseUrl = settlementBaseUrl,
+    // The engine-CA settlement counterparty (bd babelstone-u79p.3; ADR-PC-043). Null keeps every leg on the
+    // legacy ACL (SettlementBaseUrl) — the substrate settlement router fails an engine-ca leg closed when it
+    // is unset, so an engine-ca-targeted leg never silently settles on the legacy core.
+    EngineCaSettlementBaseUrl = engineCaSettlementBaseUrl,
 });
 // The routing seam is multi-saga (ADR-IC-018 §D2): each family module contributed its own
 // ISagaCommandRouter via the module loop above (it serves its own saga_type). The CompositeCommandRouter
