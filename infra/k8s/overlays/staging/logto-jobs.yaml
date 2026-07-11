@@ -12,9 +12,9 @@
 # (1) db init — create the `logto` database, then seed the schema (`logto db init` / `db seed`).
 #     CREATE DATABASE cannot run in a transaction and the logto image carries no psql, so an
 #     initContainer (postgres image) creates the DB idempotently (mirrors the orchestrator's
-#     create-DB init), then the main container runs the Logto CLI seed. The seed installs the
-#     OIDC signing key into `oidc.privateKeys` from the OpenBao-held material below, so the key
-#     in the DB is OpenBao material — not image-generated. ttlSecondsAfterFinished lets a
+#     create-DB init), then the main container runs the Logto CLI seed. The seed GENERATES Logto's
+#     own OIDC signing key into `oidc.privateKeys` (Logto owns it, annually rotated in place) — the
+#     key is never injected (ADR-IC-021 amendment 2026-07-11). ttlSecondsAfterFinished lets a
 #     completed Job be recreated cleanly on the next apply (the seed is idempotent).
 apiVersion: batch/v1
 kind: Job
@@ -121,18 +121,14 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: DB_URL
               value: postgres://babelstone:$(LOGTO_DB_PASSWORD)@postgres:5432/logto
-            # Vault KEK + the initial OIDC signing key, both from the OpenBao-seeded Secret —
-            # never inline literals (ADR-PC-004 §A1).
+            # Vault KEK from the OpenBao-seeded Secret — never an inline literal (ADR-PC-004 §A1).
+            # No OIDC_PRIVATE_KEYS: `db seed` GENERATES Logto's own OIDC signing key (Logto owns it,
+            # annually rotated in place) — ADR-IC-021 amendment 2026-07-11 (bd zla1.10.16).
             - name: SECRET_VAULT_KEK
               valueFrom:
                 secretKeyRef:
                   name: babelstone-dev-secrets
                   key: SECRET_VAULT_KEK
-            - name: OIDC_PRIVATE_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: babelstone-dev-secrets
-                  key: OIDC_PRIVATE_KEYS
           resources:
             requests:
               cpu: 100m

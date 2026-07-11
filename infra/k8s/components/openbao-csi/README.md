@@ -126,7 +126,7 @@ CI.
 5. **Populate the KV paths** the SecretProviderClass reads (values NEVER
    committed):
    - `secret/data/babelstone/postgres` → `password`
-   - `secret/data/babelstone/logto` → `secret_vault_kek`, `oidc_private_keys`
+   - `secret/data/babelstone/logto` → `secret_vault_kek`
    - `secret/data/babelstone/engine-approle` → `role_id`, `secret_id`
    - `secret/data/babelstone/engine-transit` → `token`
    - `secret/data/Engine` → `Engine` (the engine's DB connection string — the

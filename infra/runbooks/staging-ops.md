@@ -88,7 +88,6 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
      --from-literal=OPENBAO_DEV_TOKEN="<real OpenBao token — never 'root'>" \
      --from-literal=SECRET_VAULT_KEK="$(openssl rand -base64 32)" \
-     --from-file=OIDC_PRIVATE_KEYS=<real PKCS#8 EC P-256 signing key file> \
      --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>" \
      --from-literal=LOGTO_MISSION_CONTROL_CLIENT_SECRET="<the Logto mission-control app client secret>" \
      --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)" \
@@ -97,14 +96,11 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      --from-literal=MC_READONLY_DB_PASSWORD="$(openssl rand -base64 24)"
    ```
 
-   > **`OIDC_PRIVATE_KEYS` MUST be a PKCS#8 key (`-----BEGIN PRIVATE KEY-----`), NOT SEC1
-   > (`-----BEGIN EC PRIVATE KEY-----`).** Logto/jose derive the signing algorithm reliably only from
-   > PKCS#8; a SEC1 EC key makes Logto's admin-console client default to RS256 while the EC provider
-   > signs ES256-only, so the console login fails with `id_token_signed_response_alg must be 'ES256'`
-   > (bd babelstone-zla1.10.16). `cd-secret-preflight.sh` now fails the deploy loud on a SEC1 key.
-   > Generate a correct one with `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out
-   > oidc.pem` (emits PKCS#8), or convert an existing SEC1 key **losslessly** (same key material) with
-   > `openssl pkcs8 -topk8 -nocrypt -in sec1.pem -out oidc.pem`.
+   > **No `OIDC_PRIVATE_KEYS` is provisioned.** Logto **generates and owns** its own OIDC signing key
+   > (`oidc.privateKeys`, created by `db seed`, persisted in Logto's DB, annually rotated in place) —
+   > it is not injected. An operator-injected key broke the admin console (`id_token_signed_response_alg
+   > must be 'ES256'`); a Logto-generated one works, and nothing else reads the OIDC signing key
+   > (ADR-IC-021 amendment 2026-07-11, bd babelstone-zla1.10.16).
 
    `MC_READONLY_DB_PASSWORD` (bd zla1.17.3) is the password for the dedicated read-only Postgres
    role `babelstone_readonly` that Mission Control's Outbox·Inbox `/pg` lens connects as: the
@@ -129,8 +125,8 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
    keys (Mission Control / Backstage each sign their own session cookie with one — NOT a Logto value),
    so mint them with `openssl rand` as shown. Rotating one invalidates that app's live sessions.
 
-   > **Keep three keys identical across both stores (cross-store consistency).** With the engine's
-   > `OpenBao__Enabled=true`, `POSTGRES_PASSWORD`, `SECRET_VAULT_KEK`, and `OIDC_PRIVATE_KEYS` **also**
+   > **Keep these keys identical across both stores (cross-store consistency).** With the engine's
+   > `OpenBao__Enabled=true`, `POSTGRES_PASSWORD` and `SECRET_VAULT_KEK` **also**
    > live in OpenBao KV (`secret/data/babelstone/{postgres,logto}`), seeded during OpenBao init (step 7).
    > Set them to the **same values** in both stores, or a rotation drifts into split-brain. In
    > particular, the password inside the engine's OpenBao connection string (`secret/data/Engine`) **MUST
