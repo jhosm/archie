@@ -40,9 +40,21 @@ check_decision() {
   if [ "$(printf '%s\n' "$base_content" | extract_decision | strip_links)" = "$(extract_decision < "$wf" | strip_links)" ]; then
     echo "ok (Decision prose unchanged; link hrefs normalised): $wf"; return 0
   fi
-  if git diff "${base}...HEAD" -- "$@" | grep '^+' | grep -qiE 'revised|amendment|amended|superseded by'; then
+  # Match the amendment/supersession keywords in the added ('+') lines of this ADR's diff.
+  # Split to a tmp file rather than piping `grep '^+' | grep -qiE …` directly: on a LARGE
+  # amendment `grep -qiE` closes the pipe on its first match while the upstream `grep '^+'`
+  # is still writing, so the upstream takes SIGPIPE (141); under `set -o pipefail` that 141
+  # became the whole `if` pipeline's status and read as a false NON-match — a deterministic
+  # false-fail on exactly the big, legitimate amendments this gate must let through
+  # (bd babelstone-2t16.33). Decoupling the two greps removes the pipe, so no SIGPIPE, while
+  # preserving the exact matching semantics (same keyword set, same case-insensitivity).
+  local added_lines; added_lines="$(mktemp)"
+  git diff "${base}...HEAD" -- "$@" | grep '^+' > "$added_lines" || true
+  if grep -qiE 'revised|amendment|amended|superseded by' "$added_lines"; then
+    rm -f "$added_lines"
     echo "ok (Decision changed WITH amendment/supersession): $wf"; return 0
   fi
+  rm -f "$added_lines"
   echo "::error file=${wf}::ADR-PC-000 §D5: '$wf' is Accepted and its '## Decision' changed with no dated amendment or supersession in this PR. Append a '*Revised YYYY-MM-DD: …*' amendment, or supersede with a new ADR."
   status=1
 }
