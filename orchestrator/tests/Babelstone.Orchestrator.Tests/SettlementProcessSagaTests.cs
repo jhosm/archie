@@ -49,6 +49,16 @@ public sealed class SettlementProcessSagaTests
     }
 
     [Fact]
+    public void A_declined_confirm_debit_parks_in_HIR_with_no_compensation_command()
+    {
+        // The irreversible debit was DECLINED (a 4xx business decline). The money did NOT move, so — exactly
+        // as a refused reserve — the CONFIRM leg self-advances to a fail-closed HIR park, emitting NO reversal
+        // command (ADR-PC-043 §Error model; ADR-IC-003 §P6). Previously only the reserve-leg decline did this.
+        AssertTransition(SettlementProcess.States.ConfirmingDebit, SettlementProcess.DebitDeclined,
+            SettlementProcess.States.HumanInterventionRequired);
+    }
+
+    [Fact]
     public void An_indeterminate_debit_enters_clearance_and_resolves_both_ways()
     {
         // 202 INDETERMINATE -> park in the first-class wait + emit the clearance query (never blind-retry).
@@ -80,6 +90,17 @@ public sealed class SettlementProcessSagaTests
         // confirm state (the funds-gated asymmetry of ADR-PC-016 slot 5).
         Assert.False(_machine.TryAdvance(
             SettlementProcess.States.SettlementStarted, SettlementProcess.ReserveAccountBalance, out _));
+    }
+
+    [Fact]
+    public void A_declined_confirm_credit_parks_in_HIR_with_no_compensation_command()
+    {
+        // A credit confirm can be DECLINED against the engine-owned CA counterparty (a 4xx business decline).
+        // The money did NOT move, so the credit CONFIRM leg self-advances to a fail-closed HIR park, emitting
+        // NO reversal command — the credit-path counterpart of the refused-reserve edge (ADR-PC-043 §Error
+        // model; ADR-IC-003 §P6).
+        AssertTransition(SettlementProcess.States.ConfirmingCredit, SettlementProcess.CreditDeclined,
+            SettlementProcess.States.HumanInterventionRequired);
     }
 
     [Fact]
@@ -209,6 +230,9 @@ public sealed class SettlementProcessSagaTests
             SettlementResultEvents.ForOutcome(SettlementProcess.ReserveAccountBalance, CommandDeliveryKind.Refused));
         Assert.Equal(SettlementProcess.DebitConfirmed,
             SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmDebit, CommandDeliveryKind.Applied));
+        // A declined confirm-debit (a 4xx business decline) -> DebitDeclined -> HIR (ADR-PC-043 §Error model).
+        Assert.Equal(SettlementProcess.DebitDeclined,
+            SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmDebit, CommandDeliveryKind.Refused));
         Assert.Equal(SettlementProcess.DebitIndeterminate,
             SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate));
         Assert.Equal(SettlementProcess.DebitClearedExecuted,
@@ -222,6 +246,9 @@ public sealed class SettlementProcessSagaTests
     {
         Assert.Equal(SettlementProcess.CreditConfirmed,
             SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmCredit, CommandDeliveryKind.Applied));
+        // A declined confirm-credit (a 4xx business decline) -> CreditDeclined -> HIR (ADR-PC-043 §Error model).
+        Assert.Equal(SettlementProcess.CreditDeclined,
+            SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmCredit, CommandDeliveryKind.Refused));
         Assert.Equal(SettlementProcess.CreditIndeterminate,
             SettlementResultEvents.ForOutcome(SettlementProcess.ConfirmCredit, CommandDeliveryKind.Indeterminate));
         Assert.Equal(SettlementProcess.CreditClearedExecuted,

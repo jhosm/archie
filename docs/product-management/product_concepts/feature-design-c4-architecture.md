@@ -534,6 +534,7 @@ stateDiagram-v2
     RESERVING --> CONFIRMING_DEBIT : BalanceReserved / ConfirmDebit
     RESERVING --> HUMAN_INTERVENTION_REQUIRED : ReserveRefused (no hold to release)
     CONFIRMING_DEBIT --> SETTLEMENT_COMPLETED : DebitConfirmed
+    CONFIRMING_DEBIT --> HUMAN_INTERVENTION_REQUIRED : DebitDeclined (4xx decline; money did not move)
     CONFIRMING_DEBIT --> AWAIT_DEBIT_CLEARANCE : DebitIndeterminate / QueryCoreDebitStatus
     AWAIT_DEBIT_CLEARANCE --> SETTLEMENT_COMPLETED : DebitClearedExecuted
     AWAIT_DEBIT_CLEARANCE --> CONFIRMING_DEBIT : DebitClearedNotExecuted / ConfirmDebit
@@ -542,6 +543,7 @@ stateDiagram-v2
     %% === CREDIT path — confirmation-gated only: a single Confirm ===
     SETTLEMENT_STARTED --> CONFIRMING_CREDIT : CreditMovementOriginated / ConfirmCredit
     CONFIRMING_CREDIT --> SETTLEMENT_COMPLETED : CreditConfirmed
+    CONFIRMING_CREDIT --> HUMAN_INTERVENTION_REQUIRED : CreditDeclined (4xx decline; money did not move)
     CONFIRMING_CREDIT --> AWAIT_CREDIT_CLEARANCE : CreditIndeterminate / QueryCoreCreditStatus
     AWAIT_CREDIT_CLEARANCE --> SETTLEMENT_COMPLETED : CreditClearedExecuted
     AWAIT_CREDIT_CLEARANCE --> CONFIRMING_CREDIT : CreditClearedNotExecuted / ConfirmCredit

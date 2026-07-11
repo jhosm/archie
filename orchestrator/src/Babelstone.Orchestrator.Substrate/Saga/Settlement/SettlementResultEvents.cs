@@ -26,9 +26,11 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// </para>
 /// <para>
 /// <b>Failures escalate, NEVER compensate (ADR-IC-003 §P6).</b> A refused reserve maps to
-/// <see cref="SettlementProcess.ReserveRefused"/> (→ HIR, no hold to release); a clearance that cannot
-/// resolve maps to <see cref="SettlementProcess.ClearanceFailed"/> (→ HIR). The fact is durable
-/// append-first, so the saga parks rather than inventing an undo.
+/// <see cref="SettlementProcess.ReserveRefused"/> (→ HIR, no hold to release); a declined confirm on either
+/// direction maps to <see cref="SettlementProcess.DebitDeclined"/> /
+/// <see cref="SettlementProcess.CreditDeclined"/> (→ HIR, the money did not move — ADR-PC-043 §Error model);
+/// a clearance that cannot resolve maps to <see cref="SettlementProcess.ClearanceFailed"/> (→ HIR). The fact
+/// is durable append-first, so the saga parks rather than inventing an undo.
 /// </para>
 /// <para>
 /// <b>Pure and drift-free (ADR-PC-010 §P5).</b> A function of the command type and the delivery kind alone
@@ -53,6 +55,9 @@ public static class SettlementResultEvents
         (SettlementProcess.ReserveAccountBalance, CommandDeliveryKind.Refused) => SettlementProcess.ReserveRefused,
         // The irreversible debit cleared.
         (SettlementProcess.ConfirmDebit, CommandDeliveryKind.Applied) => SettlementProcess.DebitConfirmed,
+        // The debit was DECLINED (a 4xx business decline) -> park (the money did not move, §P6) — the
+        // CONFIRM-leg counterpart of the refused-reserve edge (ADR-PC-043 §Error model).
+        (SettlementProcess.ConfirmDebit, CommandDeliveryKind.Refused) => SettlementProcess.DebitDeclined,
         // The debit returned INDETERMINATE (HTTP 202 reinterpreted by ClassifyResponse) -> debit clearance.
         (SettlementProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate) => SettlementProcess.DebitIndeterminate,
         // The debit clearance query resolved: 2xx -> executed (late confirm); 4xx -> not executed (reissue).
@@ -62,6 +67,9 @@ public static class SettlementResultEvents
         // --- Credit path (the NEW confirmation-gated surface) -----------------------------------------
         // The credit confirmed.
         (SettlementProcess.ConfirmCredit, CommandDeliveryKind.Applied) => SettlementProcess.CreditConfirmed,
+        // The credit was DECLINED (a 4xx business decline against the engine-owned CA counterparty) -> park
+        // (the money did not move, §P6) — the credit-path counterpart of the refused-reserve edge.
+        (SettlementProcess.ConfirmCredit, CommandDeliveryKind.Refused) => SettlementProcess.CreditDeclined,
         // The credit returned INDETERMINATE -> credit clearance (never silent — feature-design §10).
         (SettlementProcess.ConfirmCredit, CommandDeliveryKind.Indeterminate) => SettlementProcess.CreditIndeterminate,
         // The credit clearance query resolved: 2xx -> executed (late confirm); 4xx -> not executed (reissue).

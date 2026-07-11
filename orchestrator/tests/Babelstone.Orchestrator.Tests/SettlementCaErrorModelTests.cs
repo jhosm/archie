@@ -28,7 +28,9 @@ namespace Babelstone.Orchestrator.Tests;
 /// verdict throws <c>DomainRejectedException</c> → HTTP 422, never a 200-with-<c>Declined</c> body the
 /// dispatcher would mis-read as <c>Applied</c>) is pinned family-side by the CurrentAccount.Application decline
 /// tests (CurrentAccountCreditAdmissionTests / CurrentAccountCaptureTests); here we pin the SAGA half — that a
-/// 4xx decline drives ReserveRefused → HIR, and that the SCA re-challenge is held retriable instead.
+/// 4xx decline on ANY money-mover leg (the reserve leg via ReserveRefused, AND the irreversible confirm legs
+/// via DebitDeclined / CreditDeclined) drives the saga to HIR, and that the SCA re-challenge is held retriable
+/// instead.
 /// </para>
 /// </remarks>
 public sealed class SettlementCaErrorModelTests
@@ -74,6 +76,33 @@ public sealed class SettlementCaErrorModelTests
         Assert.False(_machine.IsTerminal(SettlementProcess.States.HumanInterventionRequired));
         // ...and it is emphatically NOT the completed terminal: a declined reserve NEVER marches to
         // SETTLEMENT_COMPLETED with zero landing.
+        Assert.NotEqual(SettlementProcess.States.SettlementCompleted, outcome.Next);
+    }
+
+    [Theory]
+    [InlineData("ConfirmDebit")]  // the irreversible debit capture
+    [InlineData("ConfirmCredit")] // the irreversible credit confirm (engine-owned CA counterparty)
+    public void SETTLEMENT_CA_DECLINE_IS_4XX_a_declined_CONFIRM_leg_also_parks_in_HIR(string confirmCommand)
+    {
+        // The CONFIRM leg — not just the reserve leg — must self-advance to HIR on a genuine business decline
+        // (ADR-PC-043 §Error model; the class remarks pin "a 4xx decline drives the saga to HIR"). Previously
+        // ONLY the reserve-leg decline had a table edge; a declined confirm was a graceful no-op that left the
+        // saga stuck in CONFIRMING_*. This pins the closed loop: Refused → Declined result event → HIR park.
+        var (confirmState, confirmedRefusedEvent) = confirmCommand == SettlementProcess.ConfirmDebit
+            ? (SettlementProcess.States.ConfirmingDebit, SettlementProcess.DebitDeclined)
+            : (SettlementProcess.States.ConfirmingCredit, SettlementProcess.CreditDeclined);
+
+        // The bridge turns a Refused confirm into the direction's Declined signal (the confirm-leg counterpart
+        // of ReserveRefused).
+        var resultEvent = SettlementResultEvents.ForOutcome(confirmCommand, CommandDeliveryKind.Refused);
+        Assert.Equal(confirmedRefusedEvent, resultEvent);
+
+        // ...and the table drives it from CONFIRMING_* → HUMAN_INTERVENTION_REQUIRED with NO compensation
+        // command (the money did not move — ADR-IC-003 §P6).
+        Assert.True(_machine.TryAdvance(confirmState, confirmedRefusedEvent, out var outcome));
+        Assert.Equal(SettlementProcess.States.HumanInterventionRequired, outcome.Next);
+        Assert.Empty(outcome.Commands);
+        // Emphatically NOT the completed terminal: a declined confirm NEVER silently marches to COMPLETED.
         Assert.NotEqual(SettlementProcess.States.SettlementCompleted, outcome.Next);
     }
 

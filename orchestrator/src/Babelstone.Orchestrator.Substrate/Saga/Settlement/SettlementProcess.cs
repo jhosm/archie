@@ -88,10 +88,26 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     /// debit path).</summary>
     public const string DebitConfirmed = "DebitConfirmed";
 
+    /// <summary>Core ACL: the irreversible debit was DECLINED — the receiver refused the capture with a 4xx
+    /// business decline (ADR-PC-043 §Error model; the <see cref="SettlementDeliveryDisposition.Decline"/>
+    /// arm). The money did NOT move, so — exactly as a refused reserve — the saga parks fail-closed in
+    /// HUMAN_INTERVENTION_REQUIRED with NO compensation (ADR-IC-003 §P6). This is the CONFIRM-leg counterpart
+    /// of <see cref="ReserveRefused"/>: previously only the reserve-leg decline self-advanced the saga to
+    /// HIR; a declined confirm now does too.</summary>
+    public const string DebitDeclined = "DebitDeclined";
+
     /// <summary>Core ACL: the credit was confirmed — the credit leg cleared (the happy terminal of the
     /// credit path). The legacy Core always accepts a credit, but it must confirm for reconciliation
     /// flow 1 (ADR-PC-016 slot 5).</summary>
     public const string CreditConfirmed = "CreditConfirmed";
+
+    /// <summary>Core ACL: the credit confirm was DECLINED — the receiver refused with a 4xx business decline
+    /// (ADR-PC-043 §Error model; the <see cref="SettlementDeliveryDisposition.Decline"/> arm). The money did
+    /// NOT move, so the saga parks fail-closed in HUMAN_INTERVENTION_REQUIRED with NO compensation
+    /// (ADR-IC-003 §P6) — the CONFIRM-leg counterpart of <see cref="ReserveRefused"/> on the credit path.
+    /// (A DECLINED credit is possible against the engine-owned CA counterparty, whose settlement-facing
+    /// surface shapes a closed/frozen destination as a 4xx — ADR-PC-043 slot 5.)</summary>
+    public const string CreditDeclined = "CreditDeclined";
 
     /// <summary>Core ACL: the ConfirmDebit returned INDETERMINATE (HTTP 202) — the network dropped after
     /// the debit was sent, so the ACL cannot yet confirm whether the Core executed it (ADR-IC-012 §P5). The
@@ -181,6 +197,10 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
         // The irreversible debit cleared -> done.
         yield return ((States.ConfirmingDebit, DebitConfirmed),
             TransitionOutcome.To(States.SettlementCompleted));
+        // The debit was DECLINED (a 4xx business decline) -> park: the money did NOT move, so — exactly as a
+        // refused reserve — escalate fail-closed, never compensate (ADR-PC-043 §Error model; ADR-IC-003 §P6).
+        yield return ((States.ConfirmingDebit, DebitDeclined),
+            TransitionOutcome.To(States.HumanInterventionRequired));
         // The debit returned INDETERMINATE -> park in the first-class wait + emit the clearance query.
         yield return ((States.ConfirmingDebit, DebitIndeterminate),
             TransitionOutcome.To(States.AwaitDebitClearance, QueryCoreDebitStatus));
@@ -203,6 +223,11 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
         // The credit confirmed -> done.
         yield return ((States.ConfirmingCredit, CreditConfirmed),
             TransitionOutcome.To(States.SettlementCompleted));
+        // The credit was DECLINED (a 4xx business decline against the engine-owned CA counterparty) -> park:
+        // the money did NOT move, so escalate fail-closed, never compensate (ADR-PC-043 §Error model;
+        // ADR-IC-003 §P6) — the credit-path counterpart of the reserve-refused edge.
+        yield return ((States.ConfirmingCredit, CreditDeclined),
+            TransitionOutcome.To(States.HumanInterventionRequired));
         // The credit returned INDETERMINATE -> park + emit the credit clearance query (NEVER silent — the
         // new credit-clearance surface, feature-design §10).
         yield return ((States.ConfirmingCredit, CreditIndeterminate),
@@ -321,9 +346,12 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
         /// <c>4xx</c> by the settlement-facing CA surface — never a 200-with-<c>Declined</c> body the
         /// dispatcher would mis-read as <see cref="CommandDeliveryKind.Applied"/>). The dispatcher treats it
         /// as the substrate's terminal <see cref="CommandDeliveryKind.Refused"/>: the outbox row flips FAILED
-        /// (loud, never a silent COMPLETED; no compensation — the money did not move, ADR-IC-003). On the
-        /// reserve leg the bridge additionally self-advances <see cref="ReserveAccountBalance"/>+Refused →
-        /// <see cref="ReserveRefused"/> → a park in <see cref="States.HumanInterventionRequired"/>.</summary>
+        /// (loud, never a silent COMPLETED; no compensation — the money did not move, ADR-IC-003). On EVERY
+        /// money-mover leg the bridge additionally self-advances the saga to a park in
+        /// <see cref="States.HumanInterventionRequired"/>: the reserve leg via
+        /// <see cref="ReserveAccountBalance"/>+Refused → <see cref="ReserveRefused"/>, and the irreversible
+        /// confirm legs via <see cref="ConfirmDebit"/>/<see cref="ConfirmCredit"/>+Refused →
+        /// <see cref="DebitDeclined"/>/<see cref="CreditDeclined"/>.</summary>
         Decline,
     }
 
