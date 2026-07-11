@@ -397,3 +397,53 @@ Cloudflare Zero Trust dashboard, apply the manifest, point the CNAMEs at the tun
 `firewall-web.sh --apply`, then verify a spoofed-`Host` request to the origin IP (the node's
 public IP, resolved at run time — never hardcode it) is refused host-by-host — see
 [`bootstrap/README.md`](../k8s/overlays/staging/bootstrap/README.md) "Apply order" steps 6-8.
+
+## 9. Enable internal mTLS on the engine/orchestrator hops (bd babelstone-zla1.12.25)
+
+In plain English: the in-cluster callers (the saga dispatcher, notification, mcp-server, the
+Mission Control BFF) already dial the engine/orchestrator over **https and present a client
+certificate** — but the engine and orchestrator still serve **plain HTTP**, so those hops fail
+(this is why Mission Control shows `live·engine · unreachable` / a 502 on `/v1`). The server-side
+code to accept + validate those client certs has **landed** (each host's `InternalMtls` pins the
+internal CA); what remains is a one-window operator flip to turn the servers' TLS on. Because the
+callers are already on https, the flip must land **atomically** — the moment the servers serve
+TLS, every hop starts working; until then they 502.
+
+This is a **coordinated maintenance window** — do all steps together, and be ready to roll back
+(re-comment the patch) if a hop stays broken.
+
+1. **Apply the bootstrap certs** (out-of-band — cert-manager CRDs are not in the kustomize build):
+   ```bash
+   kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/mcp-mtls.yaml       # the mcp-mtls-ca Issuer (prereq)
+   kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/internal-mtls.yaml  # engine/orchestrator server + caller client certs
+   kubectl -n babelstone-staging wait --for=condition=Ready certificate/engine-tls certificate/orchestrator-tls --timeout=120s
+   ```
+2. **Deploy engine + orchestrator images** built from a commit that carries the server-side trust
+   code (bd babelstone-zla1.12.25). Confirm the running images post-date the merge, else
+   `RequireCertificate` validates against the system store and rejects every caller.
+3. **Uncomment the patch** — flip `# - path: internal-mtls.patch.yaml` → `- path: …` in
+   [`overlays/staging/kustomization.yaml`](../k8s/overlays/staging/kustomization.yaml) and deploy
+   the overlay. The engine/orchestrator now bind HTTPS + require a client cert; the tcpSocket
+   probes still pass.
+4. **Re-run `deck-sync`** so Kong flips `tls_verify: true` and presents its internal-CA client
+   cert on the engine/orchestrator upstreams:
+   ```bash
+   scripts/deck-sync.sh    # via kubectl port-forward to the Kong Admin loopback (see §7 / kong-admin-localhost)
+   ```
+   ⚠️ **Kong caveat:** on staging `deck-sync` is normally skipped (the `-dev` OpenBao holds no real
+   edge material), so Kong keeps its committed **POC** client cert. If that cert does not chain to
+   `mcp-mtls-ca`, the Kong→engine hops (e.g. the lifecycle-driver route) will be rejected once the
+   engine requires a cert. Confirm Kong presents an internal-CA-signed client cert **before** the
+   flip, or expect those specific hops to break until it does.
+5. **Verify** — positive: a properly-provisioned caller succeeds over mTLS and a constitution saga
+   reaches `COMPLETED`; Mission Control's `/v1` probe returns 200 (`live·engine · reachable`).
+   Negative: a cert-less caller is refused at the handshake.
+   ```bash
+   # from a caller pod — mounted client cert succeeds, no cert is refused at the handshake:
+   kubectl -n babelstone-staging exec deploy/mission-control -- sh -c \
+     'curl -sS -o /dev/null -w "with-cert=%{http_code}\n" --cacert /certs/ca.crt --cert /certs/tls.crt --key /certs/tls.key https://engine:8080/v1/deposits/maturities?from=2000-01-01\&to=2000-01-02;
+      curl -sS -o /dev/null -w "no-cert=%{http_code}\n" --cacert /certs/ca.crt https://engine:8080/v1/ || echo "no-cert refused (expected)"'
+   ```
+   **Rollback:** re-comment the patch in `kustomization.yaml` and redeploy — the servers revert to
+   plain HTTP and the (still-https) callers 502 again, so this is a return to the pre-flip state,
+   not a clean recovery; only roll back if the flip itself is the problem.

@@ -1,12 +1,18 @@
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.Configuration;
 
 namespace Babelstone.Orchestrator;
 
 /// <summary>
-/// Caller-side internal mTLS for the orchestrator's outbound HTTP hops (bd babelstone-zla1.12.10;
-/// ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)).
+/// Internal mTLS for the orchestrator's engine/orchestrator hops (ADR-IC-006 §P5 Boundary 2 /
+/// ADR-IC-016 plane (i)): the caller side <see cref="BuildHandler"/> for its outbound dispatcher hop
+/// (bd babelstone-zla1.12.10), and the server side <see cref="ConfigureKestrel"/> for its own Kestrel
+/// saga edge (bd babelstone-zla1.12.25, commitment <c>SVC_ENGINE_ORCH_MTLS</c>). Both pin the SAME
+/// internal CA.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -104,20 +110,66 @@ internal static class InternalMtls
     }
 
     /// <summary>
-    /// Validate a server certificate by chaining it to the pinned internal CA. Any policy error other
-    /// than an untrusted-root chain (which is EXPECTED — the CA is not in the system store) fails the
+    /// Require + CA-pin-validate a client certificate on the orchestrator's HTTPS endpoints (the saga
+    /// 202 + SSE edge). Sets <see cref="ClientCertificateMode.RequireCertificate"/> and installs the
+    /// pinned-CA <see cref="HttpsConnectionAdapterOptions.ClientCertificateValidation"/> callback as the
+    /// Kestrel HTTPS defaults, so it applies to the config-defined HTTPS endpoint
+    /// (Kestrel__Endpoints__Https__*). The transport bind stays config-driven; only the client-cert
+    /// policy is code. Throws <see cref="InvalidOperationException"/> if called without a CA configured.
+    /// </summary>
+    internal static void ConfigureKestrel(IWebHostBuilder webHost, IConfiguration configuration)
+    {
+        var validate = BuildClientCertificateValidation(configuration);
+        webHost.ConfigureKestrel(kestrel =>
+            kestrel.ConfigureHttpsDefaults(https =>
+            {
+                https.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+                https.ClientCertificateValidation = validate;
+            }));
+    }
+
+    /// <summary>
+    /// Build the Kestrel client-certificate validation delegate for the orchestrator's SERVER surface —
+    /// the saga 202 + SSE edge that Kong and Mission Control dial (bd babelstone-zla1.12.25). Accepts a
+    /// presented client cert only when it chains to the configured internal CA (pinned trust), never the
+    /// ambient system store — the inbound mirror of the outbound <see cref="BuildHandler"/>, reusing the
+    /// identical pinned-CA check. The CA is loaded once here and captured by the returned callback.
+    /// Throws <see cref="InvalidOperationException"/> if called without a CA configured — call
+    /// <see cref="IsConfigured"/> first.
+    /// </summary>
+    internal static Func<X509Certificate2, X509Chain?, SslPolicyErrors, bool> BuildClientCertificateValidation(
+        IConfiguration configuration)
+    {
+        var caCertPath = configuration[CaCertPathKey];
+        if (string.IsNullOrWhiteSpace(caCertPath))
+        {
+            throw new InvalidOperationException(
+                $"Internal mTLS is not configured: set '{CaCertPathKey}' to the internal CA PEM path "
+                + "before configuring the mTLS listener (call InternalMtls.IsConfigured first).");
+        }
+
+        // The pinned trust anchor: the internal CA every valid caller's client cert MUST chain to. The
+        // container's system trust store is deliberately NOT consulted (it does not carry this CA).
+        var caCertificate = X509CertificateLoader.LoadCertificateFromFile(caCertPath);
+        return (clientCert, _, sslPolicyErrors) => ValidateAgainstInternalCa(clientCert, sslPolicyErrors, caCertificate);
+    }
+
+    /// <summary>
+    /// Validate a peer certificate by chaining it to the pinned internal CA — the server cert on the
+    /// outbound dispatcher hop, or the presented client cert on the inbound saga edge. Any policy error
+    /// other than an untrusted-root chain (EXPECTED — the CA is not in the system store) fails the
     /// handshake; the untrusted-root case is resolved by rebuilding the chain with the internal CA as
     /// the sole custom trust root.
     /// </summary>
     private static bool ValidateAgainstInternalCa(
-        X509Certificate? serverCert, SslPolicyErrors sslPolicyErrors, X509Certificate2 caCertificate)
+        X509Certificate? peerCert, SslPolicyErrors sslPolicyErrors, X509Certificate2 caCertificate)
     {
-        if (serverCert is null)
+        if (peerCert is null)
         {
             return false;
         }
 
-        // A name mismatch or a total absence of a cert is never acceptable, regardless of the CA.
+        // Any error beyond an untrusted-root chain (e.g. a server-hop name mismatch) is never acceptable.
         if ((sslPolicyErrors & ~SslPolicyErrors.RemoteCertificateChainErrors) != SslPolicyErrors.None)
         {
             return false;
@@ -127,6 +179,6 @@ internal static class InternalMtls
         chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         chain.ChainPolicy.CustomTrustStore.Add(caCertificate);
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-        return chain.Build(new X509Certificate2(serverCert));
+        return chain.Build(new X509Certificate2(peerCert));
     }
 }

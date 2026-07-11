@@ -28,6 +28,20 @@ using OpenTelemetry.Trace;
 // orchestrator subtree stays extraction-ready (ADR-PC-019 §P2).
 var builder = WebApplication.CreateBuilder(args);
 
+// Server-side internal mTLS on the saga edge (bd babelstone-zla1.12.25; ADR-IC-006 §P5 Boundary 2 /
+// ADR-IC-016 plane (i), commitment SVC_ENGINE_ORCH_MTLS): when configured, the orchestrator's Kestrel
+// host — the 202 + SSE front door Kong and Mission Control dial — REQUIRES a client cert and validates
+// it by chaining to the pinned internal CA, the SERVER half of the caller-side dispatcher leg (bd
+// babelstone-zla1.12.10) wired below. Gated on the SAME InternalMtls:CaCertPath as that outbound leg,
+// so both turn on together in one maintenance window (internal-mtls.patch.yaml's ROLLOUT ORDER —
+// caller and server flip together) and demo/local/test stay plain HTTP. The HTTPS transport (endpoint
+// URL + server cert) stays config-driven; only the require+validate policy is code — the orchestrator
+// holds no engine-kernel reference (ADR-PC-019 §P2).
+if (InternalMtls.IsConfigured(builder.Configuration))
+{
+    InternalMtls.ConfigureKestrel(builder.WebHost, builder.Configuration);
+}
+
 // OpenTelemetry tracing (ADR-IC-007 Layer 1, H.5): turn ON the tracer for this host. The saga
 // substrate already opens saga-advance spans on the shared Babelstone.Engine ActivitySource and
 // threads the W3C traceparent through the saga outbox + Kafka headers — but with NO TracerProvider

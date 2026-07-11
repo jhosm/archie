@@ -13,6 +13,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Expose internals to the host's own test project so the server-side internal-mTLS validator
+         (InternalMtls, bd babelstone-zla1.12.25) can be unit-tested directly. -->
+    <InternalsVisibleTo Include="Babelstone.Engine.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The engine's command/query HTTP boundary (ADR-PC-021 §D5, realized in E.5; the
          RateSheets.Api minimal-API precedent, ADR-PC-008 Amendment A1). It composes the
          term-deposit decider (Babelstone.Families.TermDeposit.Application) over the durable
