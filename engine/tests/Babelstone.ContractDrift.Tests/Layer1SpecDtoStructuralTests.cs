@@ -134,6 +134,11 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AccountCommandResponse", typeof(Account.AccountCommandResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeResponse", typeof(Account.AuthorizeResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "AccountResponse", typeof(Account.AccountResponse), Mode.Response },
+        // The movement-statement read (GET /v1/accounts/{id}/movements, ADR-PC-032): the folded
+        // MovementsResponse whose movements array carries the MovementView line shape — both locked to the
+        // current_account Application DTOs.
+        { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "MovementsResponse", typeof(Account.MovementsResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "MovementView", typeof(Account.MovementView), Mode.Response },
 
         // NOT here, deliberately:
         //  * RateBand — its wire shape is OWNED by RateBandJsonConverter (the [lower, upper]

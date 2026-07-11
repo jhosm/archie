@@ -79,6 +79,39 @@ paths:
           description: >
             No account resource — the stream is still Pending (no open appended yet) or does not
             exist (the resource does not exist; never a phantom empty account).
+  /v1/accounts/{id}/movements:
+    get:
+      operationId: getAccountMovements
+      summary: The account's movement statement.
+      description: >
+        The account's recorded movement lines in stable (stream, sequence, index) order — a read over the
+        SPINE-owned movement ledger (AccountBalanceReader, keyed by the account_ref): the SAME fold the
+        accounting balance sums, here exposed as its individual lines (ADR-PC-032). Read-only. Returns 404
+        while the account is still Pending (no AccountOpened appended yet) or the stream does not exist —
+        never a phantom empty statement; a live account with no posted movements reads an empty movements
+        array. Each line carries STRUCTURAL columns only (direction, integer-cents amount, value date,
+        closed-enum operation / origin names) — no PII (ADR-PC-004 §P2).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >
+            The account's raw stream id (a canonical UUID) — the same id form the account command
+            surface and the point-read take.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The account's movement statement (money as integer cents).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementsResponse'
+        '404':
+          description: >
+            No account resource — the stream is still Pending (no open appended yet) or does not
+            exist (never a phantom empty statement).
 components:
   schemas:
     AccountResponse:
@@ -181,3 +214,69 @@ components:
           type: string
           format: date
           description: A legal hold's advisory expiry horizon; null = open-ended or an authorization hold.
+    MovementsResponse:
+      type: object
+      description: >
+        The account movement-statement resource (MovementsResponse, ADR-PC-032). The account id and the
+        ordered movement lines are read from the spine-owned movement ledger (AccountBalanceReader), keyed
+        by the opaque account_ref — the SAME fold the accounting balance sums, here exposed as its lines.
+        snake_case on the wire, money as integer cents (ADR-PC-010 §P1), no PII (ADR-PC-004 §P2) — the
+        account id is an opaque instance reference and each line is structural.
+      required:
+        - account_id
+        - movements
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id / opaque account_ref.
+        movements:
+          type: array
+          description: The account's recorded movement lines in stable (stream, sequence, index) order; empty when the account has no posted movements.
+          items:
+            $ref: '#/components/schemas/MovementView'
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          movements:
+            - direction: Credit
+              amount_cents: 150000
+              value_date: "2026-03-01"
+              operation: Disburse
+              origin: Originated
+            - direction: Debit
+              amount_cents: 30000
+              value_date: "2026-03-05"
+              operation: CollectInstallment
+              origin: Originated
+    MovementView:
+      type: object
+      description: >
+        One recorded movement line on the account statement (MovementView) — a read shape over the
+        spine-owned movement-ledger fold (ADR-PC-032), never a stored source of truth. STRUCTURAL columns
+        only: integer cents (ADR-PC-010 §P1), the closed-enum member NAMES for direction / operation /
+        origin, and the economic value date. No PII (ADR-PC-004 §P2) — no free-text detail, description, or
+        counterparty rides this line.
+      required:
+        - direction
+        - amount_cents
+        - value_date
+        - operation
+        - origin
+      properties:
+        direction:
+          type: string
+          description: Credit or Debit relative to the account (the closed SettlementDirection member name) — the sign the balance fold applies.
+        amount_cents:
+          type: integer
+          format: int64
+          description: The amount moved, integer cents.
+        value_date:
+          type: string
+          format: date
+          description: The economic date the value moved (the movement's value date).
+        operation:
+          type: string
+          description: Which money move this records — the closed MovementOperation member name (e.g. Disburse, CollectInstallment). A stable structural code, never PII.
+        origin:
+          type: string
+          description: Originated or Observed — the closed MovementOrigin member name.
