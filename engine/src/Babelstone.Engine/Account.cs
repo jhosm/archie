@@ -153,6 +153,21 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
         => movements.GetBalanceCentsAsync(accountRef, ct);
 
     /// <summary>
+    /// The account's statement in integer cents: every recorded movement line for
+    /// <paramref name="accountRef"/> in stable (stream, sequence, index) order — the READ over the same
+    /// movement-ledger fold the accounting balance sums (ADR-PC-032). A thin passthrough to
+    /// <see cref="IMovementLedgerStore.GetStatementAsync"/>, mirroring
+    /// <see cref="GetAccountingBalanceCentsAsync"/>: the balance is the fold's rollup, the statement is the
+    /// fold's lines. Family-agnostic (keyed on the opaque <c>account_ref</c>), never a stored source of
+    /// truth; empty for an account with no posted movements. Each line carries only STRUCTURAL primitives
+    /// (direction, integer-cents amount, value date, closed-enum operation/origin names) — no PII
+    /// (ADR-PC-004 §P2 — the account_ref is opaque, never an IBAN; no free-text detail column).
+    /// </summary>
+    public Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(
+        string accountRef, CancellationToken ct = default)
+        => movements.GetStatementAsync(accountRef, ct);
+
+    /// <summary>
     /// The account's available balance in integer cents: what is SPENDABLE now —
     /// <c>accounting balance − Σ(active holds)</c> (ADR-PC-033). Computed, never stored.
     /// </summary>

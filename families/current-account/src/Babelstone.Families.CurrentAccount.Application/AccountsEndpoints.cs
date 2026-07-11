@@ -111,6 +111,13 @@ public static class AccountsEndpoints
         // The query surface: ONE canonical account resource, the structural half folded from the stream +
         // the two balances and active holds read from the spine-owned folds (ADR-PC-033). Read-only, ungated.
         app.MapGet("/v1/accounts/{id:guid}", GetAccountAsync);
+
+        // The movement-statement read (ADR-PC-032): the account's recorded movement lines in stable order,
+        // read from the SAME spine-owned movement ledger the accounting balance sums — the balance is the
+        // fold's rollup, this is the fold's lines. Read-only, ungated; carries no PII (structural closed-enum
+        // names + integer cents only, ADR-PC-004 §P2). {id:guid} is load-bearing (the :guid constraint
+        // excludes literal words, so this shares the /v1/accounts/{id:guid}/… prefix cleanly).
+        app.MapGet("/v1/accounts/{id:guid}/movements", GetMovementsAsync);
     }
 
     private static async Task<IResult> OpenAsync(
@@ -259,6 +266,36 @@ public static class AccountsEndpoints
             AccountingBalanceCents: accountingCents,
             AvailableBalanceCents: availableCents,
             ActiveHolds: holds.Select(ToHoldView).ToList()));
+    }
+
+    /// <summary>
+    /// The account movement-statement read (ADR-PC-032): the account's recorded movement lines in stable
+    /// (stream, sequence, index) order — a read over the SPINE-owned movement ledger keyed by the account's
+    /// opaque <c>account_ref</c> (the same fold <see cref="GetAccountAsync"/>'s accounting balance sums,
+    /// here exposed as its lines). Mirrors the point-read: 404 while the account is still Pending (no
+    /// AccountOpened appended yet) rather than a phantom empty statement; read-only and ungated. No PII
+    /// (ADR-PC-004 §P2) — each line carries only structural closed-enum names + integer cents.
+    /// </summary>
+    private static async Task<IResult> GetMovementsAsync(
+        Guid id,
+        AggregateRuntime<AccountPosition> runtime,
+        AccountBalanceReader balances,
+        CancellationToken ct)
+    {
+        var position = (await runtime.LoadAsync(id, ct)).State;
+        if (position.Lifecycle == AccountLifecycle.Pending)
+        {
+            return Results.NotFound();
+        }
+
+        // The movement lines are the SPINE-owned fold keyed by the account's opaque account_ref (ADR-PC-032)
+        // — the family record carries no movements. A just-opened account with no posted movements reads an
+        // empty statement.
+        var statement = await balances.GetStatementAsync(position.AccountRef, ct);
+
+        return Results.Ok(new MovementsResponse(
+            AccountId: position.AccountId,
+            Movements: statement.Select(ToMovementView).ToList()));
     }
 
     /// <summary>
@@ -635,6 +672,18 @@ public static class AccountsEndpoints
         Kind: hold.Kind.ToString(),
         LegalReference: hold.LegalReference,
         ExpiresAt: hold.ExpiresAt);
+
+    // Map a spine movement-ledger line to the read view — STRUCTURAL columns only. Direction / Operation /
+    // Origin are already closed-enum member NAMES on the ledger entry (the storage boundary stores the
+    // primitives, not the family enums), so they surface verbatim; AmountCents / ValueDate are the
+    // integer-cents amount and economic date. No stream_id / sequence_number / command_id (internal
+    // idempotency plumbing) and no free-text detail leak onto the wire — no PII (ADR-PC-004 §P2).
+    private static MovementView ToMovementView(MovementLedgerEntry entry) => new(
+        Direction: entry.Direction,
+        AmountCents: entry.AmountCents,
+        ValueDate: entry.ValueDate,
+        Operation: entry.Operation,
+        Origin: entry.Origin);
 
     private static string Status(AccountPosition position) =>
         position.Lifecycle.ToString().ToUpperInvariant();

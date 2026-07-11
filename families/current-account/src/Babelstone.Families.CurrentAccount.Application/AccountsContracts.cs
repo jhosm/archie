@@ -114,3 +114,35 @@ public sealed record AccountResponse(
     long AccountingBalanceCents,
     long AvailableBalanceCents,
     IReadOnlyList<AccountHoldView> ActiveHolds);
+
+/// <summary>One recorded movement line on the account statement, as surfaced on the read view. A read
+/// shape over the spine-owned movement-ledger fold (ADR-PC-032), never a stored source of truth — the same
+/// fold the accounting balance sums, exposed as its lines. STRUCTURAL columns only: no PII (ADR-PC-004 §P2)
+/// — the movement carries no free-text detail / description / counterparty, only the closed-enum member
+/// NAMES and integer cents. All money is integer cents (ADR-PC-010).</summary>
+/// <param name="Direction"><c>Credit</c> or <c>Debit</c> relative to the account (the closed
+/// <c>SettlementDirection</c> member name) — the sign the balance fold applies.</param>
+/// <param name="AmountCents">The amount moved, integer cents.</param>
+/// <param name="ValueDate">The economic date the value moved (the movement's value date).</param>
+/// <param name="Operation">Which money move this records — the closed <c>MovementOperation</c> member
+/// name (e.g. <c>Disburse</c>, <c>CollectInstallment</c>). A stable structural code, never PII.</param>
+/// <param name="Origin"><c>Originated</c> or <c>Observed</c> — the closed <c>MovementOrigin</c> member
+/// name.</param>
+public sealed record MovementView(
+    string Direction,
+    long AmountCents,
+    DateOnly ValueDate,
+    string Operation,
+    string Origin);
+
+/// <summary>
+/// The account movement-statement read view (GET /v1/accounts/{id}/movements). The account id and the
+/// ordered movement lines are read from the SPINE-owned movement ledger (<c>AccountBalanceReader</c>),
+/// keyed by the account's opaque <c>account_ref</c> (ADR-PC-032) — the same fold the accounting balance
+/// sums, here exposed as its individual lines in stable (stream, sequence, index) order. Read-only, never a
+/// stored source of truth. All money is integer cents (ADR-PC-010); no PII (ADR-PC-004 §P2) — the account
+/// id is opaque and each line carries only structural closed-enum names, no free-text detail.
+/// </summary>
+public sealed record MovementsResponse(
+    Guid AccountId,
+    IReadOnlyList<MovementView> Movements);
