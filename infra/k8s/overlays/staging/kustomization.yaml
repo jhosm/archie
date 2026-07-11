@@ -231,6 +231,13 @@ patches:
   # pulls the client secret from babelstone-dev-secrets. Fail-closed until the Logto app is
   # hand-registered + the secret seeded (infra/runbooks/backstage-oidc-registration.md).
   - path: backstage-oidc.patch.yaml
+  # Mount the 3 per-persona dashboards (operator/NOC, compliance, developer) into grafana-lgtm
+  # (bd babelstone-zla1.22; ADR-IC-007 §P6). The K.4 lane (bd babelstone-vk3x) shipped them as
+  # code under infra/grafana/dashboards/ but nothing mounted them, so staging's "Babelstone"
+  # folder was empty. Deployment-only patch — subPath-mounts the provider yaml + the 3 JSONs
+  # from the grafana-dashboards ConfigMap generated below; the Service (OTLP §P1 boundary) is
+  # untouched. See grafana-dashboards.patch.yaml for the /otel-lgtm + options.path rationale.
+  - path: grafana-dashboards.patch.yaml
 
 # The Critical-SLI rule files for the bundled Prometheus, carried in as a ConfigMap
 # generated FROM the SAME infra/grafana/prometheus/ source the Compose stack mounts
@@ -254,6 +261,18 @@ configMapGenerator:
       - roles.yaml=../../../grafana/rbac/provisioning/roles.yaml
       - datasource-permissions.yaml=../../../grafana/rbac/provisioning/datasource-permissions.yaml
       - teams.yaml=../../../grafana/rbac/provisioning/teams.yaml
+  # The 3 per-persona dashboards + their provider (bd babelstone-zla1.22, K.4 lane babelstone-vk3x),
+  # generated from the SAME infra/grafana/dashboards/ source the Compose stack would bind-mount.
+  # grafana-dashboards.patch.yaml subPath-mounts these into the appliance: the provider yaml at
+  # conf/provisioning/dashboards/ (where Grafana reads dashboard providers) and each JSON at the
+  # provider's options.path (/var/lib/grafana/dashboards/babelstone). disableNameSuffixHash (below)
+  # keeps the name 'grafana-dashboards' stable for the patch's volume reference.
+  - name: grafana-dashboards
+    files:
+      - babelstone-personas.yaml=../../../grafana/dashboards/provisioning/babelstone-personas.yaml
+      - operator-noc.json=../../../grafana/dashboards/json/operator-noc.json
+      - developer.json=../../../grafana/dashboards/json/developer.json
+      - compliance.json=../../../grafana/dashboards/json/compliance.json
 
 generatorOptions:
   # Stable name (no content-hash suffix) so the grafana-lgtm-rules.patch.yaml
