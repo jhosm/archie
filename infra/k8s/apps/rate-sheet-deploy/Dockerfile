@@ -13,6 +13,14 @@
 # js-yaml the demo + scripts/deploy-rate-sheet.sh use, preserving the family subdir layout, so the
 # baked JSON set cannot drift from rate-sheets/. Adding a new sheet (a version or a new family) is just
 # committing its YAML — this stage picks it up (rate-sheets/** is an image-build trigger path).
+#
+# BASE_IMAGE is declared GLOBALLY here — before the first FROM — so it is in scope for the
+# `FROM ${BASE_IMAGE}` of the second stage below. A Docker ARG declared AFTER a FROM belongs to that
+# stage only; when it sat between the two FROMs it was invisible to the base FROM, which resolved to a
+# blank image name and failed the build ("base name should not be blank", bd babelstone-zla1.21.2).
+# The `--build-arg BASE_IMAGE=…@sha256:…` in image-build.yml still overrides this default for a pinned
+# promote (a movable :latest is fine for the demo box), exactly like the engine-staging twin.
+ARG BASE_IMAGE=ghcr.io/jhosm/babelstone-ratesheets-api:latest
 FROM node:22-alpine AS serialise
 WORKDIR /rs
 COPY rate-sheets/ ./src/
@@ -24,7 +32,6 @@ RUN set -e; mkdir -p out; \
       npx --yes js-yaml@4.1.0 "$y" > "$out"; \
     done
 
-ARG BASE_IMAGE=ghcr.io/jhosm/babelstone-ratesheets-api:latest
 FROM ${BASE_IMAGE}
 # The pack (for the deploy-time bound check — RateSheets:PacksDir=/app/packs, set on the Job) and every
 # serialised sheet under /app/rate-sheets (RateSheets:DeployOnStartup=/app/rate-sheets — the Job deploys
