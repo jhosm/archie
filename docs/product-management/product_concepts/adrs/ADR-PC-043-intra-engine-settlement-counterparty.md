@@ -93,6 +93,19 @@ proven on real PostgreSQL by `SettlementLegStepUpScaIntegrationTests`
 The §Verifiable-commitments rows 3 and 4 migrate to the
 [commitment catalogue](./commitment-catalogue.md) as CA-14 and CA-15.*
 
+*Amended 2026-07-11 (bd `babelstone-98mj.14`): the `CreditReapplied` payload-shape prose is aligned to
+the shipped 5-field record, without altering the §Payload-shape decision above. The §1 sketch below
+still lists the original placeholder shape `operations.CreditReapplied(IntentId, ResolutionIntentId,
+TargetAccountRef, ResolvedBy)`; the built cross-cutting spine fact is the **5-field**
+`operations.CreditReapplied(ResolutionIntentId, OriginalIntentId, BeneficiaryAccountRef, Amount,
+ReappliedAt)` — the resolution key first (`ResolutionIntentId = g(OriginalIntentId)`, the derived
+double-pay guard, §Idempotency), then the original intent it discharges, the opaque beneficiary account
+the credit lands on, the integer-cents `Amount`, and the command-supplied `ReappliedAt` economic date.
+Opaque refs only, no PII ([ADR-PC-004]), no family named. Backed by the shipped record
+`engine/src/Babelstone.Engine/CrossCuttingEvents.cs` and its governed Avro
+`contracts/avro/operations/CreditReapplied.avsc`, which agree field-for-field. The sibling
+`operations.CreditUnapplied` shape in §1 is already correct and is unchanged by this amendment.*
+
 ### 1. Payload shape
 
 - Settlement command bodies are **unchanged** (`ReserveAccountBalance` / `ConfirmDebit` /
