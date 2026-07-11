@@ -129,6 +129,14 @@ for key in $REQUIRED_KEYS; do
     OIDC_PRIVATE_KEYS)
       case "$val" in
         "$PLACEHOLDER_OIDC_PREFIX"*) fail "live OIDC_PRIVATE_KEYS is still the dev placeholder — the public IAM must never sign with it" ;;
+      esac
+      # Logto/jose derive the signing algorithm reliably only from a PKCS#8 key
+      # ('-----BEGIN PRIVATE KEY-----'). A SEC1 EC key ('-----BEGIN EC PRIVATE KEY-----') makes
+      # Logto's admin-console client default to RS256 while the EC provider signs ES256-only, so the
+      # console login fails with "id_token_signed_response_alg must be 'ES256'" (bd babelstone-zla1.10.16).
+      # Fail LOUD here at deploy time rather than silently at first admin-console login.
+      case "$val" in
+        *"BEGIN EC PRIVATE KEY"*) fail "OIDC_PRIVATE_KEYS is a SEC1 EC key ('BEGIN EC PRIVATE KEY') — Logto needs PKCS#8. Re-encode the SAME key: 'openssl pkcs8 -topk8 -nocrypt -in key.pem', then re-provision the Secret (runbook §1 step 5)." ;;
       esac ;;
     LOGTO_MISSION_CONTROL_CLIENT_SECRET)
       case "$val" in
