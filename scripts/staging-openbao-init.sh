@@ -20,7 +20,7 @@ set -euo pipefail
 # NO SECRET IN ARGV: every secret value (the app-tier secrets, the AppRole secret_id, the transit
 # token) is passed to `bao` over the `kubectl exec` STDIN stream — never as a command argument — so
 # nothing sensitive lands in the kube-apiserver audit log (which records exec command args at
-# Request level). The shared values (POSTGRES_PASSWORD / SECRET_VAULT_KEK / OIDC_PRIVATE_KEYS) are
+# Request level). The shared values (POSTGRES_PASSWORD / SECRET_VAULT_KEK) are
 # read straight FROM the operator-provisioned babelstone-dev-secrets, so OpenBao and that Secret can
 # never drift — in particular the password inside secret/data/Engine is guaranteed to match
 # babelstone-dev-secrets:POSTGRES_PASSWORD (the cross-store trap in staging-ops.md §1 step 5).
@@ -202,10 +202,10 @@ log "5. KV v2 at $KV_MOUNT/ + populate app-tier paths (values sourced from $APP_
 
 PG="$(get_app_secret POSTGRES_PASSWORD)";  [ -n "$PG" ]  || fail "$APP_SECRET is missing POSTGRES_PASSWORD."
 KEK="$(get_app_secret SECRET_VAULT_KEK)";  [ -n "$KEK" ] || fail "$APP_SECRET is missing SECRET_VAULT_KEK."
-OIDC="$(get_app_secret OIDC_PRIVATE_KEYS)";[ -n "$OIDC" ]|| fail "$APP_SECRET is missing OIDC_PRIVATE_KEYS."
+# No OIDC_PRIVATE_KEYS: Logto generates + owns its own OIDC signing key (ADR-IC-021 amendment 2026-07-11).
 
 V="$PG"  json_obj password V             | kbao_i kv put "$KV_MOUNT/babelstone/postgres" - >/dev/null
-K="$KEK" O="$OIDC" json_obj secret_vault_kek K oidc_private_keys O \
+K="$KEK" json_obj secret_vault_kek K \
                                           | kbao_i kv put "$KV_MOUNT/babelstone/logto" - >/dev/null
 # The engine reads this DIRECTLY at runtime (OpenBaoKvSecretProvider); the field name MUST be "Engine".
 # Password is the SAME PG value Postgres was seeded with — cross-store consistency by construction.

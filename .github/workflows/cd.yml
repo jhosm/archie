@@ -293,8 +293,8 @@ jobs:
       # 4c — fail-closed live secret preflight (bd babelstone-zla1.12.4): the staging deploy no
       #      longer renders the babelstone-dev-secrets Secret, so the REAL one must already live
       #      in the cluster (runbook §1 step 5) and must not still hold a dev placeholder value
-      #      (POSTGRES_PASSWORD 'babelstone', OPENBAO_DEV_TOKEN 'root', the dev Logto KEK/OIDC
-      #      key). Refuse the apply otherwise — a forgotten swap never reaches the public IAM.
+      #      (POSTGRES_PASSWORD 'babelstone', OPENBAO_DEV_TOKEN 'root', the dev Logto KEK).
+      #      Refuse the apply otherwise — a forgotten swap never reaches the public IAM.
       - name: Live secret preflight (refuse placeholder credentials)
         if: ${{ github.event.inputs.overlay == 'staging' }}
         env:

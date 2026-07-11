@@ -9,13 +9,12 @@
 # and sits behind the public `auth.babelstone.dev` Traefik Ingress (ingress.yaml) — the 4th
 # public host on the box.
 #
-# Secret boundary (ADR-PC-004 §A1 / ADR-IC-021 §staging-rollout): the secret-vault KEK and the
-# OIDC token-signing key are sourced from the OpenBao-seeded Secret via secretKeyRef — NEVER an
-# inline literal, never on the bus. Logto persists the signing key in its DB config
-# (`oidc.privateKeys`): the init/seed Job (logto-jobs.yaml) installs it from this same OpenBao
-# material, and the annual rotate CronJob rolls a fresh key in-DB with a grace period. It is
-# referenced on the Pod here too so the signing-key dependency is explicit and the material is
-# pod-injected, not baked into the image.
+# Secret boundary (ADR-PC-004 §A1 / ADR-IC-021 §staging-rollout + 2026-07-11 amendment): the
+# secret-vault KEK is sourced from the OpenBao-seeded Secret via secretKeyRef — NEVER an inline
+# literal, never on the bus. The OIDC token-signing key is NOT injected: Logto GENERATES and owns
+# it in its DB config (`oidc.privateKeys`, created by `db seed`), and the annual rotate CronJob
+# rolls a fresh key in-DB with a grace period. An operator-injected key broke the admin console
+# (bd zla1.10.16); nothing outside Logto reads the OIDC signing key.
 #
 # Lives in the staging overlay (not the apps/ product-service layer): like Mission Control it is
 # a staging-specific, public-facing concern. Upstream image (the OFFICIAL ghcr.io/logto-io/logto,
@@ -161,15 +160,11 @@ spec:
                 secretKeyRef:
                   name: babelstone-dev-secrets
                   key: SECRET_VAULT_KEK
-            # OIDC token-signing key, same OpenBao-held material. Logto PERSISTS it in the DB
-            # (`oidc.privateKeys`), seeded by logto-jobs.yaml and annually rotated; referenced
-            # here so the signing-key dependency is explicit and the material is pod-injected,
-            # not image-baked.
-            - name: OIDC_PRIVATE_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: babelstone-dev-secrets
-                  key: OIDC_PRIVATE_KEYS
+            # NOTE: no OIDC_PRIVATE_KEYS here. Logto GENERATES and owns its own OIDC signing key
+            # (`oidc.privateKeys`, persisted in its DB by `db seed`, annually rotated in place) — NOT
+            # an injected key (ADR-IC-021 amendment 2026-07-11, bd zla1.10.16). An operator-injected
+            # key broke the admin console ("id_token_signed_response_alg must be 'ES256'"); a
+            # Logto-generated one works, and nothing else reads the OIDC signing key.
           # Logto's main endpoint has no guaranteed 2xx liveness route; probe the TCP socket (a
           # bound 3001 = the Node server is up) — the same convention as engine/orchestrator.
           readinessProbe:
