@@ -54,7 +54,7 @@ for the full rationale.
 3. Logto **generates** the **App ID** (= the OAuth `client_id`) and it is immutable — you do NOT get
    to choose it. Copy the generated value into `OIDC_CLIENT_ID` in
    `overlays/staging/mission-control.yaml` and redeploy; the two MUST match. (The current staging app
-   is `tvtbmr5y6vbhkswvmk5a5` — bd babelstone-zla1.10.12.) The CD `configure-logto` job **enforces**
+   is `0d4g0pd0cjiq5dsmuim2p` — bd babelstone-zla1.10.12.) The CD `configure-logto` job **enforces**
    this match: it runs `scripts/iam/register-ops-console.py` with `OPS_EXPECT_CLIENT_ID` set to the
    deployed `OIDC_CLIENT_ID`, and the script **fails loud** (non-zero, blocking the promote) if the
    Logto-registered App ID differs. So on a fresh re-onboard the first promote fails by design until
@@ -114,10 +114,10 @@ holds a `dev-placeholder-…` value.
    ```bash
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
      -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' https://app.babelstone.dev/
-   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=tvtbmr5y6vbhkswvmk5a5...
+   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=0d4g0pd0cjiq5dsmuim2p...
    ```
 
-   A `302` to `auth.babelstone.dev` with `client_id=tvtbmr5y6vbhkswvmk5a5` confirms the app is
+   A `302` to `auth.babelstone.dev` with `client_id=0d4g0pd0cjiq5dsmuim2p` confirms the app is
    registered and the discovery + redirect wiring agree. Completing the login in a browser lands you
    back at `https://app.babelstone.dev/callback` and then the UI.
 

@@ -121,7 +121,7 @@ auth:
     oidc:
       production:
         metadataUrl: ${BACKSTAGE_OIDC_METADATA_URL:-https://auth.babelstone.dev/oidc/.well-known/openid-configuration}
-        clientId: ${BACKSTAGE_OIDC_CLIENT_ID:-xs0shrdb5iem7pqgyt86m}
+        clientId: ${BACKSTAGE_OIDC_CLIENT_ID:-mdkl6ahqqjy3gc8o6lpn2}
         clientSecret: ${BACKSTAGE_OIDC_CLIENT_SECRET}
         prompt: auto
 
