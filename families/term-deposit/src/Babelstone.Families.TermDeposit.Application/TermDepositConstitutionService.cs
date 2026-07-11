@@ -58,7 +58,7 @@ public sealed class TermDepositConstitutionService(
         requiredPreconditions ?? Array.Empty<string>();
 
     // The settlement COUNTERPARTY this engine instance routes its term-deposit payout / rollover legs to
-    // (ADR-PC-043 slot 1). In plain English: when a deposit matures, pays a coupon, terminates early, or
+    // (ADR-PC-043). In plain English: when a deposit matures, pays a coupon, terminates early, or
     // rolls over, this decides whether the cash leg settles against the engine-OWNED current account
     // (engine-ca) or the LEGACY demand core over the ACL (legacy-dda). It is engine-instance configuration
     // for the walking skeleton — mirroring the pinned pack / early-termination-policy / required-preconditions
@@ -66,9 +66,8 @@ public sealed class TermDepositConstitutionService(
     // stamps it onto the money-moving event (DepositMatured / InterestPaid / DepositTerminatedEarly /
     // DepositConstituted-renewal), whose IntegrationHeaders getter promotes it to the ce_settlementtarget
     // header the substrate router keys on — HEADER-ONLY, never reading Movement.AccountRef from the body
-    // (ADR-IC-018 §D5). DEFAULTS to LegacyDda, so an instance that has not opted into engine-CA settlement
-    // (every existing host + direct caller) keeps legacy routing byte-identical (UNCHANGED); a later ingress
-    // build (bd babelstone-u79p.3/.4/.5) flips the deployed instance to EngineCa. The persistent customer
+    // (ADR-IC-018). DEFAULTS to LegacyDda, so an instance that has not opted into engine-CA settlement
+    // (every existing host + direct caller) keeps legacy routing byte-identical (UNCHANGED). The persistent customer
     // account itself already rides Movement.AccountRef (Step A: command.PayoutAccount / closing.FundingAccount);
     // this field is only the COUNTERPARTY selector (Step B, feature-design money-movement-settlement §2A.3).
     private readonly SettlementTarget _settlementTarget = settlementTarget;
@@ -264,7 +263,7 @@ public sealed class TermDepositConstitutionService(
         var matured = (DepositMatured)events[^1];
         var maturityMovement = OriginatedCredit(
             command.PayoutAccount, matured.TotalPayout, matured.MaturedOn, MovementOperation.PayMaturity);
-        // Thread the counterparty selector (ADR-PC-043 slot 1): the persistent payout account already rides
+        // Thread the counterparty selector (ADR-PC-043): the persistent payout account already rides
         // Movement.AccountRef (command.PayoutAccount, Step A); SettlementTarget stamps whether this leg settles
         // against the engine-owned CA or the legacy core, promoted HEADER-ONLY to ce_settlementtarget.
         events[^1] = matured with { Movements = [maturityMovement], SettlementTarget = _settlementTarget };
@@ -338,7 +337,7 @@ public sealed class TermDepositConstitutionService(
         var paid = (InterestPaid)events[^1];
         var couponMovement = OriginatedCredit(
             command.PayoutAccount, paid.NetInterest, paid.PaidOn, MovementOperation.PayCoupon);
-        // Thread the counterparty selector (ADR-PC-043 slot 1): the persistent payout account rides
+        // Thread the counterparty selector (ADR-PC-043): the persistent payout account rides
         // Movement.AccountRef (Step A); SettlementTarget selects engine-CA vs legacy, HEADER-ONLY promoted.
         events[^1] = paid with { Movements = [couponMovement], SettlementTarget = _settlementTarget };
 
@@ -400,7 +399,7 @@ public sealed class TermDepositConstitutionService(
         var terminationMovement = OriginatedCredit(
             command.PayoutAccount, terminated.NetSettlementAmount, terminated.TerminatedOn,
             MovementOperation.PayEarlyTermination, command.CommandId);
-        // Thread the counterparty selector (ADR-PC-043 slot 1): the persistent payout account rides
+        // Thread the counterparty selector (ADR-PC-043): the persistent payout account rides
         // Movement.AccountRef (Step A); SettlementTarget selects engine-CA vs legacy, HEADER-ONLY promoted.
         events[^1] = terminated with { Movements = [terminationMovement], SettlementTarget = _settlementTarget };
 
@@ -742,7 +741,7 @@ public sealed class TermDepositConstitutionService(
             Operation: MovementOperation.RolloverDebit,
             Origin: MovementOrigin.Originated,
             CommandId: command.CommandId ?? Guid.Empty);
-        // Thread the counterparty selector onto both renewal legs (ADR-PC-043 slot 1): the persistent funding
+        // Thread the counterparty selector onto both renewal legs (ADR-PC-043): the persistent funding
         // account rides Movement.AccountRef (Step A); SettlementTarget selects engine-CA vs legacy for the
         // rollover DEBIT (and the ADVANCE upfront-interest CREDIT below), HEADER-ONLY promoted.
         var renewalConstitutionEvents = new List<DomainEvent>

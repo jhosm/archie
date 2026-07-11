@@ -93,16 +93,16 @@ public sealed class MovementHeaderPromotionTests
         Assert.Null(HeaderValue(headers, "ce_movementdirections"));
     }
 
-    // ---- The term-deposit producer promotes ce_settlementtarget end-to-end (ADR-PC-043 slot 1) ----------
+    // ---- The term-deposit producer promotes ce_settlementtarget end-to-end (ADR-PC-043) ----------
 
     [Fact]
     public void An_engine_ca_targeted_DepositMatured_promotes_ce_settlementtarget_through_the_relay()
     {
-        // The term-deposit PRODUCER proof for bd babelstone-u79p.2: a DepositMatured whose payout settles
+        // The term-deposit PRODUCER proof: a DepositMatured whose payout settles
         // against the engine-owned CA carries SettlementTarget.EngineCa (the family stamps it, Step B), so its
         // IntegrationHeaders declares ce_settlementtarget = engine-ca alongside the movement headers, and the
         // relay promotes it as a real ce_* header. The routing token rides the header ALONE — the substrate
-        // never reads Movement.AccountRef from the body (ADR-IC-018 §D5). The persistent payout account stays
+        // never reads Movement.AccountRef from the body (ADR-IC-018). The persistent payout account stays
         // on Movement.AccountRef (Step A), NOT on the header.
         var matured = new DepositMatured(
             PrincipalReturned: new Money(1_000_000),
@@ -136,7 +136,7 @@ public sealed class MovementHeaderPromotionTests
     public void A_default_legacy_DepositMatured_promotes_no_ce_settlementtarget_so_legacy_routing_is_unchanged()
     {
         // The DEFAULT counterparty (LegacyDda) promotes NO target header, so a legacy-routed maturity is
-        // byte-identical to the pre-u79p.2 no-target shape: only ce_movementorigin / ce_movementdirections
+        // byte-identical to the prior no-target shape: only ce_movementorigin / ce_movementdirections
         // ride, and the substrate router falls back to the legacy core (UNCHANGED). This is the guarantee
         // that an instance which has not opted into engine-CA settlement is untouched.
         var matured = new DepositMatured(

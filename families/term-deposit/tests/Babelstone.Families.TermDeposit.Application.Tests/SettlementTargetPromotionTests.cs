@@ -6,8 +6,8 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Application.Tests;
 
 /// <summary>
-/// The term-deposit PRODUCER half of engine-CA settlement (bd babelstone-u79p.2, ADR-PC-043 slot 1 /
-/// ADR-IC-018 §D5). In plain English: when a deposit matures, pays a coupon, terminates early, or rolls
+/// The term-deposit PRODUCER half of engine-CA settlement (ADR-PC-043 /
+/// ADR-IC-018). In plain English: when a deposit matures, pays a coupon, terminates early, or rolls
 /// over, the cash leg used to silently default to the LEGACY core. These tests prove the term-deposit
 /// service now stamps the settlement COUNTERPARTY explicitly on the money-moving event, so an
 /// engine-CA-configured instance promotes the <c>ce_settlementtarget = engine-ca</c> routing header the
@@ -25,7 +25,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// header on the outbox row, the wire truth, not just the C# property.
 /// </para>
 /// <para>
-/// The routing selector is HEADER-ONLY (ADR-IC-018 §D5): the persistent customer account rides
+/// The routing selector is HEADER-ONLY (ADR-IC-018): the persistent customer account rides
 /// <see cref="Movement.AccountRef"/> (Step A — the payout/funding account), and the counterparty token
 /// rides the header (Step B). The substrate never reads <see cref="Movement.AccountRef"/> from the body
 /// to route. These tests pin the header selector; the <see cref="Movement.AccountRef"/> value itself is
@@ -132,7 +132,7 @@ public sealed class SettlementTargetPromotionTests
         Assert.Equal("Originated", headers[MovementHeaders.OriginKey]);
         Assert.Equal(direction.ToString(), headers[MovementHeaders.DirectionsKey]);
         // The engine-CA counterparty rides ce_settlementtarget = engine-ca — a closed-enum token, no amount,
-        // no account ref, no PII (ADR-PC-043 slot 1 / ADR-PC-004). AccountRef stays on the payload's Movement.
+        // no account ref, no PII (ADR-PC-043 / ADR-PC-004). AccountRef stays on the payload's Movement.
         Assert.Equal(MovementHeaders.EngineCaValue, headers[MovementHeaders.SettlementTargetKey]);
     }
 

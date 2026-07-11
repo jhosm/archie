@@ -342,10 +342,10 @@ public sealed class AvroCodecRoundTripTests
     [Fact]
     public void DepositMatured_SettlementTarget_is_producer_only_and_never_rides_the_avro_wire()
     {
-        // The engine-CA counterparty selector (ADR-PC-043 slot 1, bd babelstone-u79p.2) is an init-only
+        // The engine-CA counterparty selector (ADR-PC-043) is an init-only
         // routing signal OUTSIDE DepositMatured's primary constructor, so the Avro codec — which maps ONLY
         // the primary-constructor parameters — never serializes it. This is what keeps the change HEADER-ONLY
-        // (ADR-IC-018 §D5): the target is promoted to the ce_settlementtarget header at emission, but it does
+        // (ADR-IC-018): the target is promoted to the ce_settlementtarget header at emission, but it does
         // NOT widen the durable bus contract (no .avsc field). Proof: an engine-CA-targeted event encodes,
         // and the decoded copy carries the default LegacyDda — the wire never learned about EngineCa. The
         // record-equality assertion is the mutation backstop: were the property ever promoted onto the .avsc
