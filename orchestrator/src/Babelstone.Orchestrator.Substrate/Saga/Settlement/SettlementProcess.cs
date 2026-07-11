@@ -106,7 +106,7 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     /// NOT move, so the saga parks fail-closed in HUMAN_INTERVENTION_REQUIRED with NO compensation
     /// (ADR-IC-003 §P6) — the CONFIRM-leg counterpart of <see cref="ReserveRefused"/> on the credit path.
     /// (A DECLINED credit is possible against the engine-owned CA counterparty, whose settlement-facing
-    /// surface shapes a closed/frozen destination as a 4xx — ADR-PC-043 slot 5.)</summary>
+    /// surface shapes a closed/erased destination as a 4xx — ADR-PC-043 slot 5.)</summary>
     public const string CreditDeclined = "CreditDeclined";
 
     /// <summary>Core ACL: the ConfirmDebit returned INDETERMINATE (HTTP 202) — the network dropped after
