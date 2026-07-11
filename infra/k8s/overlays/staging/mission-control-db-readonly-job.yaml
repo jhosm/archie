@@ -14,6 +14,9 @@ metadata:
   name: mission-control-db-readonly
   labels:
     app.kubernetes.io/name: mission-control-db-readonly
+    # A Job's spec.template is immutable; CD deletes labelled Jobs before apply so a changed
+    # one is recreated, not patched-in-place (which fails). See .github/workflows/cd.yml.
+    babelstone.io/recreate-on-apply: "true"
 spec:
   backoffLimit: 6
   ttlSecondsAfterFinished: 600
