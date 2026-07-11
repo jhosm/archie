@@ -197,7 +197,12 @@ jobs:
                               # cd.yml pins in PROMOTE_IMAGE_DIGESTS (flipping this to true would
                               # repoint the digest at an attestation index and desync that contract).
           cache-from: type=gha,scope=image-${{ matrix.service }}
-          cache-to: type=gha,scope=image-${{ matrix.service }},mode=max
+          # ignore-error: a failed GitHub Actions Cache EXPORT must never fail the build. The image
+          # is already built + pushed before this exporter runs; a `type=gha` export that errors
+          # "not_found" (the GHA cache-service migration flake) otherwise fails the whole `build` job
+          # and SILENTLY SKIPS every `needs: build` derived image — exactly how rate-sheet-deploy went
+          # unpublished and red-listed cd.yml's pin-by-digest gate (bd babelstone-zla1.21.1).
+          cache-to: type=gha,scope=image-${{ matrix.service }},mode=max,ignore-error=true
 
       # The remaining steps are the supply-chain leg over the PUSHED image: they need a pushed
       # digest, so they run on push-to-main only (a PR build produces no registry artifact to
@@ -336,7 +341,7 @@ jobs:
           build-args: |
             BASE_IMAGE=ghcr.io/jhosm/babelstone-engine:latest
           cache-from: type=gha,scope=image-engine-staging
-          cache-to: type=gha,scope=image-engine-staging,mode=max
+          cache-to: type=gha,scope=image-engine-staging,mode=max,ignore-error=true
       - name: Resolve pushed image reference (by digest)
         id: imgref
         env:
@@ -409,7 +414,7 @@ jobs:
           build-args: |
             BASE_IMAGE=ghcr.io/jhosm/babelstone-notification:latest
           cache-from: type=gha,scope=image-notification-staging
-          cache-to: type=gha,scope=image-notification-staging,mode=max
+          cache-to: type=gha,scope=image-notification-staging,mode=max,ignore-error=true
       - name: Resolve pushed image reference (by digest)
         id: imgref
         env:
@@ -476,7 +481,7 @@ jobs:
           build-args: |
             BASE_IMAGE=ghcr.io/jhosm/babelstone-ratesheets-api:latest
           cache-from: type=gha,scope=image-rate-sheet-deploy
-          cache-to: type=gha,scope=image-rate-sheet-deploy,mode=max
+          cache-to: type=gha,scope=image-rate-sheet-deploy,mode=max,ignore-error=true
       - name: Resolve pushed image reference (by digest)
         id: imgref
         env:
