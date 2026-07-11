@@ -107,6 +107,24 @@ expect 0 "$(gate_rc 'Proposed' 'Original decision.' 'Rewritten decision.')" \
 expect 0 "$(gate_rc 'Accepted (production-blocking at cutover)' 'Stable decision.' 'Stable decision.' 'A trailing note outside the Decision section.')" \
   "gated-Accepted with an unchanged Decision (non-Decision edit) passes"
 
+# J — REGRESSION (bd babelstone-2t16.33): a LARGE amendment must PASS. When the amendment adds
+# many '+' lines with the keyword near the TOP, the pre-fix pipeline `grep '^+' | grep -qiE …`
+# let `grep -qiE` close the pipe on its first match while the upstream `grep '^+'` was still
+# writing — the upstream took SIGPIPE (141), and under `set -o pipefail` that 141 became the
+# `if`'s status and read as a false NON-match, blocking a legitimate big amendment. This case
+# changes the Decision AND rides a big amendment block whose 'Revised' keyword sits at the top.
+# The block's '+' lines must exceed the OS pipe buffer (~64 KiB) so the upstream `grep '^+'` is
+# still writing when the downstream `grep -qiE` exits — that is the SIGPIPE precondition. ~1000
+# padded lines (~100 KiB of '+' output) clears 64 KiB with margin across GNU grep / ugrep. It
+# must be read as an amendment (rc 0): fails against the pre-fix pipeline, passes against the
+# decoupled (tmp-file) form.
+big_amendment="$(printf '*Revised 2026-01-01: this amendment is intentionally long to overflow the pipe buffer.*\n')"
+for _i in $(seq 1 1000); do
+  big_amendment+=$'\n'"Additional amendment context line ${_i} — padding padding padding padding padding padding padding padding."
+done
+expect 0 "$(gate_rc 'Accepted (gated by DPO — production gate; see §Gate)' 'Original decision.' 'Rewritten decision.' "$big_amendment")" \
+  "large multi-line amendment (keyword at top) passes — no SIGPIPE false-fail (the fix)"
+
 printf '\nadr-immutability.sh — fast PreToolUse mirror (plugin hook)\n'
 
 # hook_emits <status> <edit-old-string> — write an ADR under */adrs/ADR-*.md, feed the hook a
