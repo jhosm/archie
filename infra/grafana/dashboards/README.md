@@ -3,9 +3,11 @@
 **In plain English:** three ready-made Grafana dashboards, one for each kind of
 person who looks at the system — the operator watching for trouble, the
 compliance officer who needs an audit trail, and the developer debugging a
-failure. They are committed as code (JSON + a provisioning file) so they appear
-automatically when the stack comes up, instead of being clicked together by hand
-and lost on the next reset. Each one shows the metrics and traces the engine
+failure. They are committed as code (JSON + a provisioning file) so a deploy can
+provision them from source, instead of them being clicked together by hand and
+lost on the next reset. The always-on **staging** box mounts them (see "How this
+is deployed" below); local `make up` deliberately leaves them unmounted, the same
+way the RBAC overlay is staging-only. Each one shows the metrics and traces the engine
 **already emits**, and they all let you paste a `correlation_id` to jump between
 the metric, its trace, and its logs — the "paste an id, see everything" workflow
 [Document 06](../../../docs/product-management/integration_concepts/06-observability-and-tracing.md)
@@ -18,8 +20,29 @@ instrumentation. They are the dashboard half of
 rules under [`../prometheus/`](../prometheus/).
 
 - **Build provenance:** in-house (ops config — dashboards-as-code)
-- **Wires into:** the `grafana-lgtm` appliance (`grafana/otel-lgtm:0.28.0`) in
-  [`infra/compose.yaml`](../../compose.yaml) and [`infra/k8s/`](../../k8s/README.md)
+- **Wires into:** the `grafana-lgtm` appliance (`grafana/otel-lgtm:0.28.0`). This
+  subtree ships the dashboards **unmounted** (like the sibling K.3 rules under
+  [`../prometheus/`](../prometheus/)) — a deploy mounts them.
+
+## How this is deployed
+
+- **Staging (`grafana.babelstone.dev`):** the staging overlay provisions them (bd
+  `babelstone-zla1.22`). Its `configMapGenerator` builds a `grafana-dashboards`
+  ConfigMap from this same source, and
+  [`grafana-dashboards.patch.yaml`](../../k8s/overlays/staging/grafana-dashboards.patch.yaml)
+  subPath-mounts the provider yaml into `conf/provisioning/dashboards/` and each JSON
+  into the provider's `options.path` — the exact paths the provider file documents.
+  This mirrors how the K.3 rules (`babelstone-zla1.9`) and the RBAC/OIDC overlay
+  (`babelstone-zla1.10.1`) are wired.
+- **Local `make up` ([`infra/compose.yaml`](../../compose.yaml)):** deliberately
+  **not** mounted — dev boots the vanilla appliance to keep bring-up simple, the same
+  posture the RBAC overlay takes. To see them locally, add the two bind-mounts the
+  provider file's header snippet documents to the `grafana-lgtm` service.
+- **Content-only edits after the first deploy** hit the `babelstone-zla1.10.18`
+  rollout gap (a ConfigMap-only change doesn't roll `grafana-lgtm`); a
+  `kubectl -n babelstone-staging rollout restart deploy/grafana-lgtm` picks them up.
+  The first apply that introduces the mount *does* roll the pod (it changes the pod
+  template).
 
 ## The three personas (ADR-IC-007 §P6)
 

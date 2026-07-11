@@ -1,0 +1,57 @@
+# Mount the 3 per-persona Grafana dashboards into the staging grafana-lgtm appliance
+# (bd babelstone-zla1.22; ADR-IC-007 §P6 — multi-persona dashboards provisioned as code).
+#
+# Plain English: the K.4 lane (bd babelstone-vk3x, PR #233) built three dashboards as
+# code — operator/NOC, compliance, developer — under infra/grafana/dashboards/, but no
+# deploy target ever mounted them, so the live grafana.babelstone.dev showed an empty
+# "Babelstone" folder. This patch wires them into the staging box the same way the alert
+# rules (zla1.9) and the RBAC/OIDC overlay (zla1.10.1) are wired: a ConfigMap generated
+# from the SAME infra/grafana/dashboards/ source, subPath-mounted into the appliance.
+#
+# WHY subPath: the grafana/otel-lgtm image keeps its own files under /otel-lgtm/grafana/
+# and its data dir under /var/lib/grafana. Mounting the ConfigMap as a whole directory
+# would clobber them, so each file mounts individually — the provider yaml lands at
+# conf/provisioning/dashboards/ (where the appliance reads dashboard providers) and each
+# dashboard JSON lands at the provider's options.path (/var/lib/grafana/dashboards/babelstone),
+# exactly the paths infra/grafana/dashboards/provisioning/babelstone-personas.yaml documents
+# for the Compose bind-mount. The files come from the grafana-dashboards ConfigMap the
+# staging kustomization generates from that SAME source (single config source — the
+# grafana-lgtm-rules / grafana-rbac pattern).
+#
+# OTLP boundary: this is a Deployment-only patch (volumes/volumeMounts); it does NOT touch
+# the grafana-lgtm Service, so the ADR-IC-007 §P1 single-OTLP-entry boundary is preserved
+# (the overlay republishes 4317/4318 on that Service via grafana-otlp-svc.patch.yaml,
+# walled to the Collector by the allow-grafana-lgtm-ingress NetworkPolicy).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-lgtm
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana-lgtm
+          volumeMounts:
+            # The dashboards provider — tells Grafana to load every JSON under options.path
+            # into the "Babelstone" folder on startup (allowUiUpdates:false, RBAC-scopable).
+            - name: grafana-dashboards
+              mountPath: /otel-lgtm/grafana/conf/provisioning/dashboards/babelstone-personas.yaml
+              subPath: babelstone-personas.yaml
+              readOnly: true
+            # The three persona dashboard JSONs, at the provider's options.path.
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards/babelstone/operator-noc.json
+              subPath: operator-noc.json
+              readOnly: true
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards/babelstone/developer.json
+              subPath: developer.json
+              readOnly: true
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards/babelstone/compliance.json
+              subPath: compliance.json
+              readOnly: true
+      volumes:
+        - name: grafana-dashboards
+          configMap:
+            name: grafana-dashboards
