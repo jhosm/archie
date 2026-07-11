@@ -1,0 +1,37 @@
+# cp_pt_general_36m — the canonical PT general-purpose personal loan (crédito pessoal) product config,
+# the walking-skeleton loan variant that makes the personal_loan family runnable LIVE·engine.
+#
+# In plain English: this is the real, deployed config for a 36-month general-purpose personal loan — a
+# fixed principal amortized over 36 equal monthly installments on the French schedule, with an early
+# repayment commission of 0.50% (50 bps, the >1y statutory ceiling). The interest RATE it disburses at is
+# REFERENCED via the `rate` block (a rate-sheet ref, ADR-PC-008), never declared inline — the numeric fixed
+# TAN lives in the loan rate sheet (rate-sheets/personal_loan/) on its own cadence, resolved at DISBURSEMENT
+# and stamped on LoanDisbursed. This file carries only the loan's SHAPE and that reference.
+#
+# ORIGINATION stays UPSTREAM (ADR-PC-030 §P1): the engine receives an already-approved, already-priced
+# loan; this config models the PRODUCT, not the underwriting. It is validated against the #PersonalLoan
+# schema (contracts/cue/families/personal-loan.cue) by pack-validate depths 1–4 (ADR-PC-006): depths 1–2 the
+# closed-schema unify, depth 3 the pack-compliance (the pack carries the loans-pt rate-sheet ref, so the
+# rate_ref resolves), depth 4 a no-op (a loan carries no day-count/renewal/banded sub-block).
+#
+# It lives in product-configs/personal-loan/ — a subdirectory the term-deposit product-config store (which
+# reads product-configs/*.yaml non-recursively and requires term_days/interest_variant) never sees, so the
+# families' config surfaces stay decoupled, exactly as product-configs/current-account/ does for that family.
+variant_id: cp_pt_general_36m
+schema: personal_loan@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 36
+purpose: general
+# The fixed interest-rate reference (ADR-PC-030 / personal-loan.cue #FixedRate; ADR-PC-008): the
+# disbursement resolves its TAN from the `live` personal_loan rate sheet under role `standard`. Referenced,
+# never inline — the numeric rate is in rate-sheets/personal_loan/. Its presence makes pack-validate depth-3
+# require the pack to carry a personal_loan rate-sheet ref (which pt.2026.1 now does via loans-pt).
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 50
+principal_bounds:
+  min_cents: 100000
+  max_cents: 7500000

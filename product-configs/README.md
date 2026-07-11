@@ -25,6 +25,19 @@ approval (the pack). See [ADR-PC-019 F2](../docs/product-management/product_conc
 | `dpz_pt_18m_resgate_escalonado.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 18-month, AT_MATURITY, banded early-termination schedule, Act/360 |
 | `dpz_pt_12m_resgate_parcial.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 12-month, AT_MATURITY, partial-withdrawal policy (*resgate parcial*, F.12), Act/360 |
 | `dpz_pt_12m_mensal_resgate_parcial.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 12-month, PERIODIC monthly coupons (`m=1`) **+** partial-withdrawal policy (F.12 orthogonality), Act/360 |
+| `current-account/ca_pt_standard.yaml` | `current_account@2026.1` | `pt.2026.1` | Standard demand account, arranged overdraft + velocity caps, overdraft-interest `rate_ref` |
+| `current-account/ca_pt_basic.yaml` | `current_account@2026.1` | `pt.2026.1` | Basic demand account, no overdraft, no `rate` block |
+| `personal-loan/cp_pt_general_36m.yaml` | `personal_loan@2026.1` | `pt.2026.1` | 36-month general-purpose loan, French amortization, fixed-rate `rate_ref`, 50 bps early-repayment cap |
+| `personal-loan/cp_pt_education_24m_gated.yaml` | `personal_loan@2026.1` | `pt.2026.1` | 24-month education-purpose (lower-cap) loan, fixed-rate `rate_ref`, 25 bps early-repayment cap, origination preconditions declared |
+
+The `current-account/` and `personal-loan/` variants live in per-family
+subdirectories, not at the root. The term-deposit product-config store reads
+`product-configs/*.yaml` **non-recursively** and requires term-deposit shape fields
+(`term_days`, `interest_variant`), so a current-account or loan config placed at the
+root would break its load; the subdirectory keeps the families' config surfaces
+decoupled. The `personal-loan/cp_pt_*` configs carry a fixed-rate `rate_ref`
+(`#FixedRate`) that resolves against the pack's `loans-pt` rate-sheet ref — the pack
+pricing that lets a personal loan run LIVE·engine rather than DEMO-only.
 
 `dpz_pt_12m_juros_venc` is the walking-skeleton variant (E.2). The four siblings
 land in F.7, completing the v1 input surface: every interest shape the family

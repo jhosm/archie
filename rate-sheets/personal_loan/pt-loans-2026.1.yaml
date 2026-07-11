@@ -1,0 +1,58 @@
+# Rate sheet pt-loans-2026.1 — the treasury-authored SOURCE of the personal-loan
+# (crédito pessoal) rates that are live in the local demo stack.
+#
+# Plain English: this YAML file IS the loan rate sheet. It is the auditor-readable
+# source of truth a treasury / ALM author edits; deploying it serialises it 1:1
+# into an immutable row in the `rate_sheets` Postgres table. You never edit the
+# stored row or the database — you edit THIS file and deploy a new version of it.
+# A correction or a new tier ships forward-only as a NEW file (a new
+# `rate_sheet_version_id` with a later `effective_from`); a published sheet is
+# never edited in place. This is what lets a personal loan disburse LIVE·engine:
+# the disbursement resolves its fixed TAN from the row this file deploys.
+#
+# ADR-PC-008 §P1/§P2: the stored JSONB `body` is "1:1 with the deployed YAML",
+# bounded by the verified pack's `max_consumer_rate_bps` (pt.2026.1 = 2000 bps /
+# 20%); idempotency is keyed on `rate_sheet_version_id` (identical re-deploy →
+# 200, a different body under the same id → 409). Owner: Treasury / ALM (see
+# CODEOWNERS). Cadence: daily–weekly. The numbers below are illustrative demo
+# values, not a real PT consumer-credit rate card.
+#
+# The loan is FIXED-rate (ADR-PC-030 / personal-loan.cue #FixedRate): the variant
+# carries a single rate_ref resolved at DISBURSEMENT (surface §2.3), not a stepped
+# vector — so a loan product config names one role (`standard`) and this sheet
+# prices that role. The cp_pt_* variants under product-configs/personal-loan/ all
+# select `role_selector: standard`.
+#
+# How to deploy this file: `make deploy-rate-sheet SHEET=rate-sheets/personal_loan/pt-loans-2026.1.yaml`
+# (or scripts/deploy-rate-sheet.sh) — the YAML-native deploy tool serialises this
+# file to JSON 1:1 and POSTs it. The demo bring-up (make demo → scripts/demo-all.sh)
+# deploys straight from THIS file alongside the deposit sheet, so it is the single
+# source and cannot drift from the demo. Full loop:
+# docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md (bd babelstone-alfy).
+
+# --- Envelope: these fields become columns on the immutable stored row. ---
+rate_sheet_version_id: pt-loans-2026.1        # PRIMARY KEY. A new version = a new file.
+product_family: personal_loan                 # The family this sheet prices.
+pack_version: pt.2026.1                        # The verified pack whose max_consumer_rate_bps bounds every TAN.
+effective_from: "2026-01-01T00:00:00+00:00"   # Active from this instant. UNIQUE within the family.
+approved_by: treasury.alm@bank.internal       # The treasury / ALM approver, recorded on the row.
+approval_ref: ALM-2026-021                     # The treasury sign-off reference.
+
+# --- Body: products -> role -> ordered principal bands (the priceable data). ---
+# Each band is { principal_cents: [from, to], tan_basis_points: N }. Bands are
+# half-open [from, to) — lower inclusive, upper exclusive — and exactly the
+# highest band is open-ended, written `to: null`. The bands for one (product,
+# role) must be contiguous, non-overlapping, and exhaustive. This starter sheet
+# offers a single open-ended `standard` band per product: one flat fixed TAN for
+# every disbursed principal (a tiered sheet — a lower TAN above a principal
+# threshold — is an additive future sheet). The product keys are the variant_ids
+# the loan product configs under product-configs/personal-loan/ carry.
+products:
+  cp_pt_general_36m:
+    standard:
+      bands:
+        - { principal_cents: [0, null], tan_basis_points: 799 }   # 7.99% TAN, all principals
+  cp_pt_education_24m_gated:
+    standard:
+      bands:
+        - { principal_cents: [0, null], tan_basis_points: 549 }   # 5.49% TAN (lower-cap education purpose), all principals

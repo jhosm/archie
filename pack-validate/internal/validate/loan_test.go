@@ -181,6 +181,43 @@ func TestLoanRecognisedNotUnknownFamily(t *testing.T) {
 	}
 }
 
+// TestLoanProductConfigsPassAllDepths — the REAL committed personal_loan product-configs
+// (product-configs/personal-loan/) conform through all four depths against the REAL pt.2026.1 pack.
+// Unlike TestLoanValidFixturesPassAllDepths (which augments a clone of the pack to declare the loan),
+// this runs against the pack AS COMMITTED: it passes only because the pack now carries the loans-pt
+// rate-sheet ref (depth-3 is satisfied, not exempted) and the personal_loan schema pin. This is the
+// hermetic guarantee that a priced loan can disburse LIVE·engine — the same shape
+// TestCurrentAccountVariantsPassAllDepths gives the current_account family. These variants live in a
+// subdirectory the term-deposit product-config store never reads, so they never disturb that store.
+func TestLoanProductConfigsPassAllDepths(t *testing.T) {
+	variants := []string{
+		"../../../product-configs/personal-loan/cp_pt_general_36m.yaml",
+		"../../../product-configs/personal-loan/cp_pt_education_24m_gated.yaml",
+	}
+	for _, variant := range variants {
+		t.Run(filepath.Base(variant), func(t *testing.T) {
+			rep, err := Run(Options{
+				VariantPath: variant,
+				SchemaDir:   schemaDir, PackDir: packDir, MaxDepth: diag.DepthRegulatory,
+			})
+			if err != nil {
+				t.Fatalf("toolchain error: %v", err)
+			}
+			if !rep.OK {
+				t.Fatalf("expected OK against the real pt.2026.1 pack, got diagnostics: %+v", rep.Diagnostics)
+			}
+			if len(rep.Depths) != 4 {
+				t.Fatalf("expected 4 depth results, got %d", len(rep.Depths))
+			}
+			for _, d := range rep.Depths {
+				if !d.OK {
+					t.Errorf("depth %d not ok", d.Depth)
+				}
+			}
+		})
+	}
+}
+
 // TestDiscoverFamiliesFindsBothFamilies pins the file-discovery resolver directly:
 // the committed contracts/cue/families/ dir carries exactly term_deposit and
 // personal_loan, each with the kebab→snake name and kebab→Pascal root def. A new
