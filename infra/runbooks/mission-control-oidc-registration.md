@@ -50,7 +50,12 @@ for the full rationale.
    server-side client). Mission Control's `serve.py` runs the code→token exchange **server-side**
    with a client secret (`client_secret_post`) **plus** PKCE — it is not a browser SPA, so pick the
    confidential Web app type, not Single-Page App.
-2. Name it so it is unmistakable in the cohort register, e.g. **Mission Control (staging)**.
+2. Name it **exactly `babelstone-mission-control`** — not a free-form display name. This is the
+   `OPS_APP_NAME` that [`scripts/iam/register-ops-console.py`](../../scripts/iam/register-ops-console.py)
+   (and the CD `configure-logto` job, which does not override it) key on to find the app
+   idempotently. Register it under any other name and the automated reconcile won't match it — it
+   will create a **second, duplicate** app named `babelstone-mission-control`, and operator login
+   ends up split across two clients.
 3. Logto **generates** the **App ID** (= the OAuth `client_id`) and it is immutable — you do NOT get
    to choose it. Copy the generated value into `OIDC_CLIENT_ID` in
    `overlays/staging/mission-control.yaml` and redeploy; the two MUST match. (The current staging app
