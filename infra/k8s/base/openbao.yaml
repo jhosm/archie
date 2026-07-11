@@ -59,41 +59,13 @@ spec:
       port: 8201
       targetPort: 8201
 ---
-# ServiceAccount the k8s auth method binds workloads to. OpenBao's Kubernetes auth
-# method verifies a workload's projected SA token; the Secrets Store CSI
-# SecretProviderClass (infra/k8s/components/openbao-csi) authenticates as this SA
-# to fetch app-tier secrets. Created here so the base render is self-consistent;
-# the auth-method ROLE mapping (which SA -> which policy) is an operator init step.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: openbao
-  labels:
-    app.kubernetes.io/name: openbao
----
-# Let the openbao ServiceAccount submit TokenReviews (system:auth-delegator). OpenBao's
-# Kubernetes auth method validates a mounting workload's projected SA token by calling the k8s
-# TokenReview API with the openbao SA's OWN token as the reviewer (token_reviewer_jwt, set at
-# operator init). Without this binding that review is forbidden, so every CSI login
-# (vault-csi-provider -> auth/kubernetes/login) fails and the engine never mounts
-# babelstone-app-secrets (bd babelstone-zla1.12.31). Cluster-scoped, mirroring the driver's own
-# vault-csi-provider-server-binding. The subject namespace is set by the overlay's namespace
-# transformer (babelstone-staging for the staging overlay — the only place OpenBao runs live).
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: openbao-auth-delegator
-  labels:
-    app.kubernetes.io/name: openbao
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:auth-delegator
-subjects:
-  - kind: ServiceAccount
-    name: openbao
-    namespace: babelstone-staging
----
+# NOTE: the `openbao` ServiceAccount and the `openbao-auth-delegator` ClusterRoleBinding
+# that this workload needs are NOT declared here anymore — they are privilege-granting
+# objects the least-privilege cd-deployer must not self-apply, so they were relocated to
+# the operator-applied bootstrap set: infra/k8s/overlays/staging/bootstrap/openbao-auth.yaml
+# (bd babelstone-zla1.12.14.2). The Deployment below keeps `serviceAccountName: openbao`,
+# which resolves to that bootstrap-applied SA. See that file + bootstrap/README.md.
+#
 # Raft data volume. A standalone PVC (ReadWriteOnce) rather than a StatefulSet
 # volumeClaimTemplate, because OpenBao here MUST stay a Deployment: the staging
 # overlay's resources.patch.yaml (which sizes the single node) targets

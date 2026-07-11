@@ -56,6 +56,15 @@ This directory is **deliberately not referenced** by
   cluster-admin kubeconfig (`cd.yml` probes and refuses a cluster-admin credential
   at apply time). Lives here, not in the overlay, so a routine deploy can never
   widen its own grant.
+- [`openbao-auth.yaml`](./openbao-auth.yaml) — the **OpenBao Kubernetes-auth identity**
+  (bd babelstone-zla1.12.14.2): the `openbao` ServiceAccount + the `openbao-auth-delegator`
+  ClusterRoleBinding (to `system:auth-delegator`). Relocated out of `base/openbao.yaml` for the
+  same reason as `cd-deploy-rbac.yaml` — a ServiceAccount and (especially) a ClusterRoleBinding
+  are privilege-granting objects the least-privilege `cd-deployer` must not self-apply. Auto-applied
+  by the STEP-7 `*.yaml` glob. The paired `babelstone-app-secrets` **SecretProviderClass** is
+  likewise bootstrap-only, applied by `staging-bootstrap.sh` STEP 5b (`kubectl apply -n
+  babelstone-staging -f ../../../components/openbao-csi/secret-provider-class.yaml`) — not the
+  glob, so it lands in the app namespace.
 
 ## Apply order (Phase 2 — needs the live cluster + DNS)
 
@@ -124,7 +133,8 @@ kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/d
 #     the two CRDs (SecretProviderClass, SecretProviderClassPodStatus), the CSIDriver, and
 #     the node DaemonSet — none of which the strict kubeconform gate has a vendored schema
 #     for, so they are installed HERE, never in `kustomize build overlays/staging`. The
-#     overlay registers ONLY the SecretProviderClass custom resource (see
+#     SecretProviderClass custom resource is applied out-of-band too (STEP 5b in
+#     staging-bootstrap.sh, not the overlay render — bd babelstone-zla1.12.14.2; see
 #     infra/k8s/components/openbao-csi/README.md). The driver install is the VENDORED, pinned
 #     (v1.6.0) material under that component's upstream/ — applied file-by-file so it is
 #     hermetic (no remote fetch); the vault-csi-provider is the upstream HashiCorp chart,

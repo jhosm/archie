@@ -214,8 +214,10 @@ kubectl apply -f "$SUC_MANIFEST_URL"
 # The out-of-band half of the openbao-csi component (bd babelstone-zla1.12.21): the CRDs
 # (SecretProviderClass, SecretProviderClassPodStatus), RBAC, the CSIDriver, and the node
 # DaemonSet land cluster-scoped in kube-system — NEVER in `kustomize build overlays/staging`
-# (the strict kubeconform gate has no schema for them). The overlay registers ONLY the
-# SecretProviderClass custom resource. The driver is the VENDORED, pinned-v1.6.0 material
+# (the strict kubeconform gate has no schema for them). The `babelstone-app-secrets`
+# SecretProviderClass custom resource is likewise applied out-of-band (STEP 5b below), NOT in the
+# overlay render — the least-privilege cd-deployer holds no secretproviderclasses grant
+# (bd babelstone-zla1.12.14.2). The driver is the VENDORED, pinned-v1.6.0 material
 # under the component's upstream/ (applied file-by-file so it is hermetic — no remote fetch);
 # the vault-csi-provider is the HashiCorp chart's csi: subcomponent (server/injector off).
 step "4. Secrets Store CSI driver (vendored v1.6.0) + vault-csi-provider (helm ${VAULT_CHART_VERSION})"
@@ -239,6 +241,15 @@ kubectl -n kube-system rollout status ds/csi-secrets-store --timeout=300s
 # ── STEP 5 · the app namespace (idempotent) ──────────────────────────────────────────────
 step "5. namespace ${APP_NAMESPACE} (idempotent apply)"
 kubectl create namespace "$APP_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+# ── STEP 5b · the babelstone-app-secrets SecretProviderClass (openbao-csi) ────────────────
+# Applied out-of-band here, NOT in the routine overlay render: the least-privilege cd-deployer
+# holds no secretproviderclasses grant, so — like the openbao SA/CRB (bootstrap/openbao-auth.yaml,
+# applied by STEP 7's glob) — the operator applies it (bd babelstone-zla1.12.14.2). Needs the CSI
+# CRD (STEP 4) + the app namespace (STEP 5). The SPC object applies fine now; its runtime SYNC
+# additionally needs the OpenBao k8s-auth role/policy, provisioned later by staging-openbao-init.sh.
+step "5b. babelstone-app-secrets SecretProviderClass (namespaced ${APP_NAMESPACE}, out-of-band)"
+kubectl apply -n "$APP_NAMESPACE" -f "$REPO_ROOT/infra/k8s/components/openbao-csi/secret-provider-class.yaml"
 
 # ── STEP 6 · the Cloudflare DNS-01 token Secret (idempotent; never echoes the token) ─────
 if $CLOUDFLARE_SECRET_EXISTS; then

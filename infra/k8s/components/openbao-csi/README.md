@@ -40,21 +40,20 @@ would break that gate. So the wiring is split (bd babelstone-zla1.12.21):
    cert-manager), so the CRDs/`CSIDriver` never enter `kustomize build
    overlays/staging`. See [`../../overlays/staging/bootstrap/README.md`](../../overlays/staging/bootstrap/README.md)
    step 1c and `scripts/staging-bootstrap.sh`.
-2. The **SecretProviderClass alone** IS registered in the staging overlay — via a
-   direct `resources:` reference to
-   [`secret-provider-class.yaml`](./secret-provider-class.yaml) (NOT the whole
-   `components:` entry, which would pull in the CRD-bearing driver install):
+2. The **SecretProviderClass alone** is applied out-of-band at bootstrap too — with the
+   operator's cluster-admin kubeconfig, NOT rendered into the overlay (the least-privilege
+   `cd-deployer` holds no `secretproviderclasses` grant, bd babelstone-zla1.12.14.2):
 
-   ```yaml
-   # infra/k8s/overlays/staging/kustomization.yaml
-   resources:
-     - ../../components/openbao-csi/secret-provider-class.yaml
+   ```bash
+   # scripts/staging-bootstrap.sh STEP 5b
+   kubectl apply -n babelstone-staging \
+     -f infra/k8s/components/openbao-csi/secret-provider-class.yaml
    ```
 
-   The `SecretProviderClass` Kind has no vendored kubeconform schema, so the
-   staging-overlay leg of the strict gate carries `-ignore-missing-schemas` (it
-   keeps `-strict` for every kind that HAS a schema and skips only this CR);
-   `base`/`ha` render no `SecretProviderClass`, so their legs stay fully strict.
+   Because the `SecretProviderClass` (the only kubeconform-schema-less Kind) is no longer in
+   any overlay render, the strict gate needs **no** `-ignore-missing-schemas` for the routine
+   renders — `base`/`ha`/`staging` are all fully `-strict`. (The standalone component validate
+   below still uses the flag, since building the component directly does render the CR.)
 
 > **Sizing follow-up (bd babelstone-zla1.12.21).** The persistent OpenBao container
 > in [`../../base/openbao.yaml`](../../base/openbao.yaml) carries **no memory

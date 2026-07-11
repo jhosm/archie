@@ -58,8 +58,12 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      component's `upstream/` files) **+ the HashiCorp vault-csi-provider** (Helm, csi-only) — the
      out-of-band half of the openbao-csi component that sources app-tier secrets from OpenBao
      (bd babelstone-zla1.12.21). Its CRDs/CSIDriver/DaemonSet land cluster-scoped in kube-system,
-     NEVER in the strict overlay render; the overlay registers only the `SecretProviderClass`.
-     See `bootstrap/README.md` step 1c and `../k8s/components/openbao-csi/README.md`.
+     NEVER in the strict overlay render. The `SecretProviderClass` custom resource — plus the
+     `openbao` ServiceAccount + `openbao-auth-delegator` ClusterRoleBinding — are applied
+     out-of-band at bootstrap too (bd babelstone-zla1.12.14.2: the least-privilege cd-deployer
+     holds no grant on them), so `kustomize build overlays/staging` is fully `-strict`. See
+     `bootstrap/README.md` (its `openbao-auth.yaml` entry + step 1c) and
+     `../k8s/components/openbao-csi/README.md`.
    (The **external CSI snapshot controller** is no longer installed — the Hetzner CSI is dropped;
    bd babelstone-zla1.12.20 — so there is no `VolumeSnapshotClass` to back.)
 4. `kubectl apply` the cluster-scoped bootstrap (the issuers and the k3s upgrade `Plan`). A blanket

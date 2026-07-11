@@ -417,26 +417,24 @@ carries a memory limit, so the sizing stays an invariant rather than a one-off
 stack, ha is multi-node and would size differently).
 
 Validate (the same CI gate as `base`/`ha` — CI loops `base` plus both overlays).
-The staging leg adds **`-ignore-missing-schemas`** because it registers the
-`openbao-csi` `SecretProviderClass` custom resource, whose CRD-provided schema is
-not vendored (the CRD is installed out-of-band at bootstrap, never in the render —
-see [`./components/openbao-csi/README.md`](./components/openbao-csi/README.md)).
-The flag skips only that schema-less kind; every kind that HAS a vendored schema
-is still validated under `-strict`. `base`/`ha` render no `SecretProviderClass`,
-so their legs stay fully strict (no flag):
+All three targets validate **fully `-strict` with no `-ignore-missing-schemas`**:
+every rendered kind has a vendored schema. (Since bd babelstone-zla1.12.14.2 the
+`openbao-csi` `SecretProviderClass` — the only schema-less kind — is applied
+out-of-band at bootstrap, never rendered, so staging joins `base`/`ha` as fully
+strict; see [`./components/openbao-csi/README.md`](./components/openbao-csi/README.md).)
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging \
-  | mise exec -- kubeconform -strict -ignore-missing-schemas -summary -kubernetes-version 1.31.0
+  | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
 ```
 
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
 installing the Secrets Store CSI driver + the vault-csi-provider + cert-manager +
 the issuer, initialising/unsealing OpenBao and populating its KV paths, pointing
 DNS at the node IP, and the end-to-end cert verification all need the Hetzner
-account + DNS (Phases 0–2). The overlay itself now registers the `openbao-csi`
-`SecretProviderClass` (the app-tier secret source, bd babelstone-zla1.12.21) — but
-only that custom resource; the CRD-bearing CSI **driver** install is bootstrap-only
+account + DNS (Phases 0–2). The `openbao-csi` `SecretProviderClass` (the app-tier
+secret source) is applied out-of-band at bootstrap (bd babelstone-zla1.12.14.2), NOT
+in the overlay render; the CRD-bearing CSI **driver** install is likewise bootstrap-only
 (out-of-band, like cert-manager — see
 [`bootstrap/README.md`](./overlays/staging/bootstrap/README.md) and
 [`./components/openbao-csi/README.md`](./components/openbao-csi/README.md)). The Phase-1 provisioner config now lives in [`../hetzner-k3s/`](../hetzner-k3s/)

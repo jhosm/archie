@@ -113,7 +113,7 @@ kubectl -n "$NAMESPACE" get secret "$APP_SECRET" >/dev/null 2>&1 \
   || fail "$NAMESPACE/$APP_SECRET not found — provision it first (staging-ops.md §1 step 5)."
 
 kubectl get clusterrolebinding openbao-auth-delegator >/dev/null 2>&1 \
-  || fail "ClusterRoleBinding openbao-auth-delegator missing — apply the overlay with bd babelstone-zla1.12.31 first (the k8s-auth TokenReview is forbidden without it)."
+  || fail "ClusterRoleBinding openbao-auth-delegator missing — run scripts/staging-bootstrap.sh (it applies bootstrap/openbao-auth.yaml; bd babelstone-zla1.12.14.2). Without it the k8s-auth TokenReview is forbidden."
 
 ENGINE_SA="${ENGINE_SA:-$(kubectl -n "$NAMESPACE" get deploy engine \
   -o jsonpath='{.spec.template.spec.serviceAccountName}' 2>/dev/null || true)}"
