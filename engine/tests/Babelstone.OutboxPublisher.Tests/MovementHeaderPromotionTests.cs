@@ -133,12 +133,12 @@ public sealed class MovementHeaderPromotionTests
     }
 
     [Fact]
-    public void A_default_legacy_DepositMatured_promotes_no_ce_settlementtarget_so_legacy_routing_is_unchanged()
+    public void A_default_DepositMatured_promotes_ce_settlementtarget_engine_ca_through_the_relay()
     {
-        // The DEFAULT counterparty (LegacyDda) promotes NO target header, so a legacy-routed maturity is
-        // byte-identical to the prior no-target shape: only ce_movementorigin / ce_movementdirections
-        // ride, and the substrate router falls back to the legacy core (UNCHANGED). This is the guarantee
-        // that an instance which has not opted into engine-CA settlement is untouched.
+        // The PRODUCER default is now EngineCa: a DepositMatured constructed WITHOUT setting SettlementTarget
+        // routes its payout to the engine-owned CA, so its IntegrationHeaders declares ce_settlementtarget =
+        // engine-ca and the relay promotes it. This is the guarantee that term-deposit now emits engine-CA on
+        // every leg by default. Legacy is opt-OUT — proven below.
         var matured = new DepositMatured(
             PrincipalReturned: new Money(1_000_000),
             NetInterestPaid: new Money(21_900),
@@ -155,8 +155,43 @@ public sealed class MovementHeaderPromotionTests
                     Origin: MovementOrigin.Originated,
                     CommandId: Guid.NewGuid()),
             ]);
-        // No SettlementTarget set → the record default is LegacyDda.
-        Assert.Equal(SettlementTarget.LegacyDda, matured.SettlementTarget);
+        // No SettlementTarget set → the record default is now EngineCa.
+        Assert.Equal(SettlementTarget.EngineCa, matured.SettlementTarget);
+
+        var headers = OutboxDrainer.BuildHeadersCore(
+            Row(matured.IntegrationHeaders), source: "urn:babelstone:engine");
+
+        Assert.Equal("Originated", HeaderValue(headers, "ce_movementorigin"));
+        Assert.Equal("Credit", HeaderValue(headers, "ce_movementdirections"));
+        Assert.Equal("engine-ca", HeaderValue(headers, "ce_settlementtarget"));
+    }
+
+    [Fact]
+    public void An_explicit_legacy_DepositMatured_promotes_no_ce_settlementtarget_so_legacy_routing_is_unchanged()
+    {
+        // The EXPLICIT opt-OUT counterparty (LegacyDda) promotes NO target header, so a legacy-routed maturity
+        // is byte-identical to the prior no-target shape: only ce_movementorigin / ce_movementdirections
+        // ride, and the substrate router falls back to the legacy core (UNCHANGED). This is the guarantee
+        // that an instance which explicitly opts a leg out of engine-CA settlement keeps legacy routing.
+        var matured = new DepositMatured(
+            PrincipalReturned: new Money(1_000_000),
+            NetInterestPaid: new Money(21_900),
+            TotalPayout: new Money(1_021_900),
+            MaturedOn: new DateOnly(2026, 12, 31),
+            Movements:
+            [
+                new Movement(
+                    AccountRef: "acct-payout-opaque",
+                    Direction: SettlementDirection.Credit,
+                    Amount: new Money(1_021_900),
+                    ValueDate: new DateOnly(2026, 12, 31),
+                    Operation: MovementOperation.PayMaturity,
+                    Origin: MovementOrigin.Originated,
+                    CommandId: Guid.NewGuid()),
+            ])
+        {
+            SettlementTarget = SettlementTarget.LegacyDda,
+        };
 
         var headers = OutboxDrainer.BuildHeadersCore(
             Row(matured.IntegrationHeaders), source: "urn:babelstone:engine");

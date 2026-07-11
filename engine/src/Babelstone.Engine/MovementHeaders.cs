@@ -208,13 +208,16 @@ public static class MovementHeaders
 /// </summary>
 public enum SettlementTarget
 {
-    /// <summary>Settle against the LEGACY demand-deposit core over the ACL (ADR-PC-016). The DEFAULT — a family
-    /// that has not migrated a leg to engine-CA settlement stays here, and the router routes it exactly as
-    /// before (UNCHANGED).</summary>
+    /// <summary>Settle against the LEGACY demand-deposit core over the ACL (ADR-PC-016). The enum's ZERO value,
+    /// and the router's fallback when NO <c>ce_settlementtarget</c> header is promoted — but the explicit
+    /// opt-OUT selection on the PRODUCER side: the term-deposit producer default is now
+    /// <see cref="EngineCa"/>, so a family sets this only when a leg must stay on the legacy core, and it
+    /// promotes no target header so the router routes it exactly as before (UNCHANGED).</summary>
     LegacyDda,
 
     /// <summary>Settle against the engine-OWNED current-account family (ADR-PC-037 / ADR-PC-043). The
     /// single-owner counterparty the router diverts the leg to on the promoted <c>ce_settlementtarget</c>
-    /// header.</summary>
+    /// header, and the PRODUCER default for the term-deposit family. The producer default is governed by the
+    /// event's property initializer, not this enum's zero value.</summary>
     EngineCa,
 }
