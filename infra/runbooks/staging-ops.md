@@ -88,7 +88,7 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
      --from-literal=OPENBAO_DEV_TOKEN="<real OpenBao token — never 'root'>" \
      --from-literal=SECRET_VAULT_KEK="$(openssl rand -base64 32)" \
-     --from-file=OIDC_PRIVATE_KEYS=<real PEM signing key file> \
+     --from-file=OIDC_PRIVATE_KEYS=<real PKCS#8 EC P-256 signing key file> \
      --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>" \
      --from-literal=LOGTO_MISSION_CONTROL_CLIENT_SECRET="<the Logto mission-control app client secret>" \
      --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)" \
@@ -96,6 +96,15 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      --from-literal=BACKSTAGE_AUTH_SESSION_SECRET="$(openssl rand -base64 32)" \
      --from-literal=MC_READONLY_DB_PASSWORD="$(openssl rand -base64 24)"
    ```
+
+   > **`OIDC_PRIVATE_KEYS` MUST be a PKCS#8 key (`-----BEGIN PRIVATE KEY-----`), NOT SEC1
+   > (`-----BEGIN EC PRIVATE KEY-----`).** Logto/jose derive the signing algorithm reliably only from
+   > PKCS#8; a SEC1 EC key makes Logto's admin-console client default to RS256 while the EC provider
+   > signs ES256-only, so the console login fails with `id_token_signed_response_alg must be 'ES256'`
+   > (bd babelstone-zla1.10.16). `cd-secret-preflight.sh` now fails the deploy loud on a SEC1 key.
+   > Generate a correct one with `openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out
+   > oidc.pem` (emits PKCS#8), or convert an existing SEC1 key **losslessly** (same key material) with
+   > `openssl pkcs8 -topk8 -nocrypt -in sec1.pem -out oidc.pem`.
 
    `MC_READONLY_DB_PASSWORD` (bd zla1.17.3) is the password for the dedicated read-only Postgres
    role `babelstone_readonly` that Mission Control's Outbox·Inbox `/pg` lens connects as: the
