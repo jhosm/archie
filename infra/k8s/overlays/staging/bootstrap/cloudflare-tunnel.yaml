@@ -4,8 +4,9 @@
 #
 # Plain English: today Cloudflare's proxy reaches the origin over inbound :80/:443,
 # and the Hetzner firewall has to allow those ports from ALL of Cloudflare's IP ranges
-# (infra/hetzner-k3s/firewall-web.sh). So an attacker who discovers the origin IP
-# (95.217.237.53) can point their OWN Cloudflare zone at it, send a spoofed Host header,
+# (infra/hetzner-k3s/firewall-web.sh). So an attacker who discovers the origin's public IP
+# (the node IP — not committed here; resolve it at run time) can point their OWN Cloudflare
+# zone at it, send a spoofed Host header,
 # and reach the origin from a Cloudflare IP — bypassing the babelstone.dev edge (and its
 # Cloudflare Access identity gate on auth-admin/grafana). This manifest flips the
 # direction: cloudflared runs INSIDE the cluster and dials OUTBOUND to Cloudflare over a

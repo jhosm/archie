@@ -5,7 +5,7 @@ redeploy it, get it back after a failure, keep it patched, and know when it's do
 single-node staging environment (`overlays/staging`), not the HA topology; the heavier DR drill
 for the production-shaped topology is [`dr-recovery-drill.md`](./dr-recovery-drill.md).
 
-Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. Stateful data is on
+Scope: one Hetzner CPX42 x86 running single-node k3s, domain `babelstone.dev`. Stateful data is on
 the k3s built-in **`local-path`** provisioner (node-local storage — bd babelstone-zla1.12.20).
 It survives a **pod restart** but **NOT node loss**: there is no block-storage / cloud snapshot
 layer, because DR is deliberately **out of scope on staging** (the production-shaped DR drill is
@@ -385,6 +385,6 @@ alternative considered; it leaves the ports open-but-mTLS-gated rather than remo
 was chosen.) This satisfies the **MUST-before-production-promotion gate** on the
 parent epic (bd babelstone-zla1.12.14). **Human residual (account-gated):** create the tunnel + connector token in the
 Cloudflare Zero Trust dashboard, apply the manifest, point the CNAMEs at the tunnel, run
-`firewall-web.sh --apply`, then verify a spoofed-`Host` request to the origin IP (95.217.237.53)
-is refused host-by-host — see [`bootstrap/README.md`](../k8s/overlays/staging/bootstrap/README.md)
-"Apply order" steps 6-8.
+`firewall-web.sh --apply`, then verify a spoofed-`Host` request to the origin IP (the node's
+public IP, resolved at run time — never hardcode it) is refused host-by-host — see
+[`bootstrap/README.md`](../k8s/overlays/staging/bootstrap/README.md) "Apply order" steps 6-8.

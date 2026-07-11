@@ -12,7 +12,7 @@
 # mint the least-privilege CD kubeconfig. It refuses to run a HALF bootstrap — like
 # provision.sh refuses a bad SSH CIDR — checking every required tool, a reachable cluster,
 # and the operator-provisioned app secrets up front, and it does NOT touch the account-gated
-# pieces (Cloudflare DNS records, the Logto client secrets, the firewall). It is idempotent
+# pieces (Cloudflare DNS records, the Logto client secrets, the Cloudflare Tunnel, the firewall). It is idempotent
 # (helm upgrade --install, kubectl apply), so re-running it converges rather than duplicates.
 #
 # What it does NOT do (irreducibly human / out of scope — see the closing checklist):
@@ -20,7 +20,7 @@
 #   - register the Logto apps + provision their client secrets in babelstone-dev-secrets
 #     (staging-ops.md §1 step 5 — this script REFUSES to mint the account-gated secrets)
 #   - set Cloudflare SSL/TLS = Full (strict)
-#   - open the Hetzner web firewall (infra/hetzner-k3s/firewall-web.sh --apply)
+#   - install the Cloudflare Tunnel, then REMOVE the inbound web firewall ports once it is up (infra/hetzner-k3s/firewall-web.sh --apply)
 #   - deploy the overlay itself (kustomize build --load-restrictor=LoadRestrictionsNone … |
 #     kubectl apply -f -, or gh workflow run cd.yml — NOT `kubectl apply -k`, which can't pass
 #     the load-restrictor the out-of-root kong.yml ConfigMap needs)
@@ -264,12 +264,19 @@ fi
 # ── STEP 7 · the cluster-scoped bootstrap (glob over ${BOOTSTRAP_DIR}/*.yaml) ─────────────
 # Every file here is kubectl apply-safe: the dead volume-snapshot-class.yaml (a
 # VolumeSnapshotClass whose CRD is not installed since the Hetzner CSI was dropped, bd
-# babelstone-zla1.12.20) was removed in bd babelstone-zla1.12.24, so a blanket apply no
-# longer fails and no exclusion is needed.
-step "7. cluster-scoped bootstrap (${BOOTSTRAP_DIR}/*.yaml)"
+# babelstone-zla1.12.20) was removed in bd babelstone-zla1.12.24. cloudflare-tunnel.yaml is
+# SKIPPED here: it is account-gated (it needs the REAL Cloudflare connector token) and is
+# applied by hand in bootstrap/README.md step 6, not as part of this data-independent glue —
+# applying it now would only plant the empty-placeholder token Secret (crashlooping
+# cloudflared) and collide with step 6's own `kubectl create secret` (bd babelstone-zla1.12.14).
+step "7. cluster-scoped bootstrap (${BOOTSTRAP_DIR}/*.yaml, excluding the account-gated cloudflare-tunnel.yaml)"
 shopt -s nullglob
 applied_any=false
 for manifest in "$BOOTSTRAP_DIR"/*.yaml; do
+  if [ "$(basename "$manifest")" = cloudflare-tunnel.yaml ]; then
+    echo "   skip cloudflare-tunnel.yaml (account-gated — see bootstrap/README.md step 6)"
+    continue
+  fi
   echo "   apply $(basename "$manifest")"
   kubectl apply -f "$manifest"
   applied_any=true
@@ -320,9 +327,15 @@ Bootstrap glue done. REMAINING HUMAN / ACCOUNT-GATED STEPS (this script did NOT 
       unresolved until this is done. These produce secret-zero and are the operator's job
       (infra/k8s/components/openbao-csi/README.md "Live apply + init").
   [ ] Set the Cloudflare SSL/TLS mode to "Full (strict)" for babelstone.dev.
-  [ ] Open inbound TCP 80/443 on the Hetzner firewall (Cloudflare-scoped):
-        infra/hetzner-k3s/firewall-web.sh            # dry-run
-        infra/hetzner-k3s/firewall-web.sh --apply    # apply
+  [ ] Install the Cloudflare Tunnel + inject its REAL connector token, then point the six
+      babelstone.dev CNAMEs at <tunnel-id>.cfargotunnel.com (bootstrap/README.md step 6;
+      bd babelstone-zla1.12.14). The connector dials OUTBOUND, so no inbound origin web port
+      is needed.
+  [ ] ONLY AFTER the tunnel is up, remove the inbound TCP 80/443 rules from the Hetzner
+      firewall (they are the origin-bypass hole once the tunnel exists — tunnel UP first,
+      ports down second, or the edge goes dark):
+        infra/hetzner-k3s/firewall-web.sh            # dry-run — prints the rules it WOULD remove
+        infra/hetzner-k3s/firewall-web.sh --apply    # removes inbound TCP 80 + 443
   [ ] Deploy the overlay (NOT 'kubectl apply -k' — the out-of-root kong.yml ConfigMap needs
       --load-restrictor, which kubectl's embedded kustomize can't pass):
         mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging | kubectl apply -f -

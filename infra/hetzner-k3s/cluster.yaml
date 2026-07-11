@@ -37,8 +37,9 @@ networking:
   allowed_networks:
     # hetzner-k3s synthesises the Hetzner Cloud Firewall from these CIDR lists.
     # NOTE: only ssh + api can be expressed here — there is NO knob for the public web
-    # ports. Inbound TCP 80/443 (the Traefik edge) is provisioned OUT-OF-BAND by
-    # ./firewall-web.sh (Cloudflare-scoped; bd babelstone-zla1.14), not from this file.
+    # ports, and the public edge no longer needs one: it runs on a Cloudflare Tunnel
+    # (cloudflared dials OUTBOUND; bd babelstone-zla1.12.14). ./firewall-web.sh REMOVES the
+    # inbound TCP 80/443 rules once the tunnel is up (bd babelstone-zla1.14), not from this file.
     ssh:
       # LOAD-BEARING SENTINEL — do NOT hand-edit (bd babelstone-zla1.12.6). Provision via
       # ./provision.sh, which substitutes this line with the validated $SSH_ALLOWED_CIDR
