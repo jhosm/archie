@@ -35,7 +35,7 @@ public sealed class TermDepositConstitutionService(
     EarlyTerminationPolicy? earlyTerminationPolicy = null,
     IReadOnlyCollection<string>? requiredPreconditions = null,
     IProductConfigStore? productConfigStore = null,
-    SettlementTarget settlementTarget = SettlementTarget.LegacyDda)
+    SettlementTarget settlementTarget = SettlementTarget.EngineCa)
 {
     // The stream is keyed by the deposit id (v1: stream_id == deposit_id; partition_key == stream_id).
     private static readonly TermDepositFamilyModule Family = new();
@@ -66,10 +66,11 @@ public sealed class TermDepositConstitutionService(
     // stamps it onto the money-moving event (DepositMatured / InterestPaid / DepositTerminatedEarly /
     // DepositConstituted-renewal), whose IntegrationHeaders getter promotes it to the ce_settlementtarget
     // header the substrate router keys on — HEADER-ONLY, never reading Movement.AccountRef from the body
-    // (ADR-IC-018). DEFAULTS to LegacyDda, so an instance that has not opted into engine-CA settlement
-    // (every existing host + direct caller) keeps legacy routing byte-identical (UNCHANGED). The persistent customer
-    // account itself already rides Movement.AccountRef (Step A: command.PayoutAccount / closing.FundingAccount);
-    // this field is only the COUNTERPARTY selector (Step B, feature-design money-movement-settlement §2A.3).
+    // (ADR-IC-018). DEFAULTS to EngineCa, so a matured deposit credits the engine-owned current account; an
+    // instance that must keep a leg on the legacy demand core opts OUT by passing SettlementTarget.LegacyDda
+    // explicitly (legacy routing is opt-out, not the default). The persistent customer account itself already
+    // rides Movement.AccountRef (Step A: command.PayoutAccount / closing.FundingAccount); this field is only the
+    // COUNTERPARTY selector (Step B, feature-design money-movement-settlement).
     private readonly SettlementTarget _settlementTarget = settlementTarget;
 
     /// <summary>

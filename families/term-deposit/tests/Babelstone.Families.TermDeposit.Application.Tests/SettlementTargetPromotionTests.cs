@@ -54,12 +54,29 @@ public sealed class SettlementTargetPromotionTests
     }
 
     [Fact]
-    public async Task A_default_service_promotes_no_settlementtarget_on_the_maturity_leg()
+    public async Task A_default_service_promotes_engine_ca_on_the_maturity_leg()
     {
-        // The DEFAULT (LegacyDda) — a service constructed with no settlementTarget argument keeps the
-        // maturity leg on the legacy core: only movement headers ride, never ce_settlementtarget.
+        // The DEFAULT is now EngineCa — a service constructed with no settlementTarget argument routes the
+        // maturity leg to the engine-owned current account, promoting ce_settlementtarget = engine-ca. Legacy
+        // routing is opt-OUT, proven separately below.
         var depositId = Guid.NewGuid();
         var (service, sink) = ServiceOverStream(depositId, ActiveAtMaturityStream(depositId));
+
+        await service.MatureAsync(new MatureDepositCommand(
+            depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero), PayoutAccount, "test"));
+
+        AssertEngineCaTargeted(sink, SettlementDirection.Credit);
+    }
+
+    [Fact]
+    public async Task An_explicit_legacy_service_promotes_no_settlementtarget_on_the_maturity_leg()
+    {
+        // Legacy routing is now opt-OUT: a service constructed with an EXPLICIT SettlementTarget.LegacyDda keeps
+        // the maturity leg on the legacy core — only movement headers ride, never ce_settlementtarget, so the
+        // substrate router falls back to legacy (UNCHANGED).
+        var depositId = Guid.NewGuid();
+        var (service, sink) = ServiceOverStream(
+            depositId, ActiveAtMaturityStream(depositId), SettlementTarget.LegacyDda);
 
         await service.MatureAsync(new MatureDepositCommand(
             depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero), PayoutAccount, "test"));
@@ -198,10 +215,11 @@ public sealed class SettlementTargetPromotionTests
     /// a <see cref="CapturingSink"/> that records the appended outbox headers, and a rate-sheet store that
     /// fails if touched (the covered legs — maturity / coupon / early-termination / SAME_RATE renewal — never
     /// re-resolve a sheet). The <paramref name="settlementTarget"/> is the engine-instance counterparty choice
-    /// under test; omitting it exercises the LegacyDda default.</summary>
+    /// under test; omitting it exercises the EngineCa default (legacy routing is opt-OUT — pass
+    /// <see cref="SettlementTarget.LegacyDda"/> explicitly for it).</summary>
     private static (TermDepositConstitutionService Service, CapturingSink Sink) ServiceOverStream(
         Guid depositId, DomainEvent[] stream,
-        SettlementTarget settlementTarget = SettlementTarget.LegacyDda,
+        SettlementTarget settlementTarget = SettlementTarget.EngineCa,
         EarlyTerminationPolicy? earlyTerminationPolicy = null)
     {
         var serializer = new JsonEventSerializer();

@@ -127,11 +127,12 @@ public sealed record DepositConstituted(
     /// so the Avro codec (which maps only the primary-constructor parameters) never serializes it — this is a
     /// pure PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
     /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
-    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> — the legacy demand core over the ACL (ADR-PC-016),
-    /// so a family that has not opted a leg into engine-CA settlement keeps legacy routing UNCHANGED; the
-    /// term-deposit service sets it to <see cref="SettlementTarget.EngineCa"/> for an engine-CA-targeted leg.
+    /// Defaults to <see cref="SettlementTarget.EngineCa"/> — the leg settles against the engine-owned current
+    /// account (ADR-PC-037 / ADR-PC-043). A leg is set to <see cref="SettlementTarget.LegacyDda"/> only when it
+    /// must stay on the legacy demand core over the ACL (ADR-PC-016) — legacy routing is now opt-OUT, explicitly
+    /// configured, not the default.
     /// </summary>
-    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.EngineCa;
 
     /// <summary>
     /// Promote a RENEWAL constitution's rollover-debit Movement origin/direction to the
@@ -198,11 +199,11 @@ public sealed record DepositMatured(
     /// codec (which maps only the primary-constructor parameters) never serializes it — a pure PRODUCER-side
     /// decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c> header by
     /// <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold. Defaults to
-    /// <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016), so legacy
-    /// routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/> for
-    /// an engine-CA-targeted payout account.
+    /// <see cref="SettlementTarget.EngineCa"/> (the payout settles against the engine-owned current account,
+    /// ADR-PC-037 / ADR-PC-043). A leg is set to <see cref="SettlementTarget.LegacyDda"/> only when it must stay
+    /// on the legacy demand core over the ACL (ADR-PC-016) — legacy routing is opt-OUT, not the default.
     /// </summary>
-    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.EngineCa;
 
     /// <summary>
     /// Declares the maturity payout's Movement origin/direction (<c>movementorigin</c> /
@@ -306,11 +307,12 @@ public sealed record InterestPaid(
     /// constructor, so the Avro codec (which maps only the primary-constructor parameters) never serializes it
     /// — a pure PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
     /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
-    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016),
-    /// so legacy routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/>
-    /// for an engine-CA-targeted payout/funding account.
+    /// Defaults to <see cref="SettlementTarget.EngineCa"/> (the coupon settles against the engine-owned current
+    /// account, ADR-PC-037 / ADR-PC-043). A leg is set to <see cref="SettlementTarget.LegacyDda"/> only when it
+    /// must stay on the legacy demand core over the ACL (ADR-PC-016) — legacy routing is opt-OUT, not the
+    /// default.
     /// </summary>
-    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.EngineCa;
 
     /// <summary>
     /// Promote the coupon Movement's origin/direction to the <c>ce_movementorigin</c> /
@@ -376,11 +378,12 @@ public sealed record DepositTerminatedEarly(
     /// so the Avro codec (which maps only the primary-constructor parameters) never serializes it — a pure
     /// PRODUCER-side decision the family stamps at emission, promoted into the <c>ce_settlementtarget</c>
     /// header by <see cref="IntegrationHeaders"/>, never carried on the wire and irrelevant on replay/fold.
-    /// Defaults to <see cref="SettlementTarget.LegacyDda"/> (the legacy demand core over the ACL, ADR-PC-016),
-    /// so legacy routing stays UNCHANGED unless the term-deposit service sets <see cref="SettlementTarget.EngineCa"/>
-    /// for an engine-CA-targeted payout account.
+    /// Defaults to <see cref="SettlementTarget.EngineCa"/> (the payout settles against the engine-owned current
+    /// account, ADR-PC-037 / ADR-PC-043). A leg is set to <see cref="SettlementTarget.LegacyDda"/> only when it
+    /// must stay on the legacy demand core over the ACL (ADR-PC-016) — legacy routing is opt-OUT, not the
+    /// default.
     /// </summary>
-    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.LegacyDda;
+    public SettlementTarget SettlementTarget { get; init; } = SettlementTarget.EngineCa;
 
     /// <summary>
     /// Promote the early-termination payout Movement's origin/direction to the <c>ce_movementorigin</c> /

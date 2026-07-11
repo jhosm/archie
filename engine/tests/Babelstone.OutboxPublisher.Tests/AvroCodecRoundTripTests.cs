@@ -342,32 +342,33 @@ public sealed class AvroCodecRoundTripTests
     [Fact]
     public void DepositMatured_SettlementTarget_is_producer_only_and_never_rides_the_avro_wire()
     {
-        // The engine-CA counterparty selector (ADR-PC-043) is an init-only
+        // The settlement counterparty selector (ADR-PC-043) is an init-only
         // routing signal OUTSIDE DepositMatured's primary constructor, so the Avro codec — which maps ONLY
         // the primary-constructor parameters — never serializes it. This is what keeps the change HEADER-ONLY
         // (ADR-IC-018): the target is promoted to the ce_settlementtarget header at emission, but it does
-        // NOT widen the durable bus contract (no .avsc field). Proof: an engine-CA-targeted event encodes,
-        // and the decoded copy carries the default LegacyDda — the wire never learned about EngineCa. The
+        // NOT widen the durable bus contract (no .avsc field). Proof: a LegacyDda-targeted event (the
+        // NON-default now that the producer default is EngineCa) encodes, and the decoded copy carries the
+        // initializer default EngineCa — the wire never learned about the LegacyDda selection. The
         // record-equality assertion is the mutation backstop: were the property ever promoted onto the .avsc
         // (a positional param), the decoded copy would equal the original and this test would fail loud.
         var serializer = NewSerializer();
-        var engineCaTargeted = new DepositMatured(
+        var legacyTargeted = new DepositMatured(
             PrincipalReturned: new Money(1_000_000),
             NetInterestPaid: new Money(21_900),
             TotalPayout: new Money(1_021_900),
             MaturedOn: new DateOnly(2026, 12, 31))
         {
-            SettlementTarget = SettlementTarget.EngineCa,
+            SettlementTarget = SettlementTarget.LegacyDda,
         };
 
         var decoded = (DepositMatured)serializer.Decode(
-            serializer.Encode(engineCaTargeted).Bytes, typeof(DepositMatured));
+            serializer.Encode(legacyTargeted).Bytes, typeof(DepositMatured));
 
         // The Avro-mapped facts (money legs, date) round-trip exactly; the producer-only target does NOT.
-        Assert.Equal(SettlementTarget.EngineCa, engineCaTargeted.SettlementTarget);
-        Assert.Equal(SettlementTarget.LegacyDda, decoded.SettlementTarget);
-        Assert.NotEqual(engineCaTargeted, decoded);
-        Assert.Equal(engineCaTargeted with { SettlementTarget = SettlementTarget.LegacyDda }, decoded);
+        Assert.Equal(SettlementTarget.LegacyDda, legacyTargeted.SettlementTarget);
+        Assert.Equal(SettlementTarget.EngineCa, decoded.SettlementTarget);
+        Assert.NotEqual(legacyTargeted, decoded);
+        Assert.Equal(legacyTargeted with { SettlementTarget = SettlementTarget.EngineCa }, decoded);
     }
 
     [Fact]
