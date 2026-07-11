@@ -36,6 +36,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Expose internals to the host's own test project so the server-side internal-mTLS validator
+         (InternalMtls.BuildClientCertificateValidation, bd babelstone-zla1.12.25) can be unit-tested. -->
+    <InternalsVisibleTo Include="Babelstone.Orchestrator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The DDL ships as embedded, numbered, forward-only SQL resources (ADR-PC-001 §P5,
          lifted from Babelstone.EventStore.Migrations). The runner reads them out of the
          assembly so a deploy carries its own schema; no loose-file lookup at runtime. -->

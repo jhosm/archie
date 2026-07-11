@@ -12,33 +12,37 @@
 # tls_verify:true at deploy time — so the gateway side is ready; this patch is
 # the missing server side.
 #
-# No code change is needed for the TLS listener itself: WebApplication.Create-
-# Builder wires the Kestrel configuration loader by default, so the
-# Kestrel__Endpoints__* env below binds HTTPS + ClientCertificateMode from
-# config alone. The tcpSocket probes keep passing (they test the bind, not the
-# handshake).
+# The TLS LISTENER is config: the Kestrel__Endpoints__Https__* env below binds
+# HTTPS from the mounted server cert (WebApplication.CreateBuilder wires the
+# Kestrel configuration loader by default). The client-cert REQUIRE + VALIDATE
+# policy is CODE, not config — see the KNOWN-REMAINDER resolution below. The
+# tcpSocket probes keep passing (they test the bind, not the handshake).
 #
 # ROLLOUT ORDER (all steps, same maintenance window):
 #   1. kubectl apply -f overlays/staging/bootstrap/internal-mtls.yaml
 #      (needs mcp-mtls.yaml's mcp-mtls-ca Issuer; wait for the two Secrets).
-#   2. Solve the CLIENT-CERT TRUST remainder (below) — without it,
-#      RequireCertificate REJECTS Kong's internal-CA client cert.
+#   2. Deploy the engine + orchestrator IMAGES carrying the server-side trust
+#      code (bd babelstone-zla1.12.25 — landed; see below), so RequireCertificate
+#      VALIDATES internal-CA client certs instead of rejecting them.
 #   3. Uncomment this patch in kustomization.yaml, deploy, re-run deck-sync.
-#   4. Every plain-http engine/orchestrator caller must switch to https and
-#      present a client cert from the same CA: the orchestrator dispatcher
-#      (Engine__BaseUrl), notification (Engine__BaseUrl), mcp-server
-#      (BABELSTONE_ENGINE_URL/_ORCHESTRATOR_URL), Mission Control's proxy.
-#      Until they do, enabling this BREAKS those hops — that client-side leg is
-#      deliberately out of this patch (tracked as the reported remainder).
+#   4. The engine/orchestrator CALLERS already dial https + present a client cert
+#      UNCONDITIONALLY on staging — the orchestrator dispatcher (Engine__BaseUrl),
+#      notification (Engine__BaseUrl), mcp-server (BABELSTONE_ENGINE_URL/
+#      _ORCHESTRATOR_URL), Mission Control's proxy (bd babelstone-zla1.12.10).
+#      Enabling the server flip is what makes those hops SUCCEED rather than 502.
 #
-# KNOWN REMAINDER (reported, not silently skipped): .NET's default client-cert
-# validation builds the chain against the CONTAINER'S system trust store, which
-# does not contain the internal CA. Two supported fixes, either is small:
-#   (a) image-side: COPY the CA into /usr/local/share/ca-certificates/ +
-#       `update-ca-certificates` in the runtime image (the CA cert is public
-#       material — the mounted /certs/ca.crt here is the source); or
-#   (b) code-side: ConfigureHttpsDefaults(o => o.ClientCertificateValidation =
-#       ...) pinning /certs/ca.crt (a few lines in each Program.cs).
+# KNOWN REMAINDER — RESOLVED (bd babelstone-zla1.12.25): .NET's default client-
+# cert validation builds the chain against the CONTAINER'S system trust store,
+# which does not contain the cluster-generated internal CA. Fixed CODE-SIDE
+# (option (b)): each host's InternalMtls installs — gated on the
+# InternalMtls__CaCertPath env set in each stanza below — a Kestrel
+# ClientCertificateValidation callback that pins /certs/ca.crt via X509Chain
+# CustomRootTrust, the exact server-side mirror of the caller-side
+# InternalMtls.ValidateAgainstInternalCa (bd babelstone-zla1.12.10). So enabling
+# this patch no longer rejects valid internal-CA client certs. (The image-side
+# alternative — update-ca-certificates — was declined: the CA is cluster-
+# generated, absent at image build, and system-store trust is broader than the
+# scoped pin.)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,11 +63,15 @@ spec:
               value: /certs/tls.crt
             - name: Kestrel__Endpoints__Https__Certificate__KeyPath
               value: /certs/tls.key
-            # Transport-layer client-cert REQUIREMENT (ADR-IC-006 §P5): a
-            # Kong-bypassing caller with no internal-CA client cert is rejected
-            # at the handshake — the same posture the mcp-server already holds.
-            - name: Kestrel__Endpoints__Https__ClientCertificateMode
-              value: RequireCertificate
+            # Server-side client-cert REQUIRE + CA-pin VALIDATE is CODE (ADR-IC-006
+            # §P5; InternalMtls, bd babelstone-zla1.12.25): the presence of this CA
+            # path is the ONLY switch — the engine host reads it and installs
+            # ClientCertificateMode=RequireCertificate + a pinned-CA validation
+            # callback, so a Kong-bypassing caller with no internal-CA client cert
+            # is rejected at the handshake. The transport (URL + server cert above)
+            # stays config-driven; /certs/ca.crt is the mounted secret's CA PEM.
+            - name: InternalMtls__CaCertPath
+              value: /certs/ca.crt
           volumeMounts:
             - name: engine-tls
               mountPath: /certs
@@ -91,8 +99,12 @@ spec:
               value: /certs/tls.crt
             - name: Kestrel__Endpoints__Https__Certificate__KeyPath
               value: /certs/tls.key
-            - name: Kestrel__Endpoints__Https__ClientCertificateMode
-              value: RequireCertificate
+            # Server-side client-cert REQUIRE + CA-pin VALIDATE is CODE (ADR-IC-006
+            # §P5; InternalMtls, bd babelstone-zla1.12.25) — the same switch as the
+            # engine stanza above: its presence installs RequireCertificate + the
+            # pinned-CA validation callback on the orchestrator's saga edge.
+            - name: InternalMtls__CaCertPath
+              value: /certs/ca.crt
           volumeMounts:
             - name: orchestrator-tls
               mountPath: /certs

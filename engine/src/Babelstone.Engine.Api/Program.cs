@@ -17,6 +17,18 @@ using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Server-side internal mTLS (bd babelstone-zla1.12.25; ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)):
+// when configured, the engine's Kestrel command surface REQUIRES a client cert and validates it by
+// chaining to the pinned internal CA — the SERVER half of the caller-side leg (bd babelstone-zla1.12.10)
+// every in-cluster caller already presents. OFF unless InternalMtls:CaCertPath is set (the gated staging
+// internal-mtls.patch.yaml sets it, mounting the engine server cert + CA), so the demo/local/test hosts
+// keep plain HTTP byte-for-byte. The HTTPS transport (endpoint URL + server cert) stays config-driven
+// (Kestrel__Endpoints__Https__*); only the client-cert require+validate policy is here. See InternalMtls.
+if (InternalMtls.IsConfigured(builder.Configuration))
+{
+    InternalMtls.ConfigureKestrel(builder.WebHost, builder.Configuration);
+}
+
 // Typed ProblemDetails on any unhandled failure rather than a bare connection reset
 // (mirrors RateSheets.Api).
 builder.Services.AddProblemDetails();
