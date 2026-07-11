@@ -69,6 +69,8 @@ public sealed class DisbursementDeSettleServiceTests
         // a one-entry movementdirections list for this standalone Credit leg.
         Assert.Equal("Originated", disbursed.IntegrationHeaders![MovementHeaders.OriginKey]);
         Assert.Equal("Credit", disbursed.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+        // The disbursement CREDIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, disbursed.IntegrationHeaders[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
@@ -98,6 +100,8 @@ public sealed class DisbursementDeSettleServiceTests
 
         Assert.Equal("Originated", paid.IntegrationHeaders![MovementHeaders.OriginKey]);
         Assert.Equal("Debit", paid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+        // The installment DEBIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, paid.IntegrationHeaders[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
@@ -132,6 +136,8 @@ public sealed class DisbursementDeSettleServiceTests
 
         Assert.Equal("Originated", repaid.IntegrationHeaders![MovementHeaders.OriginKey]);
         Assert.Equal("Debit", repaid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+        // The early-repayment DEBIT settles against the engine-owned CA, not the legacy demand core (ADR-PC-043).
+        Assert.Equal(MovementHeaders.EngineCaValue, repaid.IntegrationHeaders[MovementHeaders.SettlementTargetKey]);
     }
 
     [Fact]
