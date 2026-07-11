@@ -1,0 +1,290 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-settlement-ingress.openapi.yaml — the engine-CA SETTLEMENT
+# INGRESS (bd babelstone-u79p.5; ADR-PC-043; catalogued per ADR-IC-020). INTERNAL — this surface is
+# DELIBERATELY ABSENT from infra/kong/kong.yml: it is the orchestrator settlement dispatcher's
+# mTLS-only target behind Boundary 2 (ADR-IC-006 §P5), never a public client route.
+#
+# WHAT it is (plain English): the settlement saga always POSTs to the SAME three counterparty-
+# invariant paths (/v1/reservations, /v1/debits, /v1/credits) and only flips the base URL to reach
+# the engine-owned current account instead of the legacy Core ACL. The engine does not natively serve
+# those paths (the current_account family serves /v1/accounts/{id}/authorize|capture|credit), so this
+# ADAPTER serves the three invariant paths and maps each onto the CA family's real writer for the
+# account the leg's account_ref names: reservations -> authorize (place hold), debits -> capture
+# (hold -> real Debit), credits -> credit-receive (land a Credit).
+#
+# Shapes are transcribed from the REAL code surface, not invented: SettlementIngressEndpoints.cs +
+# SettlementLegRequest (this file's SettlementLegRequest) and SettlementContracts.cs
+# (SettlementApplyResponse) in
+# families/current-account/src/Babelstone.Families.CurrentAccount.Application (snake_case on the wire
+# — the host's SnakeCaseLower JSON options; money as integer cents, ADR-PC-010 §P1). The spec<->DTO
+# lock is enforced by the Babelstone.ContractDrift.Tests Layer-1 suite: mutating a DTO without
+# updating this file turns CI red. The Layer-4 route sweep matches the three mapped routes against
+# this spec, so no allowlist entry is needed.
+#
+# Idempotency is INVERTED from the HTTP Idempotency-Key (ADR-PC-043 slot 4 / the scoped ADR-PC-029
+# carve-out): the CA-apply command_id derives from the BODY's economic-intent reference, so a saga
+# reissue with a byte-identical body collapses at command_dedup to ONE append. The reserve->confirm
+# hold link is deterministic the same way (target_hold_id = f(intent_reference)) — no round-trip of
+# the returned hold_id through the saga.
+#
+# NO PII (ADR-PC-004 §P2): opaque account tokens (the account_ref IS the account GUID, ADR-PC-033),
+# process/intent-derived references, integer cents, stable machine reason codes, synthetic examples.
+info:
+  title: Babelstone Engine — Engine-CA Settlement Ingress (INTERNAL, mTLS-only)
+  version: 1.0.0
+  description: >
+    The engine-owned current-account (conta à ordem) SETTLEMENT ingress (ADR-PC-043; bd
+    babelstone-u79p.5). INTERNAL — deliberately NOT exposed through the public Kong edge (ADR-IC-006
+    §P5 Boundary 2): its ONLY caller is the orchestrator's settlement command dispatcher over the
+    internal mTLS network. It serves the three counterparty-invariant settlement paths the saga POSTs
+    to and maps each onto the current_account family's authorize / capture / credit-receive writer for
+    the account the leg's account_ref names. Every route is idempotent on the body's economic-intent
+    reference (ADR-PC-043 slot 4 / ADR-PC-029): an at-least-once retry with a byte-identical body
+    replays the ORIGINAL append, never a second landing. A settlement-facing DECLINE is a 4xx (the
+    source holds the funds), never a 200-with-Declined the dispatcher would march to COMPLETED.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the current-account contract; opaque tokens + integer cents only
+  x-authorized-consumers:
+    - orchestrator          # the settlement command dispatcher (ADR-PC-043 / ADR-PC-029)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg) ──
+  # A non-empty reason string is REQUIRED on every spec under contracts/openapi/internal/. The gate
+  # FAILS if any operation below ever appears as a public Kong route — exposing one publicly must
+  # MOVE its spec to specs/ (and pass the public reconcile) in the same change.
+  x-internal: >-
+    The engine-CA settlement ingress is the mTLS-only Boundary-2 target of the orchestrator
+    settlement dispatcher (ADR-IC-006 §P5, ADR-PC-043) — deliberately absent from infra/kong/kong.yml;
+    a settlement leg is never a public client route.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public Kong
+      gateway host; unauthenticated transport is rejected at Boundary 2 (ADR-IC-006 §P5).
+paths:
+  /v1/reservations:
+    post:
+      operationId: settlementReserve
+      summary: Place the reversible balance hold (ReserveAccountBalance) → the CA authorize writer.
+      description: >
+        Maps the settlement reserve leg onto the current_account AUTHORIZE writer: places the
+        reversible earmark (operations.HoldPlaced) the confirm leg later captures. The authorize
+        command_id (and thus the placed hold id) is derived deterministically from the body's
+        intent_reference, so the confirm leg reconstructs the SAME hold WITHOUT round-tripping the
+        returned hold id. A DECLINED authorize is a 422 (the source holds the funds), never a
+        200-with-Declined.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementLegRequest'
+      responses:
+        '200':
+          description: The hold was placed (or replayed idempotently on the intent reference).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementApplyResponse'
+        '400':
+          description: >
+            account_ref is not the engine current-account id (a GUID), amount_cents is non-positive,
+            or the intent reference is absent — fail loud, never guess an account.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: The account was modified concurrently — retry (idempotent).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: >
+            The authorize was declined, or the account state cannot authorize a debit — a terminal
+            settlement decline (the source holds the funds), never a phantom hold.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/debits:
+    post:
+      operationId: settlementConfirmDebit
+      summary: Capture the hold into a real debit (ConfirmDebit) → the CA capture writer.
+      description: >
+        Maps the settlement confirm-debit leg onto the current_account CAPTURE writer: turns the
+        reserve leg's authorization hold into a real Debit (operations.HoldCaptured +
+        current_account AccountDebited in one atomic append). The captured hold is reconstructed
+        deterministically from the body's intent_reference (the SAME value the reserve leg carried),
+        and the append command_id is intent-derived — so a saga reissue lands EXACTLY ONE Debit. A
+        partial / over-capture is surfaced on the response's reconciliation field (ADR-PC-037).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementLegRequest'
+      responses:
+        '200':
+          description: The debit was captured (or replayed idempotently on the intent reference).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementApplyResponse'
+        '400':
+          description: >
+            account_ref is not the engine current-account id (a GUID), amount_cents is non-positive,
+            or the intent reference is absent.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: The account was modified concurrently — retry (idempotent).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: >
+            The capture's target hold names no active authorization hold, or the amount is
+            non-positive — a 4xx, never a phantom debit.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/credits:
+    post:
+      operationId: settlementConfirmCredit
+      summary: Land the value as a credit (ConfirmCredit) → the CA credit-receive writer.
+      description: >
+        Maps the settlement confirm-credit leg onto the current_account CREDIT-receive writer: lands
+        the value as a Credit (current_account AccountCredited), admitting an Active/Dormant account
+        (a Dormant one reactivates + credits in one atomic batch) and refusing a Closed/Erased one by
+        construction. The append command_id is intent-derived, so a saga reissue lands EXACTLY ONE
+        Credit. A non-admitting account is a 422 (the source holds the funds), never a
+        200-with-Declined.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementLegRequest'
+      responses:
+        '200':
+          description: The credit was landed (or replayed idempotently on the intent reference).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementApplyResponse'
+        '400':
+          description: >
+            account_ref is not the engine current-account id (a GUID), amount_cents is non-positive,
+            or the intent reference is absent.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: >
+            The account is Closed/Erased (ACCOUNT_CLOSED / ACCOUNT_ERASED) or the amount is
+            non-positive — a terminal credit-admission decline (the source holds the funds).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    SettlementLegRequest:
+      type: object
+      description: >
+        One settlement-leg request body (SettlementLegRequest) — the shared shape the reserve /
+        confirm-debit / confirm-credit legs POST. The ingress reads the destination account_ref, the
+        amount, and the leg's exactly-once intent_reference (with backward-compatible fall-backs to
+        the reserve / debit / credit references a pre-threading body carries). No PII (ADR-PC-004):
+        opaque account/intent tokens + integer cents.
+      required: [account_ref, amount_cents]
+      properties:
+        account_ref:
+          type: string
+          description: >
+            The destination account_ref — the engine current-account id (a GUID string) the leg lands
+            on (ADR-PC-043 §D5 amendment (b)). A non-GUID is a 400.
+        amount_cents:
+          type: integer
+          format: int64
+          description: >
+            The amount to land, integer cents (ADR-PC-010) — the source Movement.Amount (the in-band
+            WRONG-AMOUNT guard). A non-positive amount is a 400.
+        intent_reference:
+          type: string
+          description: >
+            The ADR-PC-043 slot-4 economic-intent reference — the exactly-once + hold-linking key. In
+            effect required; absent, the ingress falls back to reservation_ref / core_hold_ref /
+            credit_ref before failing 400.
+        reservation_ref:
+          type: string
+          description: The reserve leg's reservation reference (fall-back intent key).
+        core_hold_ref:
+          type: string
+          description: The confirm-debit leg's Core-hold reference (fall-back intent key).
+        credit_ref:
+          type: string
+          description: The confirm-credit leg's credit reference (fall-back intent key).
+        settlement_target:
+          type: string
+          description: >
+            The counterparty discriminator the substrate already routed on (engine-ca) — carried
+            through informationally, never re-read here (this is the engine-CA end of the wire).
+        value_date:
+          type: string
+          format: date
+          description: The leg's economic value-date (ADR-PC-023); the host clock's date when omitted.
+      examples:
+        - account_ref: 8f14e45f-ceea-467a-9ba3-6b1e6a2c9f01
+          amount_cents: 500000
+          intent_reference: RSV-8f14e45fceea467a9ba36b1e6a2c9f01
+          settlement_target: engine-ca
+    SettlementApplyResponse:
+      type: object
+      description: >
+        A settlement-apply outcome (SettlementApplyResponse): the account id, its folded lifecycle
+        status, and the commit sequence the append reached (the ADR-IC-005 read-your-writes token).
+        For a capture, reconciliation surfaces a non-normal hold release (a partial / over-capture,
+        ADR-PC-037), or null when the leg landed cleanly. No PII — structural facts only.
+      required: [account_id, status, commit_sequence]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id.
+        status:
+          type: string
+          description: The account's folded lifecycle status (e.g. ACTIVE).
+        commit_sequence:
+          type: integer
+          format: int64
+          description: The per-stream commit sequence the append reached (read-your-writes token).
+        reconciliation:
+          type: string
+          description: >
+            A non-normal capture-amount signal (PARTIAL_CAPTURE / OVER_CAPTURED, ADR-PC-037), or
+            absent on a clean landing.
+      examples:
+        - account_id: 8f14e45f-ceea-467a-9ba3-6b1e6a2c9f01
+          status: ACTIVE
+          commit_sequence: 3
+    Problem:
+      type: object
+      description: RFC 9457 problem detail (application/problem+json).
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string

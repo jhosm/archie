@@ -109,9 +109,19 @@ public sealed class ConstitutionProcessCommandsTests
             // The command NAME, both as the polymorphic discriminator ($type) and the explicit
             // CommandType property — a structural type name, never PII.
             "$type", "CommandType",
-            // Per-command STRUCTURAL references — opaque tokens, never identity data.
-            "AccountRef", "ReservationRef", "DepositRef", "ProductRef",
-            "CoreHoldRef", "CoreTxnRef",
+            // Per-command STRUCTURAL references — opaque tokens, never identity data. The engine-CA
+            // funding legs (reserve / confirm-debit) serialize account/reservation/hold references
+            // snake_case on the settlement/ingress wire (bd babelstone-u79p.3; JsonPropertyName); the
+            // legacy-only compensation/clearance legs (release / reverse / query) keep the PascalCase
+            // forms (they never reach the engine-CA ingress). Both forms are allowed — same opaque token.
+            "account_ref", "reservation_ref", "core_hold_ref",
+            "AccountRef", "ReservationRef", "CoreHoldRef",
+            "DepositRef", "ProductRef", "CoreTxnRef",
+            // The engine-CA funding-leg extras (bd babelstone-u79p.3; ADR-PC-043 §D5 amendment (b)) —
+            // all STRUCTURAL: the promoted destination account_ref (already listed), the hold-linking
+            // intent reference, the integer-cents amount (the WRONG-AMOUNT guard, never a formatted
+            // amount string), and the settlement-target counterparty discriminator. NEVER PII.
+            "intent_reference", "amount_cents", "settlement_target",
         };
 
         using var document = JsonDocument.Parse(command.ToBytes());

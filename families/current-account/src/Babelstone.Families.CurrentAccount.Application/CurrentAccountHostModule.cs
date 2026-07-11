@@ -186,6 +186,12 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         AccountsEndpoints.Map(app);
+        // The engine-CA SETTLEMENT INGRESS (bd babelstone-u79p.5; ADR-PC-043): the three counterparty-invariant
+        // settlement paths (/v1/reservations, /v1/debits, /v1/credits) the orchestrator's settlement dispatcher
+        // POSTs to when a leg is ce_settlementtarget=engine-ca. The adapter maps them onto this family's
+        // authorize/capture/credit writers for the account the leg's account_ref names — mTLS-only internal
+        // ingress, never a public Kong route.
+        SettlementIngressEndpoints.Map(app);
         // The operator pack-migration command surface (POST /v1/pack-migrations, ADR-PC-009) is NOT mapped
         // per family: it is registered ONCE at host level because the route is identical across families —
         // a per-family Map would collide (AmbiguousMatchException) the moment a second family is hosted.

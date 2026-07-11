@@ -106,8 +106,9 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
         // ReserveAccountBalance carries the REAL source account + a derived reservation ref — fields
         // the seam envelope does NOT have.
         var reserve = ParseBody(rows.Single(r => r.CommandType == ConstitutionProcess.ReserveAccountBalance).Payload);
-        Assert.Equal(sourceAccountRef, reserve.GetProperty("AccountRef").GetString());
-        Assert.True(reserve.TryGetProperty("ReservationRef", out var reservationRef));
+        // The funding-leg references serialize snake_case on the settlement/ingress wire (bd babelstone-u79p.3).
+        Assert.Equal(sourceAccountRef, reserve.GetProperty("account_ref").GetString());
+        Assert.True(reserve.TryGetProperty("reservation_ref", out var reservationRef));
         Assert.StartsWith("RSV-", reservationRef.GetString());
 
         // ValidateProductLimits carries the deposit + product references.
@@ -117,7 +118,12 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
 
         // ConfirmDebit (the self-emitted irreversible command) carries the Core hold reference.
         var confirm = ParseBody(rows.Single(r => r.CommandType == ConstitutionProcess.ConfirmDebit).Payload);
-        Assert.StartsWith("CORE-HOLD-", confirm.GetProperty("CoreHoldRef").GetString());
+        Assert.StartsWith("CORE-HOLD-", confirm.GetProperty("core_hold_ref").GetString());
+        // This is a LEGACY funding account (a non-GUID token), so the engine-CA funding extras are null and
+        // the leg is not settlement-target-tagged — the body is byte-identical to the pre-ADR-PC-043 shape
+        // (bd babelstone-u79p.3).
+        Assert.True(confirm.GetProperty("account_ref").ValueKind == System.Text.Json.JsonValueKind.Null);
+        Assert.True(confirm.GetProperty("settlement_target").ValueKind == System.Text.Json.JsonValueKind.Null);
 
         // No row is the bare seam envelope: every body carries at least one business-reference field
         // beyond the seam's {ProcessId, CommandType, CausationMessageId, CorrelationId}.
@@ -132,10 +138,15 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
             Assert.True(hasBusinessField, $"{row.CommandType} wrote the seam envelope, not a full payload.");
         }
 
-        // No PII (ADR-PC-004 §P2): a positive allow-list over every property name in every body.
+        // No PII (ADR-PC-004 §P2): a positive allow-list over every property name in every body. The funding
+        // legs serialize their references snake_case on the settlement/ingress wire and carry the engine-CA
+        // funding extras (all STRUCTURAL — the promoted destination account_ref, the hold-linking intent
+        // reference, the integer-cents amount, the counterparty discriminator); the legacy compensation/
+        // clearance legs keep the PascalCase forms (bd babelstone-u79p.3).
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
             "$type", "ProcessId", "CommandType", "CausationMessageId", "CorrelationId",
+            "account_ref", "reservation_ref", "core_hold_ref", "intent_reference", "amount_cents", "settlement_target",
             "AccountRef", "ReservationRef", "DepositRef", "ProductRef", "CoreHoldRef", "CoreTxnRef",
         };
         foreach (var row in rows)
