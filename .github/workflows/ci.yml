@@ -933,22 +933,18 @@ jobs:
           # reaching the network — run `make k8s-schemas` (scripts/k8s-schemas-vendor.sh)
           # to vendor it. Keep in lockstep with cd.yml's render job (same location).
           #
-          # The staging leg additionally carries -ignore-missing-schemas (bd
-          # babelstone-zla1.12.21): staging registers the openbao-csi
-          # SecretProviderClass custom resource, whose CRD-provided schema is not
-          # vendored (the CRD is installed out-of-band at bootstrap, never in the
-          # kustomize render — see infra/k8s/components/openbao-csi/README.md). The
-          # flag SKIPS only the kinds with no schema (the SecretProviderClass); every
-          # kind that HAS a vendored schema is still validated under -strict. base/ha
-          # render no SecretProviderClass, so they stay FULLY strict (no flag) — a
-          # missing schema there still fails loud.
+          # ALL THREE targets (base/ha/staging) are validated FULLY -strict with NO
+          # -ignore-missing-schemas: every rendered kind has a vendored schema, so a
+          # missing one fails loud. (Until bd babelstone-zla1.12.14.2 the staging leg
+          # carried -ignore-missing-schemas for the openbao-csi SecretProviderClass CR,
+          # whose CRD schema is not vendored; that CR is now applied out-of-band at
+          # bootstrap — never in any render — so the flag is gone and staging joins
+          # base/ha as fully strict. See infra/k8s/components/openbao-csi/README.md.)
           SCHEMA_LOC='infra/k8s/schemas/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json'
           for target in base overlays/ha overlays/staging; do
             echo "== kubeconform: $target =="
-            IGNORE_MISSING=""
-            case "$target" in overlays/staging) IGNORE_MISSING="-ignore-missing-schemas" ;; esac
             mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/$target" \
-              | mise exec -- kubeconform -strict $IGNORE_MISSING -summary -kubernetes-version 1.31.0 \
+              | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0 \
                   -schema-location "$SCHEMA_LOC"
           done
       - name: Assert ADR commitments in rendered manifests (P.6)

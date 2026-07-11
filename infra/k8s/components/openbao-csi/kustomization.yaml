@@ -12,15 +12,15 @@
 # deferred-registration note and README.md), to avoid colliding with in-flight
 # staging-overlay work.
 #
-# WHY it is NOT in the strict overlay render yet: the driver install carries CRDs
-# (SecretProviderClass, SecretProviderClassPodStatus) + a CSIDriver, and the
-# SecretProviderClass instance is a custom resource — none of which the CI
-# kubeconform -strict gate has a vendored schema for. Registering this in the
-# staging overlay would therefore need the driver install moved to the
-# out-of-band bootstrap layer (like cert-manager / the CSI snapshot controller,
-# see overlays/staging/bootstrap/README.md) and the component reduced to just the
-# SecretProviderClass, validated with -ignore-missing-schemas. That wiring is the
-# deferred follow-up; this component is authored + validated standalone here.
+# WHY the whole component is NOT in the strict overlay render: the driver install carries CRDs
+# (SecretProviderClass, SecretProviderClassPodStatus) + a CSIDriver — none of which the CI
+# kubeconform -strict gate has a vendored schema for — so the driver is installed out-of-band at
+# bootstrap (like cert-manager; see overlays/staging/bootstrap/README.md). The SecretProviderClass
+# INSTANCE (secret-provider-class.yaml) is ALSO applied out-of-band at bootstrap
+# (bd babelstone-zla1.12.14.2: the least-privilege cd-deployer holds no secretproviderclasses
+# grant), so it never enters any overlay render either. This component file is authored + validated
+# STANDALONE here (that standalone build DOES render the CRDs + the CR, so it uses
+# -ignore-missing-schemas — see README.md "Validate standalone").
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 

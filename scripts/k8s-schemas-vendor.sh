@@ -44,12 +44,14 @@ done > "$rendered"
 # "-apps-v1"; "networking.k8s.io/v1" -> "-networking-v1" (first group label).
 python3 - "$rendered" <<'PY' | sort -u > "$needed"
 import re, sys
-# Kinds provided by a CRD installed OUT-OF-BAND (never in the render), so upstream
-# kubernetes-json-schema has no schema for them and the strict gate skips them with
-# -ignore-missing-schemas. Do NOT try to vendor these — the fetch would 404. Keep in
-# lockstep with the -ignore-missing-schemas legs in ci.yml + cd.yml.
-#   SecretProviderClass → the openbao-csi component (bd babelstone-zla1.12.21); its CRD is
-#   installed at bootstrap, only the custom resource is registered in overlays/staging.
+# Kinds provided by a CRD installed OUT-OF-BAND whose custom resources are ALSO applied
+# out-of-band at bootstrap (never in any render), so upstream kubernetes-json-schema has no
+# schema for them. Do NOT try to vendor these — the fetch would 404. This is a DEFENSIVE skip:
+# since bd babelstone-zla1.12.14.2 the SecretProviderClass is no longer in overlays/staging (it
+# is bootstrap-applied), so the routine renders no longer emit it and ci.yml/cd.yml carry NO
+# -ignore-missing-schemas — but keep the skip so a future schema-less CR that slips into a render
+# fails soft here rather than 404-ing the vendor fetch.
+#   SecretProviderClass → the openbao-csi component; its CRD + the CR are both bootstrap-applied.
 CRD_KINDS_NO_UPSTREAM_SCHEMA = {"SecretProviderClass"}
 for doc in re.split(r'(?m)^---\s*$', open(sys.argv[1]).read()):
     av = re.search(r'(?m)^apiVersion:\s*(\S+)', doc)

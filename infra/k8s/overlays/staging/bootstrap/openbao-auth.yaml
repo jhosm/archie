@@ -1,0 +1,55 @@
+# infra/k8s/overlays/staging/bootstrap/openbao-auth.yaml
+# OpenBao Kubernetes-auth identity: the `openbao` ServiceAccount + the
+# `openbao-auth-delegator` ClusterRoleBinding (bd babelstone-zla1.12.14.2).
+#
+# Plain English: these two objects let OpenBao verify a pod's identity so the CSI driver can
+# fetch app secrets. They used to live in infra/k8s/base/openbao.yaml, but a ServiceAccount and
+# (especially) a ClusterRoleBinding to system:auth-delegator are privilege-granting objects the
+# routine deploy identity must never be able to create for itself. So they were moved OUT of the
+# rendered overlay into this bootstrap set — applied ONCE by the operator's cluster-admin
+# kubeconfig (like cd-deploy-rbac.yaml), NOT by the least-privilege `cd-deployer` on every
+# cd.yml apply. The cd-deployer deliberately holds NO grant on serviceaccounts, clusterrolebindings,
+# or secretproviderclasses; keeping these three out of the render is what preserves that.
+#
+# Applied automatically by scripts/staging-bootstrap.sh (the `bootstrap/*.yaml` glob) and by the
+# documented `kubectl apply -f bootstrap/*.yaml` fallback. MUST exist before the first cd.yml
+# overlay apply, or the openbao Deployment (still in base/openbao.yaml, keeping
+# `serviceAccountName: openbao`) has no SA to bind and the pod cannot schedule. The paired
+# SecretProviderClass (babelstone-app-secrets) is applied out-of-band too — see bootstrap/README.md.
+---
+# ServiceAccount the k8s auth method binds workloads to. OpenBao's Kubernetes auth method verifies
+# a workload's projected SA token; the Secrets Store CSI SecretProviderClass
+# (infra/k8s/components/openbao-csi) authenticates as this SA to fetch app-tier secrets. The
+# auth-method ROLE mapping (which SA -> which policy) is an operator init step (staging-openbao-init.sh).
+# Namespace is written EXPLICITLY: this file is `kubectl apply`-ed raw, so the overlay's kustomize
+# namespace transformer no longer applies.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: openbao
+---
+# Let the openbao ServiceAccount submit TokenReviews (system:auth-delegator). OpenBao's Kubernetes
+# auth method validates a mounting workload's projected SA token by calling the k8s TokenReview API
+# with the openbao SA's OWN token as the reviewer (token_reviewer_jwt, set at operator init).
+# Without this binding that review is forbidden, so every CSI login
+# (vault-csi-provider -> auth/kubernetes/login) fails and the engine never mounts
+# babelstone-app-secrets (bd babelstone-zla1.12.31). Cluster-scoped, mirroring the driver's own
+# vault-csi-provider-server-binding. The subject namespace is babelstone-staging — the only place
+# OpenBao runs live (this bootstrap set only ever targets staging).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-auth-delegator
+  labels:
+    app.kubernetes.io/name: openbao
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: openbao
+    namespace: babelstone-staging

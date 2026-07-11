@@ -79,19 +79,16 @@ resources:
   # command surface, Postgres, OpenBao, Redpanda, or the Kong Admin API.
   # Enforced by k3s's embedded NetworkPolicy controller — nothing to install.
   - network-policies.yaml
-  # Source app-tier secrets from OpenBao via the Secrets Store CSI driver
-  # (bd babelstone-zla1.12.21; ADR-PC-004 §A1 OpenBao PII boundary). This
-  # registers ONLY the SecretProviderClass custom resource — a direct file
-  # reference into the openbao-csi component, NOT the whole `components:` entry —
-  # so the CRD-bearing, cluster-scoped driver install under that component's
-  # upstream/ NEVER enters `kustomize build overlays/staging` (it is installed
-  # out-of-band at bootstrap, like cert-manager — see
-  # ../../components/openbao-csi/README.md and bootstrap/README.md). The
-  # SecretProviderClass Kind has no vendored kubeconform schema, so the
-  # staging-overlay leg of the strict gate carries -ignore-missing-schemas (it
-  # keeps -strict for every kind that HAS a schema, and skips only this CR);
-  # base/ha render no SecretProviderClass, so their gates stay fully strict.
-  - ../../components/openbao-csi/secret-provider-class.yaml
+  # NOTE: the `babelstone-app-secrets` SecretProviderClass (openbao-csi; ADR-PC-004 §A1 OpenBao
+  # PII boundary) is deliberately NOT registered here anymore. It is a namespaced custom resource
+  # the least-privilege cd-deployer holds no grant to apply, so — like the openbao SA/CRB
+  # (bootstrap/openbao-auth.yaml) — it is applied out-of-band at bootstrap with the operator's
+  # cluster-admin kubeconfig:
+  #   kubectl apply -n babelstone-staging -f ../../components/openbao-csi/secret-provider-class.yaml
+  # (see scripts/staging-bootstrap.sh + bootstrap/README.md; bd babelstone-zla1.12.14.2). The
+  # CRD-bearing, cluster-scoped driver install under that component's upstream/ was already
+  # installed out-of-band. With no SecretProviderClass left in the render, the staging kubeconform
+  # leg is now fully -strict (no -ignore-missing-schemas), matching base/ha.
 
 # Third-party image digest pins for the images the apps/ layer and THIS overlay add on top of
 # base (bd babelstone-2t16.31.1; ADR-PC-007 §A3). A base `images:` transformer reaches only
