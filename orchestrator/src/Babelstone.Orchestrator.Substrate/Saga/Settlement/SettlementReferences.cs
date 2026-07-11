@@ -44,7 +44,9 @@ public static class SettlementReferences
     public const string CoreTxnPrefix = "CT-";
 
     /// <summary>The opaque account reference prefix the substrate's staged <c>account_ref</c> seam derives
-    /// (until each family threads the real promoted <c>Movement.AccountRef</c>; ADR-PC-032 §A6).</summary>
+    /// (until each family threads the real promoted <c>Movement.AccountRef</c>; ADR-PC-032 slot 1 §Payload shape
+    /// leaves the <c>account_ref</c> payload placement to the family, so this staged placeholder awaiting each
+    /// family's promotion is the code seam — see <c>SettlementCommandPayloadFactory.cs</c> <c>&lt;remarks&gt;</c>).</summary>
     public const string AccountPrefix = "ACCT-";
 
     /// <summary>The credit reference prefix (the <c>ConfirmCredit</c> leg's credit token + the
