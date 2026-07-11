@@ -41,6 +41,7 @@ public static class HostPack
         "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
         "rate-sheet-refs/current-account-pt.yaml",
+        "rate-sheet-refs/loans-pt.yaml",
     ];
 
     public static VerifiedPack Load(string? packsDir, string packVersion)

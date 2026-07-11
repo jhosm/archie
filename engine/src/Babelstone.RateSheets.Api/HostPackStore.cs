@@ -32,6 +32,7 @@ public sealed class HostPackStore : IPackStore
         "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
         "rate-sheet-refs/current-account-pt.yaml",
+        "rate-sheet-refs/loans-pt.yaml",
     ];
 
     private readonly string _packsDir;

@@ -93,16 +93,19 @@ public sealed class PackParserTests
     }
 
     [Fact]
-    public void Rate_sheet_refs_point_at_the_term_deposit_and_current_account_sheets()
+    public void Rate_sheet_refs_point_at_the_term_deposit_current_account_and_personal_loan_sheets()
     {
-        // pt.2026.1 carries two rate-sheet refs: the term-deposit sheet and — since the current_account family
-        // gained its overdraft-interest rate (bd md1a) — the current_account overdraft sheet.
+        // pt.2026.1 carries three rate-sheet refs: the term-deposit sheet, the current_account overdraft
+        // sheet (since the family gained its overdraft-interest rate — bd md1a), and — since the
+        // personal_loan family gained its fixed-rate loan sheet (bd u79p.7) — the personal_loan loan sheet.
         var refs = Pt2026().RateSheetRefs;
-        Assert.Equal(2, refs.Count);
+        Assert.Equal(3, refs.Count);
         var deposit = Assert.Single(refs, r => r.ProductFamily == "term_deposit");
         Assert.Equal("pt-deposits-2026.1", deposit.RateSheetVersionId);
         var currentAccount = Assert.Single(refs, r => r.ProductFamily == "current_account");
         Assert.Equal("pt-overdrafts-2026.1", currentAccount.RateSheetVersionId);
+        var personalLoan = Assert.Single(refs, r => r.ProductFamily == "personal_loan");
+        Assert.Equal("pt-loans-2026.1", personalLoan.RateSheetVersionId);
     }
 
     [Fact]
@@ -331,7 +334,7 @@ public sealed class PackParserTests
     public void An_absent_rate_sheet_refs_block_defaults_to_no_refs()
     {
         var files = PackTestData.LoadPt2026();
-        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt\n  - current-account-pt", "", StringComparison.Ordinal);
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt\n  - current-account-pt\n  - loans-pt", "", StringComparison.Ordinal);
         Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
         files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
         // A dropped `?? []` would NullReference on the foreach over the (absent) ref-name list. The two ref
