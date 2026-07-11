@@ -43,10 +43,14 @@ public static class SettlementReferences
     /// <c>ActivateDeposit</c> / <c>ReverseCoreDebit</c> legs' Core-txn reference).</summary>
     public const string CoreTxnPrefix = "CT-";
 
-    /// <summary>The opaque account reference prefix the substrate's staged <c>account_ref</c> seam derives
-    /// (until each family threads the real promoted <c>Movement.AccountRef</c>; ADR-PC-032 slot 1 §Payload shape
-    /// leaves the <c>account_ref</c> payload placement to the family, so this staged placeholder awaiting each
-    /// family's promotion is the code seam — see <c>SettlementCommandPayloadFactory.cs</c> <c>&lt;remarks&gt;</c>).</summary>
+    /// <summary>The opaque account reference prefix the substrate's <c>account_ref</c> seam derives as the
+    /// FALLBACK when no real account_ref is threaded onto the settlement intent (bd babelstone-u79p.5). The
+    /// engine-CA leg now carries the customer's REAL promoted <c>Movement.AccountRef</c> as the destination
+    /// (ADR-PC-043 §D5 amendment (b); <c>SettlementIntent.AccountRef</c>), which the
+    /// <c>SettlementCommandPayloadFactory</c> forwards untouched; this <c>ACCT-{processId}</c> placeholder
+    /// remains only for the legacy-DDA path and the pre-promotion platform default (where the legacy core
+    /// resolves the account from the process-scoped business reference) — see
+    /// <c>SettlementCommandPayloadFactory.cs</c> <c>&lt;remarks&gt;</c>.</summary>
     public const string AccountPrefix = "ACCT-";
 
     /// <summary>The credit reference prefix (the <c>ConfirmCredit</c> leg's credit token + the

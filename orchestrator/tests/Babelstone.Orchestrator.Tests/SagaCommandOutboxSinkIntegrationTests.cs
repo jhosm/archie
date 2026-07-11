@@ -67,7 +67,13 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
             "$type", "ProcessId", "CommandType", "CausationMessageId", "CorrelationId",
-            "AccountRef", "ReservationRef", "DepositRef", "ProductRef",
+            // The funding-leg references serialize snake_case on the settlement/ingress wire, alongside the
+            // engine-CA funding extras (all STRUCTURAL — the promoted destination account_ref, the hold-
+            // linking intent reference, the integer-cents amount, the counterparty discriminator; null on a
+            // legacy leg). ValidateProductLimits keeps the PascalCase deposit/product references (bd
+            // babelstone-u79p.3).
+            "account_ref", "reservation_ref", "intent_reference", "amount_cents", "settlement_target",
+            "DepositRef", "ProductRef",
         };
         foreach (var row in rows)
         {

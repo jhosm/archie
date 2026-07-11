@@ -31,6 +31,7 @@ public sealed class SpecOperationCoverageTests
         "contracts/openapi/internal/engine-loan-reads.openapi.yaml",
         "contracts/openapi/internal/engine-account-commands.openapi.yaml",
         "contracts/openapi/internal/engine-account-reads.openapi.yaml",
+        "contracts/openapi/internal/engine-settlement-ingress.openapi.yaml",
     ];
 
     // The provisional-envelope exemption (see Layer1's Sor_ops guard).
