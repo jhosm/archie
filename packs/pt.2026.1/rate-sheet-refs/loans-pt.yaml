@@ -1,0 +1,10 @@
+# Version-pinned reference to the personal_loan (crédito pessoal) rate sheet (ADR-PC-008). The pack
+# carries the ref ONLY — the sheet body (the numerical fixed loan TANs) lives in the rate_sheets table on
+# its own fast cadence (surface §2), and the source YAML is rate-sheets/personal_loan/. A personal loan is
+# FIXED-rate (ADR-PC-030 / personal-loan.cue #FixedRate): the disbursement resolves rate_sheet_version_id to
+# a concrete TAN and stamps it on LoanDisbursed. This ref is what makes pack-validate depth-3 pass for the
+# rate-BEARING cp_pt_* loan variants (any variant carrying a `rate:` block needs the pack to price its
+# family — KindUnresolvedRateRef otherwise, depths.go).
+refs:
+  - product_family: personal_loan
+    rate_sheet_version_id: pt-loans-2026.1

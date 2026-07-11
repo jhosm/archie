@@ -1,0 +1,35 @@
+# cp_pt_education_24m_gated — a PT education-purpose personal loan (crédito pessoal a estudante) product
+# config: a lower-legal-cap purpose that DECLARES the upstream origination verdicts it requires.
+#
+# In plain English: this is the real, deployed config for a 24-month education-purpose personal loan. Because
+# education is a lower-cap purpose (DL 133/2009 art. 28), it prices under a lower legal ceiling and its
+# early-repayment commission is 0.25% (25 bps). It also NAMES which upstream checks must have passed before
+# it can disburse — a solvency assessment and a CRC (Central Credit Register) consultation — via the
+# required_preconditions list (ADR-PC-024). It only NAMES those verdicts; it never evaluates them, because
+# origination stays UPSTREAM (ADR-PC-030 §P1). Its interest RATE is a rate-sheet ref (ADR-PC-008), resolved
+# at DISBURSEMENT, never inline.
+#
+# It is validated against the #PersonalLoan schema (contracts/cue/families/personal-loan.cue) by pack-validate
+# depths 1–4 (ADR-PC-006): the required_preconditions keys are the engine-owned closed taxonomy
+# (#LoanPreconditionKey), so carrying them conforms at depth 1; the pack carries the loans-pt rate-sheet ref,
+# so the rate_ref resolves at depth 3. It lives in product-configs/personal-loan/, out of the term-deposit
+# store's non-recursive root glob (that store requires term_days/interest_variant, which a loan has neither).
+variant_id: cp_pt_education_24m_gated
+schema: personal_loan@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 24
+purpose: education
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 25
+# The upstream-evaluated origination verdicts this product REQUIRES before disbursement (ADR-PC-024). A
+# closed list of engine-owned verdict keys (#LoanPreconditionKey): the engine RECORDS the decision for
+# audit, upstream MAKES it (ADR-PC-030 §P1). The product config OWNS only which keys the product needs.
+required_preconditions:
+  - solvency_assessed
+  - crc_consulted
+principal_bounds:
+  min_cents: 50000

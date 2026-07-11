@@ -63,9 +63,13 @@ schema_pins:
 
 # current-account-pt is the current_account overdraft-interest rate-sheet ref (ADR-PC-037 §D5): the
 # ca_pt_standard variant now carries a `rate:` block, so the pack must price the family (pack-validate depth-3).
+# loans-pt is the personal_loan FIXED-rate ref (ADR-PC-030 / ADR-PC-008): the cp_pt_* loan variants under
+# product-configs/personal-loan/ carry a `rate:` block, so the pack must price the family for them to disburse
+# LIVE·engine (pack-validate depth-3, KindUnresolvedRateRef otherwise).
 rate_sheet_refs:
   - deposits-pt
   - current-account-pt
+  - loans-pt
 
 # Pack-shipped disclosure-template files (ADR-PC-025). templates/notices.yaml
 # carries the pt.notice.maturity 14-day pre-maturity opt-out reminder, version-

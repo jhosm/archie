@@ -16,7 +16,9 @@ for life (surface §3.5). **Declarative data, not code.**
 | `primitives/renewal-policies.yaml` | Auto-renewal-policy restrictions (SAME_TERM_SAME_RATE is pack-restricted) |
 | `families.yaml` | Family-set roster the deployment may run (ADR-PC-007 §P1) |
 | `parameters/constants.yaml` | Pack-level scalar constants |
-| `rate-sheet-refs/deposits-pt.yaml` | Version-pinned rate-sheet refs (ADR-PC-008) |
+| `rate-sheet-refs/deposits-pt.yaml` | Version-pinned term-deposit rate-sheet ref (ADR-PC-008) |
+| `rate-sheet-refs/current-account-pt.yaml` | Version-pinned current-account overdraft-interest rate-sheet ref (ADR-PC-008; ADR-PC-037) |
+| `rate-sheet-refs/loans-pt.yaml` | Version-pinned personal-loan fixed-rate rate-sheet ref (ADR-PC-008; ADR-PC-030) |
 | `test-corpus/` | Sealed regression evidence (§3.9) |
 | `schemas/` | **Not committed** — staged at build from `/contracts/cue` |
 
@@ -35,6 +37,18 @@ ships as a new version, never an in-place edit.
     periodic-quarterly, advance, banded early-termination) and one sealed-corpus
     canonical instance per shape. No new primitives; rate by ref only; withholding
     unchanged (2800 bps `irs_juros`, gross interest); day-count `act_360` only.
+  - **Personal-loan pricing** (bd `babelstone-u79p.7`) — added
+    `rate-sheet-refs/loans-pt.yaml`, the version-pinned `personal_loan` rate-sheet
+    ref (→ `pt-loans-2026.1`), so the pack can price the loan family
+    (ADR-PC-030 / ADR-PC-008). Two priced loan variants land under
+    `product-configs/personal-loan/` (`cp_pt_general_36m`,
+    `cp_pt_education_24m_gated`), each carrying a `rate_ref` `#FixedRate` block; the
+    ref is what makes their pack-validate depth-3 pass (a variant with a `rate:`
+    block needs the pack to price its family, `KindUnresolvedRateRef` otherwise).
+    This is what lets a personal loan run LIVE·engine, not DEMO-only. Loan variants
+    live in their own subdirectory so the term-deposit product-config store (which
+    reads `product-configs/*.yaml` non-recursively and requires `term_days` /
+    `interest_variant`) never sees them.
 
 ## v1 surface & deferrals (F.7)
 

@@ -74,6 +74,11 @@ RATE_SHEET_VERSION="pt-deposits-2026.1"
 # treasury author edits, serialised 1:1 to JSON at deploy time (ADR-PC-008 §P1). It already carries all
 # three LIVE·engine products (venc 300 / mensal 325 / antecip 300 bps), so there is no inline JSON to drift.
 RATE_SHEET_YAML="rate-sheets/term_deposit/${RATE_SHEET_VERSION}.yaml"
+# The personal-loan (crédito pessoal) fixed-rate sheet, deployed alongside the deposit sheet so a loan can
+# disburse LIVE·engine (not DEMO-only). Same YAML-native deploy path, same host — one more POST. It prices
+# the cp_pt_* loan variants under product-configs/personal-loan/ at role `standard` (ADR-PC-030 / ADR-PC-008).
+LOAN_RATE_SHEET_VERSION="pt-loans-2026.1"
+LOAN_RATE_SHEET_YAML="rate-sheets/personal_loan/${LOAN_RATE_SHEET_VERSION}.yaml"
 DEMO_CLIENT_ID="${DEMO_CLIENT_ID:-CLI-DEMO-0001}"
 
 teardown() {
@@ -157,19 +162,27 @@ ORCH_DLL="$(dll_for orchestrator/src/Babelstone.Orchestrator Babelstone.Orchestr
 ok "built"
 
 # ---------------------------------------------------------------------------
-# 4. deploy the 3-product rate sheet (so every LIVE·engine variant prices)
+# 4. deploy the rate sheets (so every LIVE·engine variant prices): the 3-product
+#    term-deposit sheet AND the personal-loan sheet, from the same host.
 # ---------------------------------------------------------------------------
-say "4/8 Deploying the rate sheet via the C.6 deploy API (all 3 products, validated seam)"
-info "deploying FROM the committed YAML source ${RATE_SHEET_YAML} (serialised 1:1 to JSON — ADR-PC-008 §P1)"
+say "4/8 Deploying the rate sheets via the C.6 deploy API (deposit + loan, validated seam)"
+info "deploying FROM the committed YAML sources ${RATE_SHEET_YAML} and ${LOAN_RATE_SHEET_YAML} (serialised 1:1 to JSON — ADR-PC-008 §P1)"
 [ -f "$RATE_SHEET_YAML" ] || die "rate-sheet YAML source not found: $RATE_SHEET_YAML"
-all_deploy() { # base_url
-  local url="$1" code
-  code="$(ratesheet_post_yaml "$url" demo-all "$RATE_SHEET_YAML" "$RUNDIR/deploy-resp.json")"
+[ -f "$LOAN_RATE_SHEET_YAML" ] || die "loan rate-sheet YAML source not found: $LOAN_RATE_SHEET_YAML"
+# Deploy one committed sheet against a running ratesheet host; die on anything but 200/201 (idempotent).
+deploy_one_sheet() { # url version yaml_file
+  local url="$1" version="$2" yaml="$3" code
+  code="$(ratesheet_post_yaml "$url" demo-all "$yaml" "$RUNDIR/deploy-resp.json")"
   case "$code" in
-    201) ok "rate sheet ${RATE_SHEET_VERSION} deployed (201 Created)" ;;
-    200) ok "rate sheet ${RATE_SHEET_VERSION} already present, identical (200 OK)" ;;
+    201) ok "rate sheet ${version} deployed (201 Created)" ;;
+    200) ok "rate sheet ${version} already present, identical (200 OK)" ;;
     *)   die "rate-sheet deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
   esac
+}
+all_deploy() { # base_url
+  local url="$1"
+  deploy_one_sheet "$url" "$RATE_SHEET_VERSION" "$RATE_SHEET_YAML"
+  deploy_one_sheet "$url" "$LOAN_RATE_SHEET_VERSION" "$LOAN_RATE_SHEET_YAML"
 }
 with_ratesheet_host "$RATESHEET_DLL" "$ENGINE_CONN" "$RATESHEET_URL" \
   "$RUNDIR/ratesheet-api.log" all_deploy

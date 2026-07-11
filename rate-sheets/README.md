@@ -21,6 +21,8 @@ and a new version is always a new file (forward-only, never an edit in place).
 | File | Family | Version |
 |---|---|---|
 | `term_deposit/pt-deposits-2026.1.yaml` | `term_deposit` | `pt-deposits-2026.1` — the starter sheet the local demo stack runs on |
+| `current_account/pt-overdrafts-2026.1.yaml` | `current_account` | `pt-overdrafts-2026.1` — the arranged-overdraft interest sheet |
+| `personal_loan/pt-loans-2026.1.yaml` | `personal_loan` | `pt-loans-2026.1` — the fixed-rate personal-loan sheet that lets loans disburse LIVE·engine |
 
 To author, deploy, and confirm a new version, see
 [how to author and deploy a complete rate-sheet version](../docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md).
