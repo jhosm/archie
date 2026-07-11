@@ -137,7 +137,7 @@ public sealed class MultiSagaSubstrateTests
     [Fact]
     public void CompositeCommandRouter_threads_the_settlement_target_header_to_the_constitution_router()
     {
-        // The engine-CA funding wire (bd babelstone-u79p.3; ADR-PC-043 slots 1–2): a ce_settlementtarget=
+        // The engine-CA funding wire (ADR-PC-043): a ce_settlementtarget=
         // engine-ca funding leg routes to the ENGINE-CA base URL through the counterparty-invariant path; a
         // legacy leg (absent/legacy-dda) stays on the legacy Core-ACL base URL. The composite forwards the
         // header to the sub-router — routing is header-only (the substrate never reads Movement.AccountRef).
@@ -216,11 +216,12 @@ public sealed class MultiSagaSubstrateTests
     [Fact]
     public void ConstitutionPayloadFactory_tags_an_engine_owned_funding_account_as_engine_ca()
     {
-        // The funding-account classification (bd babelstone-u79p.3): an engine-owned current account's
+        // The funding-account classification: an engine-owned current account's
         // account_ref IS the account GUID (AccountRef == AccountId.ToString()), so a GUID-shaped funding ref
         // → engine-ca (the debit funds itself from the customer CA, carrying the promoted destination
         // account_ref + amount + the hold-linking intent reference); a legacy opaque token → legacy-DDA (the
-        // funding-leg extras stay null so the body is byte-identical to the pre-ADR-PC-043 shape).
+        // funding-leg extras serialize as explicit nulls, and the logical command and its replay-stability
+        // are unchanged from the pre-ADR-PC-043 legacy path).
         var processId = Guid.NewGuid();
         var causation = Guid.NewGuid();
         var engineCaAccount = Guid.NewGuid().ToString();

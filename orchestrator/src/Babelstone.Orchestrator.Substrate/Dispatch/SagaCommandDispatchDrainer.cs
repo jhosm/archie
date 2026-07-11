@@ -73,7 +73,7 @@ public sealed class SagaCommandDispatchDrainer
     private readonly IReadOnlyDictionary<string, IResultEventBridge> _bridges;
 
     /// <summary>
-    /// Drain saga_outbox for N saga types (bd babelstone-mtto PR1 — the multi-saga substrate). Routing
+    /// Drain saga_outbox for N saga types (the multi-saga substrate). Routing
     /// and the command-outcome → result-event bridge are now keyed by the owning saga's
     /// <c>saga_type</c> (read off the row's <c>saga_state</c> join): <paramref name="router"/> is the
     /// <see cref="CompositeCommandRouter"/> and <paramref name="bridges"/> are the per-saga-type result
@@ -99,7 +99,7 @@ public sealed class SagaCommandDispatchDrainer
             {
                 throw new InvalidOperationException(
                     $"Duplicate IResultEventBridge for saga_type '{bridge.SagaType}': the saga-type → " +
-                    "bridge registry must be a function (bd babelstone-mtto PR1).");
+                    "bridge registry must be a function.");
             }
         }
 
@@ -149,20 +149,20 @@ public sealed class SagaCommandDispatchDrainer
         }
 
         // No route for this command type → terminal. Two cases. Route by the owning saga's saga_type
-        // (bd babelstone-mtto PR1) so a second saga's commands resolve through its OWN sub-router, and
+        // so a second saga's commands resolve through its OWN sub-router, and
         // thread the leg's projected ce_settlementtarget so the sub-router selects the settlement
-        // COUNTERPARTY (engine-CA vs legacy-DDA, ADR-PC-043 slots 1–2) on the PRODUCTION drain path
-        // (bd babelstone-u79p.3). The projection reads the row's OWN settlement-target marker ALONE — never
-        // Movement.AccountRef — so routing stays header-only (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b)):
+        // COUNTERPARTY (engine-CA vs legacy-DDA, ADR-PC-043) on the PRODUCTION drain path.
+        // The projection reads the row's OWN settlement-target marker ALONE — never
+        // Movement.AccountRef — so routing stays header-only (ADR-IC-018 / ADR-PC-043):
         // the substrate is payload-blind for WHERE a leg goes. A row with no target marker projects null →
         // the sub-router routes legacy-DDA (UNCHANGED), so every pre-ADR-PC-043 command keeps its target.
         var routingHeaders = ProjectSettlementTargetHeader(row.Payload);
         var route = _router.Resolve(row.CommandType, row.SagaType, routingHeaders);
         if (route is null)
         {
-            // [REVIEW-FLAG A] The no-route AUTO-PASS carve-out (bd babelstone-t7o3.8). A no-route command
+            // [REVIEW-FLAG A] The no-route AUTO-PASS carve-out. A no-route command
             // is normally terminal FAILED, but a saga's bridge MAY mark a specific no-route command as a
-            // synthetic Applied AUTO-PASS (ADR-IC-018 §P6): flip the row PUBLISHED AND self-advance the
+            // synthetic Applied AUTO-PASS (ADR-IC-018): flip the row PUBLISHED AND self-advance the
             // saga in the same commit. The constitution saga uses this for its in-aggregate
             // ValidateProductLimits (it has no HTTP route but at v1 auto-passes to LimitsValidated so the
             // parallel-validation join completes and the happy path reaches COMPLETED). The substrate
@@ -660,19 +660,19 @@ public sealed class SagaCommandDispatchDrainer
 
     /// <summary>
     /// Project the leg's <c>ce_settlementtarget</c> routing header from the outbox row's byte-stable command
-    /// body (bd babelstone-u79p.3; ADR-PC-043 slots 1–2). In plain English: the fresh deposit funds itself by
+    /// body (ADR-PC-043). In plain English: the fresh deposit funds itself by
     /// debiting the customer's engine current account, so the constitution funding legs must route to the
     /// engine-CA counterparty rather than the legacy Core ACL — this reads the row's OWN settlement-target
     /// marker and hands it to the router as the header the counterparty selection keys on.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Header-only routing, never <c>Movement.AccountRef</c> (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b)).</b>
+    /// <b>Header-only routing, never <c>Movement.AccountRef</c> (ADR-IC-018 / ADR-PC-043).</b>
     /// The projection reads the ONE explicit <c>settlement_target</c> discriminator the source family
     /// promoted onto the command body — a counterparty selector, NOT the destination account. The substrate
     /// stays payload-blind for the account-identity axis: it never reads <c>account_ref</c> here to decide
     /// WHERE a leg goes (the engine-CA <c>/capture</c> and <c>/credit</c> WRITERS read the promoted
-    /// <c>account_ref</c> as the destination — the narrow §D5(b) carve-out — but the SUBSTRATE router does
+    /// <c>account_ref</c> as the destination — the narrow ADR-PC-043 carve-out — but the SUBSTRATE router does
     /// not). A body with no <c>settlement_target</c> (every legacy leg, and any non-settlement command)
     /// projects <c>null</c>, so the router routes legacy-DDA and legacy behaviour is UNCHANGED.
     /// </para>
@@ -725,15 +725,15 @@ public sealed class SagaCommandDispatchDrainer
     }
 
     /// <summary>The command-body field the source family promotes the settlement-target discriminator onto
-    /// (bd babelstone-u79p.3; snake_case on the wire). A counterparty selector — the ONLY body field the
-    /// substrate router reads for routing, and never the destination <c>account_ref</c> (ADR-PC-043 §D5
-    /// amendment (b) keeps the account-identity axis out of substrate routing).</summary>
+    /// (snake_case on the wire). A counterparty selector — the ONLY body field the
+    /// substrate router reads for routing, and never the destination <c>account_ref</c> (ADR-PC-043
+    /// keeps the account-identity axis out of substrate routing).</summary>
     private const string SettlementTargetPayloadField = "settlement_target";
 
     /// <summary>The ce_-stripped, lowercased extension-attribute key the router keys the settlement
     /// counterparty on (mirrors <c>SettlementCommandRouter.SettlementTargetHeader</c> /
     /// <c>Babelstone.Engine.MovementHeaders.SettlementTargetKey</c>). Pinned as a literal — the orchestrator
-    /// stays extraction-ready (ADR-PC-019 §P2).</summary>
+    /// stays extraction-ready (ADR-PC-019).</summary>
     private const string SettlementTargetHeaderKey = "settlementtarget";
 
     /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the attested OIDC <c>acr</c> on a

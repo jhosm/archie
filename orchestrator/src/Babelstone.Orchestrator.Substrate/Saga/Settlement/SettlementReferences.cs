@@ -44,9 +44,9 @@ public static class SettlementReferences
     public const string CoreTxnPrefix = "CT-";
 
     /// <summary>The opaque account reference prefix the substrate's <c>account_ref</c> seam derives as the
-    /// FALLBACK when no real account_ref is threaded onto the settlement intent (bd babelstone-u79p.5). The
+    /// FALLBACK when no real account_ref is threaded onto the settlement intent. The
     /// engine-CA leg now carries the customer's REAL promoted <c>Movement.AccountRef</c> as the destination
-    /// (ADR-PC-043 §D5 amendment (b); <c>SettlementIntent.AccountRef</c>), which the
+    /// (ADR-PC-043; <c>SettlementIntent.AccountRef</c>), which the
     /// <c>SettlementCommandPayloadFactory</c> forwards untouched; this <c>ACCT-{processId}</c> placeholder
     /// remains only for the legacy-DDA path and the pre-promotion platform default (where the legacy core
     /// resolves the account from the process-scoped business reference) — see

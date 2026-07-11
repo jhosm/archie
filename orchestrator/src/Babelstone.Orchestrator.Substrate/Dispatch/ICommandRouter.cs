@@ -32,11 +32,11 @@ public interface ICommandRouter
     /// <summary>
     /// Resolve the HTTP target for <paramref name="commandType"/> emitted by the saga of
     /// <paramref name="sagaType"/>, threading the leg's projected <c>ce_settlementtarget</c> extension
-    /// header so the settlement COUNTERPARTY is selected (engine-CA vs legacy-DDA, ADR-PC-043 slots 1–2)
-    /// on the PRODUCTION drain path (bd babelstone-u79p.3). The dispatcher builds
+    /// header so the settlement COUNTERPARTY is selected (engine-CA vs legacy-DDA, ADR-PC-043)
+    /// on the PRODUCTION drain path. The dispatcher builds
     /// <paramref name="extensionHeaders"/> from the outbox row and passes it here; the
     /// <see cref="CompositeCommandRouter"/> forwards it to the sub-router the row's <c>saga_type</c>
-    /// selects, which alone reads the header (header-only routing, ADR-IC-018 §D5). The DEFAULT
+    /// selects, which alone reads the header (header-only routing, ADR-IC-018). The DEFAULT
     /// implementation ignores the headers (delegates to <see cref="Resolve(string, string)"/>), so a
     /// header-blind router is unchanged.
     /// </summary>
@@ -60,9 +60,9 @@ public interface ISagaCommandRouter : ICommandRouter
 
     /// <summary>
     /// Resolve the HTTP target for <paramref name="commandType"/>, selecting the settlement COUNTERPARTY
-    /// from the leg's projected <c>ce_settlementtarget</c> extension header (ADR-PC-043 slots 1–2) — the
-    /// header-aware routing seam the dispatcher drains through in PRODUCTION (bd babelstone-u79p.3). Routing
-    /// reads the header ALONE (ADR-IC-018 §D5 / ADR-PC-043 §D5 amendment (b): the substrate stays
+    /// from the leg's projected <c>ce_settlementtarget</c> extension header (ADR-PC-043) — the
+    /// header-aware routing seam the dispatcher drains through in PRODUCTION. Routing
+    /// reads the header ALONE (ADR-IC-018 / ADR-PC-043: the substrate stays
     /// payload-blind for routing — it never reads <c>Movement.AccountRef</c> to decide where a leg goes);
     /// the path + method are counterparty-INVARIANT, only the base URL flips (<c>engine-ca</c> →
     /// the engine-CA settlement surface, <c>legacy-dda</c> or absent → the legacy ACL — UNCHANGED).
