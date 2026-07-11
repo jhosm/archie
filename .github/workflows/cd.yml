@@ -326,8 +326,19 @@ jobs:
           OVERLAY: ${{ github.event.inputs.overlay }}
         run: |
           set -euo pipefail
-          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
-            | kubectl apply -f -
+          render="$(mktemp)"
+          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" > "$render"
+          # A Job's spec.template is immutable, so re-applying a changed run-once Job (e.g. a moved
+          # image digest on event-store-migrate, or a redeploy while a prior Job is still inside its
+          # ttlSecondsAfterFinished window) fails the whole apply with "field is immutable". These Jobs
+          # are ttl-recreated BY DESIGN and opt in via babelstone.io/recreate-on-apply=true — so delete
+          # them first and let the apply below recreate them cleanly. The delete is label-scoped to the
+          # render's own recreate-on-apply Jobs (nothing else is touched) and --ignore-not-found covers
+          # the already-TTL'd case. Guarded so an overlay carrying no such Jobs is a no-op, not an error.
+          if grep -q 'babelstone.io/recreate-on-apply' "$render"; then
+            kubectl delete -f "$render" -l babelstone.io/recreate-on-apply=true --ignore-not-found
+          fi
+          kubectl apply -f "$render"
       # 4e — open the kubelet tunnel to the Kong Admin API for the deck sync in 4f.
       #      Staging binds the Admin API to the pod's loopback and drops its 8001 Service
       #      port (overlays/staging/kong-admin-localhost.patch.yaml, bd babelstone-zla1.12.8),
