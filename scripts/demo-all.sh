@@ -124,6 +124,11 @@ mkdir -p "$RUNDIR"
 # ---------------------------------------------------------------------------
 say "Preflight"
 require_demo_tools
+# `make up` binds Kong (:8000) + Redpanda Console (:8080) — the exact ports the demo's MCP (:8000) and
+# engine (:8080) need. serve.py is the demo's gateway stand-in, so Kong/Console aren't needed here: stop
+# just those two named containers if they're what's holding the ports (bd babelstone-3xtq). Any OTHER
+# listener is left for the port checks below to flag.
+free_makeup_demo_clashes "$MCP_PORT" "$ENGINE_PORT"
 for spec in "ENGINE_PORT:$ENGINE_PORT:engine" "ORCH_PORT:$ORCH_PORT:orchestrator" \
             "MCP_PORT:$MCP_PORT:MCP server" "AGENT_PORT:$AGENT_PORT:agent host" \
             "RATESHEET_PORT:$RATESHEET_PORT:transient rate-sheet host" "MC_PORT:$MC_PORT:Mission Control"; do

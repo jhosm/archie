@@ -83,7 +83,10 @@ mkdir -p "$RUNDIR"
 say "Preflight"
 require_demo_tools
 # The engine (8080) and MCP (8000) ports collide with the full stack's Redpanda Console / Kong proxy
-# AND with a sibling demo's engine. This demo needs Postgres ONLY, so those ports must be free.
+# AND with a sibling demo's engine. This demo needs Postgres ONLY, so those ports must be free. Stop
+# just Kong/Console if THEY (from 'make up') are what's holding the ports — serve.py is the gateway
+# stand-in, so Kong isn't needed here (bd babelstone-3xtq). A sibling demo's listener is left to fail below.
+free_makeup_demo_clashes "$MCP_PORT" "$ENGINE_PORT"
 if port_busy "$ENGINE_PORT"; then
   die "port $ENGINE_PORT is busy (engine) — a sibling demo's engine (demo-saga/demo-all) or Redpanda Console from 'make up'. Stop it (the matching '*-down', or 'make down'), or set ENGINE_PORT=8088."
 fi

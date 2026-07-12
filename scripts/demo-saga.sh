@@ -167,6 +167,10 @@ ALL_GREEN=true
 # ---------------------------------------------------------------------------
 say "Preflight"
 require_demo_tools
+# The saga engine binds :8080, which `make up`'s Redpanda Console also publishes. Stop just Console if
+# IT is what's on :8080 (bd babelstone-3xtq) — this demo has no MCP, so the Kong (:8000) arm is a no-op
+# here (the "" mcp_port never matches). Any sibling-demo listener is left to the port checks below.
+free_makeup_demo_clashes "" "$ENGINE_PORT"
 if port_busy "$ORCH_PORT"; then
   die "port $ORCH_PORT is busy (orchestrator edge). Stop whatever holds it, or set ORCH_PORT to a free port."
 fi
