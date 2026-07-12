@@ -216,9 +216,21 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SCA_ACR_HEADER = "X-SCA-Acr"
 SCA_AUTH_TIME_HEADER = "X-SCA-Auth-Time"
 
-# The ONE step-up-token minting implementation (a thin front door over scripts/mint-edge-token.sh).
-# Located from serve.py's own __file__ so it is worktree-/checkout-relative, never a hardcoded path:
-# docs/demo/mission-control → docs/demo → docs → repo root.
+# The acr the IN-PROCESS synthetic attestation carries (see _synthetic_sca_headers). On the engine-direct
+# path the engine trusts the gateway attestation and does NOT re-validate the acr value (ADR-IC-010 §P8,
+# attest-not-deny — it never reads the raw token), so any non-empty acr is accepted. We use the EXACT acr
+# the wired mint front-door emits — infra/stub-as/mint-stepup-token.sh forces urn:bank:sca:psd2 (a strong
+# PSD2 level) — so a synthesized proof is byte-identical to a real mint's on this path, and stays that way
+# even if the engine ever starts inspecting the acr value.
+_SYNTHETIC_SCA_ACR = "urn:bank:sca:psd2"
+
+# The step-up-token minting implementation (a thin front door over scripts/mint-edge-token.sh), located
+# from serve.py's own __file__ so it is worktree-/checkout-relative (docs/demo/mission-control → repo
+# root). This is a LOCAL-DEV nicety only: the Mission Control container image ships serve.py + index.html
+# (plus a lone psycopg dep) — no mint script, no signing key, no bash/openssl (build context
+# docs/demo/mission-control, base python:3.12-slim) — so in the container this path is always unavailable
+# and the code falls back to the in-process synthetic attestation below (bd babelstone-uob5). The engine
+# cannot tell the two apart (it reads the same two headers), so the fallback is faithful, not a downgrade.
 _REPO_ROOT = os.path.normpath(os.path.join(ROOT, "..", "..", ".."))
 _SCA_MINT_SCRIPT = os.path.join(_REPO_ROOT, "infra", "stub-as", "mint-stepup-token.sh")
 
@@ -256,13 +268,13 @@ def _mint_stepup_token():
         proc = subprocess.run(
             ["bash", _SCA_MINT_SCRIPT],
             capture_output=True, text=True, timeout=15, check=False)
-    except Exception as e:  # FileNotFoundError (no bash), timeout, OSError — degrade, never crash
-        sys.stderr.write("WARNING: step-up SCA mint could not run (%s); relaying the money-mover "
-                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n" % e)
+    except Exception as e:  # FileNotFoundError (no bash / no script — the container norm), timeout, OSError
+        sys.stderr.write("INFO: step-up SCA mint script unavailable (%s) — falling back to the in-process "
+                         "synthetic SCA attestation (expected in the container; bd babelstone-uob5)\n" % e)
         return None
     if proc.returncode != 0:
-        sys.stderr.write("WARNING: step-up SCA mint failed (exit %d): %s; relaying the money-mover "
-                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n"
+        sys.stderr.write("WARNING: step-up SCA mint failed (exit %d): %s — falling back to the in-process "
+                         "synthetic SCA attestation (bd babelstone-uob5)\n"
                          % (proc.returncode, (proc.stderr or "").strip()))
         return None
     token = (proc.stdout or "").strip()
@@ -282,39 +294,58 @@ def _decode_stepup_claims(token):
         return None
 
 
-def _mint_sca_headers():
-    """Return a FRESH {X-SCA-Acr, X-SCA-Auth-Time} attestation for the demo gateway stand-in, or None
-    when minting is unavailable (script missing / non-zero exit / malformed token). GRACEFUL
-    DEGRADATION: on failure we log a clear warning and return None so the caller relays WITHOUT the
-    headers — the engine then 422s exactly as it does today, never a serve.py 500.
+def _synthetic_sca_headers(now):
+    """A pure-Python step-up SCA attestation for the demo gateway stand-in — no subprocess, no signed
+    token, no signing key. On the engine-direct path the engine's ScaPrecondition (ADR-IC-010 §P8) reads
+    X-SCA-Acr / X-SCA-Auth-Time DIRECTLY and trusts the gateway attestation (attest-not-deny — it never
+    validates a token), so these two headers ARE the proof. This is the ONLY attestation that works
+    inside the Mission Control container image, which carries no mint script / signing key / bash
+    (bd babelstone-uob5); it is indistinguishable to the engine from a decoded real-token attestation.
+    `now` is the caller's time.time() so the auth_time is fresh."""
+    return {
+        SCA_ACR_HEADER: _SYNTHETIC_SCA_ACR,
+        SCA_AUTH_TIME_HEADER: str(int(now)),
+    }
 
-    Cached for _SCA_CACHE_TTL_SECONDS (well inside the engine's 300 s freshness window) and re-minted
-    when stale, so a burst of money-movers reuses one mint. DEV/DEMO-MODE by default — the caller
+
+def _fresh_sca_headers(now):
+    """Produce a fresh {X-SCA-Acr, X-SCA-Auth-Time} attestation, NEVER None. Prefers the faithful
+    minted-token path (infra/stub-as/mint-stepup-token.sh, ADR-IC-010 §A13) when it is available —
+    local dev, where the whole repo + bash + the throwaway POC key are on disk — and FALLS BACK to the
+    in-process synthetic attestation when it is not (the container image, and any host without the mint
+    toolchain, bd babelstone-uob5). Both yield the same two headers; the engine never validates a token
+    on this path, so they are interchangeable to it."""
+    token = _mint_stepup_token()
+    if token:
+        decoded = _decode_stepup_claims(token)
+        if decoded is not None:
+            acr, auth_time = decoded
+            return {SCA_ACR_HEADER: acr, SCA_AUTH_TIME_HEADER: auth_time}
+        sys.stderr.write("WARNING: step-up SCA token missing acr/auth_time — falling back to the "
+                         "in-process synthetic SCA attestation (bd babelstone-uob5)\n")
+    return _synthetic_sca_headers(now)
+
+
+def _mint_sca_headers():
+    """Return a FRESH {X-SCA-Acr, X-SCA-Auth-Time} attestation for the demo gateway stand-in. NEVER
+    None: it prefers a real minted token and falls back to an in-process synthetic attestation when the
+    mint toolchain is absent (see _fresh_sca_headers) — so a UI-driven money-mover is attested even in
+    the container, where the mint script does not exist (bd babelstone-uob5).
+
+    Cached for _SCA_CACHE_TTL_SECONDS (well inside the engine's 300 s freshness window) and refreshed
+    when stale, so a burst of money-movers reuses one attestation. DEV/DEMO-MODE by default — the caller
     (_route) invokes this on the AUTH-is-None branch, OR, when the explicit default-off MC_SCA_BYPASS
     flag is set, in oidc mode too (the temporary demo/staging scaffold — ADR-IC-010 2026-07-12
-    amendment, bd babelstone-13zf). It never mints unless one of those two conditions holds."""
+    amendment, bd babelstone-13zf). It never attests unless one of those two conditions holds."""
     global _sca_headers_cache, _sca_headers_minted_at
-    # Serialise the check-mint-write so a first-use burst under the threading server mints ONCE and the
-    # rest of the burst reuses that entry (the "a burst reuses one mint" promise above). On a mint/decode
-    # FAILURE we return None from inside the `with`; the lock releases on that exit exactly as on success,
-    # so graceful degradation is unchanged and a later request simply retries the mint.
+    # Serialise the check-produce-write so a first-use burst under the threading server produces the
+    # attestation ONCE and the rest of the burst reuses that entry (the "a burst reuses one" promise
+    # above). The lock releases on every exit, so a later request simply refreshes when the TTL lapses.
     with _sca_mint_lock:
         now = time.time()
         if _sca_headers_cache is not None and (now - _sca_headers_minted_at) < _SCA_CACHE_TTL_SECONDS:
             return _sca_headers_cache
-        token = _mint_stepup_token()
-        if not token:
-            return None
-        decoded = _decode_stepup_claims(token)
-        if decoded is None:
-            sys.stderr.write("WARNING: step-up SCA token missing acr/auth_time; relaying the money-mover "
-                             "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n")
-            return None
-        acr, auth_time = decoded
-        _sca_headers_cache = {
-            SCA_ACR_HEADER: acr,
-            SCA_AUTH_TIME_HEADER: auth_time,
-        }
+        _sca_headers_cache = _fresh_sca_headers(now)
         _sca_headers_minted_at = now
         return _sca_headers_cache
 
@@ -1553,11 +1584,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # stepup_sca_headers() does — by default ONLY in dev/demo mode (AUTH is None), NEVER in
             # oidc mode, because forging a gateway SCA attestation against a real deployment would be a
             # security hole (the mint script signs over the throwaway kong.yml key and is LOCAL-dev-only).
-            # The explicit default-off MC_SCA_BYPASS flag (SCA_BYPASS) WIDENS the mint into oidc mode as
-            # a temporary demo/staging scaffold until the interactive step-up flow is built (ADR-IC-010
-            # 2026-07-12 amendment, bd babelstone-13zf) — a deliberate, greppable, opted-into hole. On a
-            # mint failure _mint_sca_headers() returns None and we relay WITHOUT the headers — the engine
-            # then 422s exactly as it does today (graceful degradation, never a serve.py 500).
+            # The explicit default-off MC_SCA_BYPASS flag (SCA_BYPASS) WIDENS that attestation into oidc
+            # mode as a temporary demo/staging scaffold until the interactive step-up flow is built
+            # (ADR-IC-010 2026-07-12 amendment, bd babelstone-13zf) — a deliberate, greppable, opted-into
+            # hole. _mint_sca_headers() prefers a real minted token but FALLS BACK to an in-process
+            # synthetic attestation when the mint script is absent — which it always is in the container
+            # (bd babelstone-uob5) — so the money-mover is attested there too; it returns None only if a
+            # future change makes synthesis impossible, in which case we relay bare and the engine 422s.
             path_only = self.path.split("?", 1)[0]
             if (AUTH is None or SCA_BYPASS) and _SCA_GATED_PATH_RE.match(path_only):
                 sca = _mint_sca_headers()
