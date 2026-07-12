@@ -56,6 +56,8 @@ MC_PORT="${MC_PORT:-9000}"                # Mission Control UI / proxy
 OTLP_GRPC_PORT="${OTLP_GRPC_PORT:-4317}"  # OTel Collector OTLP/gRPC ingest (the engine exports here, ADR-IC-007 §P1)
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"      # Grafana UI (open a real trace here)
 TEMPO_PORT="${TEMPO_PORT:-3200}"          # Tempo query API (Mission Control Telemetry tab reads real spans by trace id)
+LOKI_PORT="${LOKI_PORT:-3100}"            # Loki query API (Mission Control Logs lens; compose binds :3100)
+PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}" # Prometheus query API (Mission Control Metrics lens; compose binds :9090)
 
 COMPOSE="docker compose -f infra/compose.yaml"
 PG_CONTAINER="babelstone-postgres"
@@ -199,6 +201,12 @@ with_ratesheet_host "$RATESHEET_DLL" "$ENGINE_CONN" "$RATESHEET_URL" \
 # 5. start the engine — Redpanda-wired (the superset that serves EVERY mode)
 # ---------------------------------------------------------------------------
 say "5/8 Starting the engine host on ${ENGINE_URL} (Redpanda-wired — serves LIVE·engine, LIVE·saga and the agent path)"
+# Point the engine's OTLP exporter at the collector's HOST-published gRPC ingest (:${OTLP_GRPC_PORT}), so
+# its deposit.*/Npgsql spans reach the collector → grafana-lgtm and land in Tempo — the trace the Mission
+# Control Telemetry tab then queries by id (bd w5hx). The SDK default is already http://localhost:4317, but
+# setting it explicitly keeps the export path correct when OTLP_GRPC_PORT is overridden. start_engine_host's
+# inline env-prefix inherits this exported value for the dotnet process (it sets no OTEL_* of its own).
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:${OTLP_GRPC_PORT}"
 start_engine_host "$ENGINE_DLL" "$ENGINE_CONN" "$ENGINE_URL" "$ROOT/packs" \
   "$RUNDIR/engine.pid" "$RUNDIR/engine.log" "localhost:${REDPANDA_KAFKA_PORT}"
 
@@ -243,8 +251,17 @@ fi
 # 8. start Mission Control (serve.py) — proxies /v1 + /api/v1 + /agent same-origin
 # ---------------------------------------------------------------------------
 say "8/8 Starting Mission Control on http://localhost:${MC_PORT}"
+# Point serve.py's Telemetry/Logs/Metrics proxy arms at the LGTM appliance's HOST-published query APIs
+# (compose binds Tempo :3200, Loki :3100, Prometheus :9090 — overridable via TEMPO_PORT/LOKI_PORT/
+# PROMETHEUS_PORT). serve.py defaults to those same loopback ports, but passing them explicitly keeps the
+# Telemetry tab wired to the REAL Grafana Tempo trace even when a port is overridden (bd w5hx) — otherwise
+# the tab degrades to its illustrative fallback because :3200 didn't answer. The engine already exports its
+# OTLP traces to the collector (:${OTLP_GRPC_PORT}) → grafana-lgtm, so Tempo holds the trace this queries.
 ENGINE_URL="$ENGINE_URL" ORCHESTRATOR_URL="$ORCH_URL" AGENT_URL="http://localhost:${AGENT_PORT}" \
   DEMO_CLIENT_ID="$DEMO_CLIENT_ID" MC_PORT="${MC_PORT}" \
+  TEMPO_URL="http://localhost:${TEMPO_PORT}" \
+  LOKI_URL="http://localhost:${LOKI_PORT}" \
+  PROM_URL="http://localhost:${PROMETHEUS_PORT}" \
   nohup python3 docs/demo/mission-control/serve.py > "$RUNDIR/serve.log" 2>&1 &
 echo $! > "$RUNDIR/serve.pid"
 wait_up "http://localhost:${MC_PORT}/" 20 "Mission Control" "$RUNDIR/serve.log"

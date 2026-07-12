@@ -311,6 +311,16 @@ python3 docs/demo/mission-control/serve.py                               # proxi
 # open http://localhost:9000 → LIVE·engine → Telemetry ON → run an operation
 ```
 
+**Under `make demo` this is wired for you (bd `babelstone-w5hx`).** `make demo` brings up the
+`otel-collector` + `grafana-lgtm` appliance, points the engine's OTLP exporter at the collector
+(`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:${OTLP_GRPC_PORT}`, default `:4317`), and launches
+`serve.py` with `TEMPO_URL` / `LOKI_URL` / `PROM_URL` set to the appliance's host-published query
+APIs (Tempo `:3200`, Loki `:3100`, Prometheus `:9090` — `serve.py` already defaults to these, so the
+env-plumbing only matters when you override a port). So on `make demo`, flip to **LIVE·engine →
+Telemetry ON**, run an operation, and the tab shows **✓ REAL · Grafana Tempo** — no manual wiring.
+(If the LGTM appliance isn't up, or a `*_PORT` override points `serve.py` at a port nothing answers
+on, the tab still **degrades to the illustrative waterfall and says so** — the accepted fallback.)
+
 Known gaps (engine-side, not demo bugs): the orchestrator isn't OTel-wired yet, so saga spans
 don't export; and W3C traceparent propagation across Redpanda is planned — so the cross-service
 saga trace is aspirational, while the per-deposit engine trace is real (and now shown from Tempo).
