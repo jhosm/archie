@@ -134,3 +134,32 @@ Testcontainers lanes) regardless of the AS: the gate settles only on a fresh, ga
 > from the `node-oidc-provider` default policy (its metadata does not advertise `prompt_values_supported`);
 > confirm it end-to-end when the headless auth-code flow lands (bd babelstone-zla1.10.5 slice 3 shares
 > that machinery).
+
+---
+
+## 5. Mission Control operator money-movers through Kong (bd babelstone-zla1.10.9)
+
+Plain English: today a Mission Control operator who clicks a **manual** money-mover in the UI does
+**not** go through Kong — serve.py proxies straight to the engine (which `422`s `SCA_REQUIRED`, because
+no gateway attested the step-up), and in local dev serve.py mints a stand-in `X-SCA-*` header itself
+(bd babelstone-e4mq). [bd babelstone-zla1.10.9](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+routes that path through Kong with the operator's **real** access token, so the step-up rides Logto's
+native `auth_time` (§4) + the synthesised strength claim (§3), attested at the edge exactly like the
+`/mcp` agent path. When that epic lands:
+
+- the operator's token must carry the shared **product-API resource** `aud` + a fresh `auth_time` —
+  register the resource per
+  [`mission-control-oidc-registration.md` §2a](./mission-control-oidc-registration.md); serve.py
+  requests it (`resource=`) in bd babelstone-zla1.10.9.3;
+- Kong attests `X-SCA-Acr` / `X-SCA-Auth-Time` on the human money-mover routes
+  (bd babelstone-zla1.10.9.2) in the **attest-not-deny** model — the engine `422`s → the UI drives a
+  fresh step-up → retry settles — so the human path reuses the same `X-SCA-Auth-Time` freshness gate
+  this section describes;
+- serve.py's dev-mode stub-AS `X-SCA-*` mint (bd babelstone-e4mq) is **retired** on the Kong-fronted
+  path (bd babelstone-zla1.10.9.3) — it never forged SCA against a real deployment (it is gated on
+  `AUTH is None`), and Kong now attests the real proof.
+
+> Ordering note: the human-path attestation depends on the §3 strength-claim leg (the `getCustomJwtClaims`
+> synthesis + the Kong read-name repoint, ADR-IC-010 §A16). Confirm that leg is actually deployed against
+> the live Logto **before** bd babelstone-zla1.10.9.2/.9.3 retire the stub-AS mint, or the human
+> money-mover `X-SCA-Acr` arrives empty and every manual money-mover `422`s.
