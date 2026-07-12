@@ -153,7 +153,7 @@ spec:
             # App ID (= the OAuth client_id) and it is immutable, so this is that generated value, not
             # a chosen name (a client_id is public, so it is fine in git). bd babelstone-zla1.10.12.
             - name: OIDC_CLIENT_ID
-              value: 0d4g0pd0cjiq5dsmuim2p
+              value: 9lxmle8419mf1v4zpyqsl
             # Public origin serve.py derives the redirect_uri from ({base}/callback →
             # https://app.babelstone.dev/callback) — must equal the redirect URI on the Logto app.
             - name: MC_PUBLIC_BASE_URL
