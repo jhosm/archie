@@ -135,6 +135,7 @@ import sys
 import ssl
 import http.server
 import socketserver
+import subprocess
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -142,6 +143,7 @@ import json
 import base64
 import hashlib
 import hmac
+import re
 import secrets
 import time
 from http.cookies import SimpleCookie
@@ -170,6 +172,120 @@ REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/
 PROM_URL = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# ── Demo step-up SCA attestation for the engine money-mover routes (bd babelstone-e4mq) ───────
+# Why this exists: the engine's ScaPrecondition (ADR-IC-010 §P8) FAIL-CLOSES an irreversible
+# money-mover (maturing a deposit, paying a coupon, terminating early, collecting a loan
+# installment, early-repaying a loan) with 422 SCA_REQUIRED unless a GATEWAY has attested a fresh
+# step-up strong-authentication proof as the X-SCA-Acr / X-SCA-Auth-Time headers. Real deployments
+# get that from Kong copying the acr / auth_time claims off the customer's AS-signed step-up token.
+# The browser → serve.py → engine path has no Kong, so every UI-driven money-mover 422s. serve.py is
+# ALREADY the demo's gateway stand-in (it attests X-Client-Id on the /api/v1/* arm exactly as Kong
+# would); this mirrors that on the engine /v1/* arm for the five SCA-gated money-mover routes only —
+# EXACTLY what the CLI demo's scripts/demo-lib.sh stepup_sca_headers() already does for curl.
+#
+# CRITICAL SECURITY GUARD (ADR-IC-010 §P8): this attestation is injected ONLY in dev/demo mode (the
+# AUTH-is-None branch, the same condition that gates the static DEMO_CLIENT_ID fallback). In oidc
+# mode — the staging/real deployment where serve.py fronts auth.babelstone.dev — NOTHING is injected:
+# forging a gateway SCA attestation against a real deployment would be a security hole. The mint
+# script itself is explicitly LOCAL-dev-only (it signs over the THROWAWAY infra/kong/kong.yml key,
+# so a token it mints is invalid the moment that key is replaced at deploy time). The engine's
+# fail-closed ScaPrecondition guard is UNCHANGED — the fix supplies the demo gateway's attestation,
+# it does not remove the check.
+
+# The gateway-attested SCA header NAMES the engine's ScaPrecondition reads (kept as module constants
+# so the injected names stay in lock-step with engine/src/Babelstone.Engine.Hosting/ScaPrecondition.cs
+# — AcrHeader / AuthTimeHeader).
+SCA_ACR_HEADER = "X-SCA-Acr"
+SCA_AUTH_TIME_HEADER = "X-SCA-Auth-Time"
+
+# The ONE step-up-token minting implementation (a thin front door over scripts/mint-edge-token.sh).
+# Located from serve.py's own __file__ so it is worktree-/checkout-relative, never a hardcoded path:
+# docs/demo/mission-control → docs/demo → docs → repo root.
+_REPO_ROOT = os.path.normpath(os.path.join(ROOT, "..", "..", ".."))
+_SCA_MINT_SCRIPT = os.path.join(_REPO_ROOT, "infra", "stub-as", "mint-stepup-token.sh")
+
+# The precise set of SCA-gated money-mover routes (each route group carries the engine's
+# AddEndpointFilter<ScaPreconditionFilter>): the term-deposit maturity / interest / terminate and the
+# personal-loan installment / early-repayment. Anchored + segment-precise so a GET, a query read, or
+# an UNGATED write (settlement-ingress /v1/reservations|/debits|/credits, the current-account
+# authorize route) can NEVER match — we only ever attest on exactly these five POST money-movers.
+_SCA_GATED_PATH_RE = re.compile(
+    r"^/v1/(deposits|loans)/[^/]+/(maturity|interest|terminate|installment|early-repayment)$")
+
+# The step-up token's auth_time must be FRESH — the engine's ScaPrecondition.MaxAgeSeconds window is
+# 300 s. We CACHE the decoded {acr, auth_time} headers for a short TTL WELL INSIDE that window and
+# re-mint when stale, so a burst of money-movers does not fork a subprocess per request while the
+# proof stays comfortably fresh (a re-mint costs one mint-edge-token.sh invocation). 60 s leaves a
+# 240 s margin against the 300 s engine window even at the end of a cache entry's life.
+_SCA_CACHE_TTL_SECONDS = 60
+_sca_headers_cache = None      # the last {X-SCA-Acr, X-SCA-Auth-Time} dict, or None
+_sca_headers_minted_at = 0.0   # monotonic-ish wall-clock stamp of the cached mint
+
+
+def _mint_stepup_token():
+    """Run the ONE minting implementation (infra/stub-as/mint-stepup-token.sh) and return the JWT it
+    prints, or None on any failure. A seam: tests swap this out so the path-matching + mode-gating is
+    exercised without a live mint. LOCAL-dev-only — the script signs over the throwaway kong.yml key."""
+    try:
+        proc = subprocess.run(
+            ["bash", _SCA_MINT_SCRIPT],
+            capture_output=True, text=True, timeout=15, check=False)
+    except Exception as e:  # FileNotFoundError (no bash), timeout, OSError — degrade, never crash
+        sys.stderr.write("WARNING: step-up SCA mint could not run (%s); relaying the money-mover "
+                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n" % e)
+        return None
+    if proc.returncode != 0:
+        sys.stderr.write("WARNING: step-up SCA mint failed (exit %d): %s; relaying the money-mover "
+                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n"
+                         % (proc.returncode, (proc.stderr or "").strip()))
+        return None
+    token = (proc.stdout or "").strip()
+    return token or None
+
+
+def _decode_stepup_claims(token):
+    """Decode a JWT payload's acr / auth_time claims — the SAME two claims Kong attests as
+    X-SCA-Acr / X-SCA-Auth-Time, mirroring scripts/demo-lib.sh stepup_sca_headers(). Returns
+    (acr, auth_time) or None if the token is malformed / missing a claim."""
+    try:
+        seg = token.split(".")[1]
+        seg += "=" * (-len(seg) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(seg))
+        return str(claims["acr"]), str(claims["auth_time"])
+    except Exception:
+        return None
+
+
+def _mint_sca_headers():
+    """Return a FRESH {X-SCA-Acr, X-SCA-Auth-Time} attestation for the demo gateway stand-in, or None
+    when minting is unavailable (script missing / non-zero exit / malformed token). GRACEFUL
+    DEGRADATION: on failure we log a clear warning and return None so the caller relays WITHOUT the
+    headers — the engine then 422s exactly as it does today, never a serve.py 500.
+
+    Cached for _SCA_CACHE_TTL_SECONDS (well inside the engine's 300 s freshness window) and re-minted
+    when stale, so a burst of money-movers reuses one mint. DEV/DEMO-MODE ONLY — the caller (_route)
+    invokes this solely on the AUTH-is-None branch; it never forges an attestation in oidc mode."""
+    global _sca_headers_cache, _sca_headers_minted_at
+    now = time.time()
+    if _sca_headers_cache is not None and (now - _sca_headers_minted_at) < _SCA_CACHE_TTL_SECONDS:
+        return _sca_headers_cache
+    token = _mint_stepup_token()
+    if not token:
+        return None
+    decoded = _decode_stepup_claims(token)
+    if decoded is None:
+        sys.stderr.write("WARNING: step-up SCA token missing acr/auth_time; relaying the money-mover "
+                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n")
+        return None
+    acr, auth_time = decoded
+    _sca_headers_cache = {
+        SCA_ACR_HEADER: acr,
+        SCA_AUTH_TIME_HEADER: auth_time,
+    }
+    _sca_headers_minted_at = now
+    return _sca_headers_cache
+
 
 # ── Caller-side internal mTLS on the engine + orchestrator proxy hops ─────────────────────────
 # (bd babelstone-zla1.12.10; ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)). This BFF proxies the
@@ -1390,6 +1506,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return _REFUSE  # oidc mode with no resolvable session/sub — refuse, never forge
             return ORCHESTRATOR_URL, {"X-Client-Id": client_id}, self.path
         if self.path.startswith("/v1/"):
+            # The engine's own command/query surface (LIVE·engine mode, ADR-PC-029). Relayed with no
+            # header injection — EXCEPT for the five SCA-gated money-mover routes (deposit maturity /
+            # interest / terminate, loan installment / early-repayment), which the engine's
+            # ScaPrecondition (ADR-IC-010 §P8) fail-closes with 422 SCA_REQUIRED unless a GATEWAY
+            # attested a fresh step-up SCA proof. serve.py is the demo's gateway stand-in, so it
+            # supplies that attestation (X-SCA-Acr / X-SCA-Auth-Time) the SAME WAY the CLI demo's
+            # stepup_sca_headers() does — but ONLY in dev/demo mode (AUTH is None), NEVER in oidc mode
+            # (forging a gateway SCA attestation against a real deployment would be a security hole;
+            # the mint script signs over the throwaway kong.yml key and is LOCAL-dev-only). On a mint
+            # failure _mint_sca_headers() returns None and we relay WITHOUT the headers — the engine
+            # then 422s exactly as it does today (graceful degradation, never a serve.py 500).
+            path_only = self.path.split("?", 1)[0]
+            if AUTH is None and _SCA_GATED_PATH_RE.match(path_only):
+                sca = _mint_sca_headers()
+                if sca:
+                    return ENGINE_URL, dict(sca), self.path
             return ENGINE_URL, None, self.path
         if self.path.startswith("/agent/"):
             # The real-Claude agent host (LIVE·agent mode, bd babelstone-f0ic.6). No header
