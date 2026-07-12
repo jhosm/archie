@@ -214,6 +214,47 @@ body.console-open .hint-bar { display:none; }
 .pb-meta .cell .k { font-family:var(--mono); font-size:0.6rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); }
 .pb-meta .cell .v { font-family:var(--mono); font-size:0.82rem; color:var(--paper-soft); margin-top:0.25rem; }
 
+/* ---------------- conta a ordem (engine current account) panel ----------------
+   The customer's demand account as a first-class visual object (bd u79p.8): the
+   spine-owned two-balance split (ADR-PC-033) rendered as a STACKED meter — the
+   booked (accounting) balance is the full bar; the HELD portion (accounting −
+   available) is the dimmed/hatched reversible earmark; available is solid gold.
+   Persistent card in the position column, above the passbook. */
+.ca-panel { flex:none; margin:0 0 1.1rem; padding:1rem 1.05rem 1.1rem; border:1px solid var(--hair);
+  border-radius:11px; background:linear-gradient(160deg,rgba(20,24,31,0.6),rgba(14,17,22,0.6)); }
+.ca-head { display:flex; align-items:center; justify-content:space-between; gap:0.6rem; }
+.ca-title { font-family:var(--mono); font-size:0.6rem; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
+.ca-title b { color:var(--gold); font-weight:600; }
+.ca-id { font-family:var(--mono); font-size:0.62rem; color:var(--faint); margin-top:0.5rem; word-break:break-all; }
+.ca-empty { font-family:var(--mono); font-size:0.7rem; color:var(--faint); line-height:1.7; padding:0.6rem 0; }
+.ca-balances { display:flex; justify-content:space-between; align-items:flex-end; gap:0.8rem; margin:0.9rem 0 0.55rem; }
+.ca-bal .k { font-family:var(--mono); font-size:0.56rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); }
+.ca-bal .v { font-family:var(--serif); font-size:1.5rem; line-height:1.05; margin-top:0.15rem; }
+.ca-bal.available .v { color:var(--gold); }
+.ca-bal.booked { text-align:right; }
+.ca-bal.booked .v { color:var(--paper-soft); font-size:1.15rem; }
+/* the stacked meter — a full bar (booked) with a solid available segment and a hatched held segment */
+.ca-meter { position:relative; height:14px; border-radius:7px; overflow:hidden; background:var(--ink-2);
+  border:1px solid var(--hair-soft); display:flex; }
+.ca-seg-available { background:linear-gradient(90deg,var(--gold-deep),var(--gold)); height:100%; transition:width .5s var(--ease); }
+.ca-seg-held { height:100%; transition:width .5s var(--ease);
+  background-image:repeating-linear-gradient(45deg,rgba(224,177,94,0.32),rgba(224,177,94,0.32) 4px,rgba(224,177,94,0.1) 4px,rgba(224,177,94,0.1) 8px);
+  background-color:rgba(224,177,94,0.14); }
+.ca-legend { display:flex; gap:1rem; margin-top:0.55rem; font-family:var(--mono); font-size:0.56rem; color:var(--muted); }
+.ca-legend .lg { display:inline-flex; align-items:center; gap:0.35rem; }
+.ca-legend .sw { width:11px; height:9px; border-radius:2px; display:inline-block; }
+.ca-legend .sw.available { background:linear-gradient(90deg,var(--gold-deep),var(--gold)); }
+.ca-legend .sw.held { background-image:repeating-linear-gradient(45deg,rgba(224,177,94,0.5),rgba(224,177,94,0.5) 3px,rgba(224,177,94,0.15) 3px,rgba(224,177,94,0.15) 6px);
+  background-color:rgba(224,177,94,0.14); }
+.ca-holds { margin-top:0.9rem; border-top:1px solid var(--hair-soft); padding-top:0.7rem; }
+.ca-holds-title { font-family:var(--mono); font-size:0.56rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); }
+.ca-holds-none { font-family:var(--mono); font-size:0.64rem; color:var(--faint); margin-top:0.45rem; }
+.ca-hold { display:flex; align-items:baseline; justify-content:space-between; gap:0.6rem; padding:0.4rem 0; border-bottom:1px solid var(--hair-soft); }
+.ca-hold:last-child { border-bottom:0; }
+.ca-hold .why { font-family:var(--mono); font-size:0.62rem; color:var(--muted); overflow:hidden; text-overflow:ellipsis; }
+.ca-hold .why b { color:var(--paper-soft); font-weight:500; }
+.ca-hold .amt { font-family:var(--serif); font-size:0.95rem; color:var(--gold); white-space:nowrap; }
+
 /* ---------------- toast + MCP console ---------------- */
 .toast-wrap { position:fixed; top:74px; right:1.6rem; z-index:90; display:flex; flex-direction:column; gap:0.6rem; }
 .toast {
@@ -457,6 +498,9 @@ body.console-open .hint-bar { display:none; }
   <!-- POSITION -->
   <div class="col position">
     <div class="col-title">Position · folded state</div>
+    <!-- conta a ordem (engine current account) — a first-class visual object (bd u79p.8):
+         the spine-owned two-balance split + active holds, read from GET /v1/accounts/{id}. -->
+    <div class="ca-panel" id="accountCard"></div>
     <div class="passbook" id="passbook">
       <div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>
     </div>
@@ -602,7 +646,14 @@ body.console-open .hint-bar { display:none; }
     agentBusy: false, agentAbort: null,
     // Config-provenance strip (bd babelstone-f0ic.15.8): the product-config generation pin the
     // engine projects on GET /v1/deposits/{id} ("" for pre-pin deposits; null before any read).
-    productConfigVersion: null
+    productConfigVersion: null,
+    // Conta a ordem — the customer's engine current account (bd u79p.8). accountId is the account
+    // GUID the UI opens + credit-seeds once per LIVE session (null in DEMO / before open); threading
+    // it as the settlement source/collection ref routes the money leg engine-ca (a GUID ref → engine-ca,
+    // SagaCommandPayloadFactory.IsEngineCaFunding). accountOpening guards the open-once. accountSnapshot
+    // is the last GET /v1/accounts/{id} read { accountingCents, availableCents, holds[] } (null before
+    // the first read) rendered as the two-balance meter + active-holds list.
+    accountId: null, accountOpening: false, accountSnapshot: null
   };
 
   /* ---------------- elements ---------------- */
@@ -842,6 +893,11 @@ body.console-open .hint-bar { display:none; }
     // re-arm the stall watchdog on each advance (armSagaWatchdog clears the timer once terminal)
     armSagaWatchdog();
     setButtons();
+    // Conta a ordem (bd u79p.8): re-POLL GET /v1/accounts/{id} on each saga advance so the panel's
+    // held segment grows as the reserve leg places a hold and clears as the debit leg captures it. This
+    // is a plain read-after-advance (u79p.8) — NOT the in-lockstep-with-this-pane choreography or the
+    // HoldPlaced/HoldCaptured ledger-feed rows, which are the separate bd u79p.9.
+    if (state.accountId) { refreshAccount(); }
   }
   function renderSagaProcess() {
     var s = state.sagaState || "STARTED";
@@ -1169,10 +1225,14 @@ body.console-open .hint-bar { display:none; }
       // the same engine endpoint.
       var loanId = uuid();
       try {
+        // Disburse TO the customer's real engine current account (bd u79p.8): a GUID disbursement ref
+        // routes the credit leg engine-ca (the account is CREDITED on disbursement) instead of the opaque
+        // legacy-DDA stub. Open + seed the CA once per session; fall back to the opaque ref if unavailable.
+        var caRef = (await ensureAccount()) || "ACCT-REF-DEMO-001";
         var r = await api("POST", "/v1/loans", {
           loan_id: loanId, principal_cents: amt, product_id: prod, role: lp.role,
           term_months: lp.n, start_date: today(), purpose: lp.purpose,
-          disbursement_account_ref: "ACCT-REF-DEMO-001"
+          disbursement_account_ref: caRef
         }, { "Idempotency-Key": state.idemKey });
         state.depositId = r.json.loan_id; state.seq = r.json.commit_sequence;
         state.lifecycle = loanUiLifecycle(r.json.status);
@@ -1183,6 +1243,7 @@ body.console-open .hint-bar { display:none; }
         var g = await api("GET", "/v1/loans/" + state.depositId);
         applyLoanReadModel(g.json);
         renderLoanPosition();
+        await refreshAccount();   // bd u79p.8: re-poll the CA so the disbursement credit lands on the panel
         toast("Loan disbursed · " + euro(amt) + " · commit #" + state.seq, "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Disburse failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
@@ -1212,7 +1273,10 @@ body.console-open .hint-bar { display:none; }
       // SERVER-DERIVED and number-pinned (ADR-PC-036 §Decision 1+3) — no caller Idempotency-Key — and
       // the money leg is recorded APPEND-FIRST for the engine-ca settlement saga (ADR-PC-043).
       try {
-        var r = await api("POST", "/v1/loans/" + state.depositId + "/installment", { collection_account_ref: "ACCT-REF-DEMO-001" });
+        // Collect the installment FROM the customer's engine current account (bd u79p.8): a GUID
+        // collection ref routes the debit leg engine-ca (a hold, then a capture on the CA).
+        var caRef = (await ensureAccount()) || "ACCT-REF-DEMO-001";
+        var r = await api("POST", "/v1/loans/" + state.depositId + "/installment", { collection_account_ref: caRef });
         state.seq = r.json.commit_sequence;
         var g = await api("GET", "/v1/loans/" + state.depositId);
         var p = g.json;
@@ -1222,6 +1286,7 @@ body.console-open .hint-bar { display:none; }
         addEvent({ seq: state.seq, name: "InstallmentPaid", meta: "installment " + state.couponsPaid + "/" + state.numCoupons + " · principal " + euro(dPrin) + " · interest " + euro(dInt) + " · engine-ca leg", amt: euro(dPrin + dInt), amtClass: "verify", verify: true });
         pushSpan("loan.installment_allocated", 6, [["babelstone.partition_key", shortId()], ["babelstone.principal_cents", dPrin], ["babelstone.interest_cents", dInt]], true);
         renderLoanPosition();
+        await refreshAccount();   // bd u79p.8: re-poll the CA so the installment debit lands on the panel
         countUp("vGross", state.intPaid); countUp("vNet", state.prinRepaid); countUp("vTotal", state.outstanding);
         toast("Installment " + state.couponsPaid + " · outstanding " + euro(state.outstanding), "verify");
         topoLiveEventChain();
@@ -1251,10 +1316,11 @@ body.console-open .hint-bar { display:none; }
       // SETTLED (each leg is number-pinned idempotent, ADR-PC-036, and records its engine-ca settlement
       // movement APPEND-FIRST, ADR-PC-043). A guard caps the loop at the term length.
       try {
+        var caRef = (await ensureAccount()) || "ACCT-REF-DEMO-001";   // bd u79p.8: collect each leg from the CA
         var guard = state.numCoupons + 1;
         var p = (await api("GET", "/v1/loans/" + state.depositId)).json;
         while ((p.status || "").toUpperCase() === "ACTIVE" && guard-- > 0) {
-          var r = await api("POST", "/v1/loans/" + state.depositId + "/installment", { collection_account_ref: "ACCT-REF-DEMO-001" });
+          var r = await api("POST", "/v1/loans/" + state.depositId + "/installment", { collection_account_ref: caRef });
           state.seq = r.json.commit_sequence;
           p = (await api("GET", "/v1/loans/" + state.depositId)).json;
         }
@@ -1262,6 +1328,7 @@ body.console-open .hint-bar { display:none; }
         addEvent({ seq: state.seq, name: "LoanSettled", meta: "all " + state.numCoupons + " installments cleared · total interest " + euro(state.intPaid) + " · engine-ca settled", amt: euro(state.principalCents + state.intPaid), amtClass: "verify", verify: true });
         pushSpan("loan.settled", 8, [["babelstone.partition_key", shortId()], ["babelstone.total_interest_cents", state.intPaid]], true);
         renderLoanPosition();
+        await refreshAccount();   // bd u79p.8: re-poll the CA after the run-to-term collection legs
         countUp("vTotal", state.principalCents + state.intPaid);
         mcpLog('', 'settled · repaid ' + euro(state.principalCents + state.intPaid));
         toast("Loan settled · repaid " + euro(state.principalCents + state.intPaid), "verify");
@@ -1294,11 +1361,12 @@ body.console-open .hint-bar { display:none; }
       // and records its engine-ca money leg APPEND-FIRST (ADR-PC-043). Carries a mandatory
       // Idempotency-Key (ADR-PC-029 slot 4) so a retry cannot repay twice.
       try {
+        var caRef = (await ensureAccount()) || "ACCT-REF-DEMO-001";   // bd u79p.8: repay from the CA
         var pre = (await api("GET", "/v1/loans/" + state.depositId)).json;
         var payoff = pre.outstanding_balance_cents;
         var idem = uuid();
         var r = await api("POST", "/v1/loans/" + state.depositId + "/early-repayment", {
-          repayment_amount_cents: payoff, repayment_account_ref: "ACCT-REF-DEMO-001"
+          repayment_amount_cents: payoff, repayment_account_ref: caRef
         }, { "Idempotency-Key": idem });
         state.seq = r.json.commit_sequence;
         var p = (await api("GET", "/v1/loans/" + state.depositId)).json;
@@ -1306,6 +1374,7 @@ body.console-open .hint-bar { display:none; }
         addEvent({ seq: state.seq, name: "LoanRepaidEarly", meta: "payoff " + euro(payoff) + " + commission · engine-ca settled", amt: euro(payoff), amtClass: "gold" });
         pushSpan("loan.repaid_early", 7, [["babelstone.partition_key", shortId()], ["babelstone.payoff_cents", payoff]]);
         renderLoanPosition();
+        await refreshAccount();   // bd u79p.8: re-poll the CA so the repayment debit lands on the panel
         countUp("vTotal", state.principalCents + state.intPaid);
         mcpLog('', 'repaid early · payoff ' + euro(payoff));
         toast("Loan repaid early · payoff " + euro(payoff), "verify");
@@ -1395,6 +1464,136 @@ body.console-open .hint-bar { display:none; }
   }
 
   /* =====================================================================
+     CONTA A ORDEM — the customer's engine current account (bd u79p.8)
+     A first-class visual object: the spine-owned two-balance split (available vs
+     booked, ADR-PC-033) as a stacked meter + the active-holds list, read from
+     GET /v1/accounts/{id}. The UI opens + credit-seeds its OWN demand account once
+     per LIVE session, so the settlement legs it funds actually land on a real
+     account we can read back (a GUID source_account_ref routes engine-ca settlement
+     — SagaCommandPayloadFactory.IsEngineCaFunding). DEMO never touches the engine.
+     ===================================================================== */
+  var CA_SEED_CENTS = 5000000;   // €50,000 starting balance — comfortably funds the demo deposit/loan legs
+
+  // Open + credit-seed the demand account ONCE per session (LIVE modes only). Idempotent by the
+  // accountId / accountOpening guard: a second call while one is opened (or opening) is a no-op. Returns
+  // the account GUID (or null in DEMO / on failure — callers fall back to the opaque legacy-DDA refs).
+  async function ensureAccount() {
+    if (state.mode !== "live" && state.mode !== "saga") return null;   // DEMO has no engine
+    if (state.accountId) return state.accountId;
+    if (state.accountOpening) return null;                             // an open is already in flight
+    state.accountOpening = true;
+    try {
+      var accountId = uuid();
+      // Open the demand account (ca_pt_standard, EUR). Idempotency-Key is optional on open; the account
+      // id is the caller-supplied stream id that is ALSO this account's opaque account_ref (ADR-PC-004).
+      await api("POST", "/v1/accounts", { account_id: accountId, product_code: "ca_pt_standard", currency: "EUR" },
+        { "Idempotency-Key": uuid() });
+      // Seed a starting balance via the settlement CREDIT-receive endpoint (ADR-PC-043). The exactly-once
+      // key is the body's intent_reference (NOT the HTTP Idempotency-Key), so a byte-identical reissue
+      // collapses to one credit. The credit lands on the same account_ref GET reads, so it shows up.
+      await api("POST", "/v1/accounts/" + accountId + "/credit", {
+        amount_cents: CA_SEED_CENTS, value_date: today(),
+        intent_reference: "DEMO-SEED-" + accountId
+      });
+      state.accountId = accountId;
+      mcpLog('open_account(product_code="ca_pt_standard") + seed(' + euro(CA_SEED_CENTS) + ')', accountId.slice(0, 8) + '…');
+      await refreshAccount();
+      return accountId;
+    } catch (e) {
+      // A LIVE stack without the current_account family wired (or unreachable) — degrade gracefully: the
+      // panel keeps its before-open state and the product actions fall back to the opaque legacy-DDA refs.
+      toast("Conta a ordem unavailable (" + (e.status || "?") + ") — falling back to legacy-DDA funding", "err");
+      return null;
+    } finally {
+      state.accountOpening = false;
+    }
+  }
+
+  // GET the account read view and re-render the panel. Called after each LIVE product action so the held
+  // segment GROWS on a hold and CLEARS on capture (this poll-after-action is bd u79p.8; the in-lockstep
+  // saga-pane choreography + the money-move ledger rows are the separate bd u79p.9). No-op without an id.
+  async function refreshAccount() {
+    if (!state.accountId) return;
+    try {
+      var g = await api("GET", "/v1/accounts/" + state.accountId);
+      var p = g.json;
+      state.accountSnapshot = {
+        accountingCents: p.accounting_balance_cents,
+        availableCents: p.available_balance_cents,
+        holds: (p.active_holds || []).map(function (h) {
+          return { holdId: h.hold_id, amountCents: h.amount_cents, kind: h.kind, legalReference: h.legal_reference };
+        })
+      };
+    } catch (e) {
+      // Leave the last-known snapshot in place on a transient read failure — no destructive clear.
+    }
+    renderAccount();
+  }
+
+  // Render the conta-a-ordem card: the two-balance split as a stacked meter (booked = full bar, HELD
+  // portion dimmed/hatched = the reversible earmark, available solid) + the active-holds list. Falls back
+  // to an illustrative/empty state in DEMO and before the account is opened, matching the passbook idiom.
+  function renderAccount() {
+    var card = el("accountCard");
+    if (!card) return;
+    if (state.mode !== "live" && state.mode !== "saga") {
+      // DEMO: no engine account — an illustrative placeholder, consistent with the empty-passbook idiom.
+      card.className = "ca-panel pending";
+      card.innerHTML =
+        '<div class="ca-head"><div class="ca-title"><b>Conta à ordem</b> · demand account</div></div>' +
+        '<div class="ca-empty">DEMO mode has no engine account.<br />Switch to <b>LIVE·engine</b> or <b>LIVE·saga</b> — the demo opens a real current account, and a funded deposit or loan settles against it (a reversible hold, then a capture).</div>';
+      return;
+    }
+    var snap = state.accountSnapshot;
+    if (!snap) {
+      // LIVE, before the account is opened / first read.
+      card.className = "ca-panel pending";
+      card.innerHTML =
+        '<div class="ca-head"><div class="ca-title"><b>Conta à ordem</b> · demand account</div></div>' +
+        '<div class="ca-empty">The demo opens + credit-seeds a customer current account on the first product action. Fund a deposit or a loan — the money leg settles here (ADR-PC-043).</div>';
+      return;
+    }
+    var booked = snap.accountingCents || 0;
+    var available = snap.availableCents || 0;
+    var held = Math.max(0, booked - available);   // accounting − available = the earmarked (held) portion
+    // The meter is scaled to booked (the full bar); the held segment is the dimmed/hatched slice, available
+    // is the solid slice. Guard a zero booked so we don't divide by zero (both segments collapse to 0%).
+    var denom = booked > 0 ? booked : 1;
+    var availPct = booked > 0 ? Math.max(0, Math.min(100, (available / denom) * 100)) : 0;
+    var heldPct = booked > 0 ? Math.max(0, Math.min(100, (held / denom) * 100)) : 0;
+    var holds = snap.holds || [];
+    var holdsHtml = holds.length
+      ? holds.map(function (h) {
+          var why = h.kind === "Legal"
+            ? '<b>Legal hold</b>' + (h.legalReference ? ' · ' + esc(h.legalReference) : '')
+            : '<b>Authorization hold</b> · settlement earmark';
+          return '<div class="ca-hold"><span class="why">' + why + ' · ' + esc((h.holdId || "").slice(0, 12)) + '…</span>' +
+                 '<span class="amt">' + euro(h.amountCents) + '</span></div>';
+        }).join("")
+      : '<div class="ca-holds-none">No active holds — nothing earmarked.</div>';
+    card.className = "ca-panel";
+    card.innerHTML =
+      '<div class="ca-head"><div class="ca-title"><b>Conta à ordem</b> · demand account</div></div>' +
+      '<div class="ca-id">' + esc(state.accountId || "") + '</div>' +
+      '<div class="ca-balances">' +
+        '<div class="ca-bal available"><div class="k">Available</div><div class="v">' + euro(available) + '</div></div>' +
+        '<div class="ca-bal booked"><div class="k">Booked (accounting)</div><div class="v">' + euro(booked) + '</div></div>' +
+      '</div>' +
+      '<div class="ca-meter">' +
+        '<div class="ca-seg-available" style="width:' + availPct.toFixed(2) + '%"></div>' +
+        '<div class="ca-seg-held" style="width:' + heldPct.toFixed(2) + '%"></div>' +
+      '</div>' +
+      '<div class="ca-legend">' +
+        '<span class="lg"><i class="sw available"></i>Available ' + euro(available) + '</span>' +
+        '<span class="lg"><i class="sw held"></i>Held ' + euro(held) + '</span>' +
+      '</div>' +
+      '<div class="ca-holds">' +
+        '<div class="ca-holds-title">Active holds · ' + holds.length + '</div>' +
+        holdsHtml +
+      '</div>';
+  }
+
+  /* =====================================================================
      ACTIONS (mode-aware)
      ===================================================================== */
   async function doConstitute() {
@@ -1438,6 +1637,10 @@ body.console-open .hint-bar { display:none; }
           pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", p.withholding_to_date_cents]], true);
         }
         renderPosition(p);
+        // bd u79p.8: keep the conta-a-ordem panel current if a CA was opened earlier this session (the
+        // LIVE·engine direct command surface does not itself drive the engine-ca settlement saga — the
+        // deposit money leg reaches the CA only via LIVE·saga — so this is a no-op read unless one exists).
+        refreshAccount();
         toast("Constituted · commit #" + state.seq, "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Constitute failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
@@ -1447,10 +1650,13 @@ body.console-open .hint-bar { display:none; }
       // the gateway, injecting the X-Client-Id the edge authz binds ownership to (EdgeAuth).
       mcpLog('constitute_deposit(… via edge → saga …)');
       try {
-        // an "insufficient"-flagged source ref makes the Core-ACL stub 422 the reserve → the saga
-        // fails CLOSED to DEPOSIT_CONSTITUTION_FAILED (refusal demo); else the happy path runs
-        // reserve → debit → ActivateDeposit → the engine's DepositConstituted carries it to COMPLETED.
-        var srcRef = el("sagaInsuf").checked ? "ACCT-insufficient-001" : "ACCT-REF-DEMO-001";
+        // Fund from the customer's real engine current account (bd u79p.8): a GUID source_account_ref
+        // routes the reserve→debit money leg ENGINE-CA (a hold on the CA, then a capture) instead of the
+        // opaque legacy-DDA stub, so the conta-a-ordem panel reflects a real hold→capture. Open + seed it
+        // once per session. The 'insufficient'-flagged path MUST stay a NON-GUID ref (ACCT-insufficient-001)
+        // so the Core-ACL stub still 422s the reserve → the saga fails CLOSED (the legacy-DDA refusal demo).
+        var accountId = el("sagaInsuf").checked ? null : await ensureAccount();
+        var srcRef = el("sagaInsuf").checked ? "ACCT-insufficient-001" : (accountId || "ACCT-REF-DEMO-001");
         var sr = await api("POST", "/api/v1/deposits/constitute", {
           product_code: prod, amount: principalCents,
           source_account_ref: srcRef, interest_account_ref: "ACCT-REF-DEMO-002"
@@ -1579,6 +1785,7 @@ body.console-open .hint-bar { display:none; }
         }
         renderPosition(p);
         countUp("vTotal", p.total_payout_cents);
+        refreshAccount();   // bd u79p.8: reflect a maturity credit landing on the CA (no-op unless one exists)
         mcpLog('', 'payout ' + euro(p.total_payout_cents));
         toast("Matured · payout " + euro(p.total_payout_cents), "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
@@ -1667,6 +1874,10 @@ body.console-open .hint-bar { display:none; }
     el("consoleLog").innerHTML = "";
     state.spans = []; renderTrace();
     drawerReset();
+    // Conta a ordem (bd u79p.8): the account is PER-SESSION, not per-instance — it persists across a
+    // product Reset / mode switch (opened + seeded once, state.accountId/accountSnapshot survive here).
+    // Re-render so the panel reflects the current mode (the DEMO placeholder vs the LIVE meter).
+    renderAccount();
     setButtons();
   }
 
@@ -3090,6 +3301,7 @@ body.console-open .hint-bar { display:none; }
   TOPO.init();
   setView("ledger");
   syncProduct();
+  renderAccount();   // bd u79p.8: paint the conta-a-ordem panel's initial (DEMO) illustrative state
   setButtons();
 })();
 </script>
