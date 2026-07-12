@@ -41,7 +41,7 @@ import serve  # noqa: E402
 # serve.py reads its config into module globals at import. Each test tweaks a few of those, so we
 # snapshot + restore the ones we touch to keep tests independent.
 _TOUCHED = (
-    "AUTH", "MC_AUTH_MODE", "MC_BIND", "MC_ALLOW_UNAUTHENTICATED",
+    "AUTH", "MC_AUTH_MODE", "MC_BIND", "MC_ALLOW_UNAUTHENTICATED", "SCA_BYPASS",
     "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES",
     "OIDC_REDIRECT_URL", "MC_PUBLIC_BASE_URL", "MC_SESSION_SIGNING_KEY", "MC_SESSION_TTL",
     "ORCHESTRATOR_URL", "ENGINE_URL",
@@ -59,6 +59,7 @@ def _restore_serve_globals():
     serve.MC_AUTH_MODE = "dev"
     serve.MC_BIND = "127.0.0.1"
     serve.MC_ALLOW_UNAUTHENTICATED = False
+    serve.SCA_BYPASS = False  # the demo SCA bypass is opt-in; default off keeps oidc mode fail-safe
     # The step-up SCA attestation cache starts empty each test (bd babelstone-e4mq), so a test that
     # asserts injection observes a fresh mint (the seam below), not a stale cached value.
     serve._sca_headers_cache = None
@@ -916,6 +917,52 @@ def test_oidc_mode_never_injects_sca_on_a_gated_money_mover(monkeypatch):
     assert echoed["x_sca_acr"] is None       # NO forged attestation in oidc mode
     assert echoed["x_sca_auth_time"] is None
     assert mint_calls == []                   # the mint seam was never even invoked in oidc mode
+    # (this test runs with SCA_BYPASS False from the autouse fixture — it also pins the DEFAULT fail-safe:
+    #  oidc mode injects nothing UNLESS the bypass is explicitly opted into, exercised next.)
+
+
+def test_oidc_mode_with_sca_bypass_injects_on_a_gated_money_mover(monkeypatch):
+    # THE OPT-IN WIDENING (MC_SCA_BYPASS, ADR-IC-010 2026-07-12 amendment, bd babelstone-13zf): with the
+    # explicit default-off bypass flag SET, oidc mode injects the SAME demo attestation dev mode does —
+    # the temporary staging scaffold that lets UI money-movers work until the interactive step-up flow
+    # is built. A valid session still passes the login gate; now the relayed money-mover CARRIES a fresh
+    # X-SCA-* proof (the engine would not 422). The engine's fail-closed ScaPrecondition is unchanged.
+    serve.SCA_BYPASS = True
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key)
+    monkeypatch.setattr(serve, "_mint_stepup_token", _fresh_stepup_token)
+    with fake_idp() as idp, fake_engine() as engine:
+        serve.AUTH = _gate_for(idp, signing_key=key)  # oidc mode
+        serve.ENGINE_URL = engine
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, _GATED_ROUTES[0], method="POST",
+                headers={"Cookie": serve._SESSION_COOKIE + "=" + good, "Content-Length": "0"})
+    assert status == 200
+    echoed = json.loads(body)
+    assert echoed["x_sca_acr"] == "urn:bank:sca:psd2"   # the bypass DOES inject in oidc mode
+    assert echoed["x_sca_auth_time"] is not None and echoed["x_sca_auth_time"].isdigit()
+
+
+def test_oidc_mode_with_sca_bypass_still_skips_ungated_paths(monkeypatch):
+    # The bypass widens the MODE axis (dev-only → oidc too); it must NOT widen the ROUTE set. Even with
+    # MC_SCA_BYPASS on, the ungated /v1/* writes and a family read still carry NO attestation — the
+    # money-mover regex remains the sole route gate, so injection stays confined to the five money-movers.
+    serve.SCA_BYPASS = True
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key)
+    monkeypatch.setattr(serve, "_mint_stepup_token", _fresh_stepup_token)
+    cookie = {"Cookie": serve._SESSION_COOKIE + "=" + good, "Content-Length": "0"}
+    for path in _UNGATED_POST_PATHS:
+        with fake_idp() as idp, fake_engine() as engine:
+            serve.AUTH = _gate_for(idp, signing_key=key)  # oidc mode + bypass on
+            serve.ENGINE_URL = engine
+            with run_mc() as port:
+                status, _hdrs, body = http_req(port, path, method="POST", headers=cookie)
+        assert status == 200, path
+        echoed = json.loads(body)
+        assert echoed["x_sca_acr"] is None, path
+        assert echoed["x_sca_auth_time"] is None, path
 
 
 def test_dev_mode_mint_failure_degrades_without_headers(monkeypatch):
