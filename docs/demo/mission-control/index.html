@@ -1108,7 +1108,7 @@ body.console-open .hint-bar { display:none; }
       '<span class="status-badge ' + badge + '"><span class="d"></span>' + badgeText + '</span>' +
       '<div class="pb-id">' + state.depositId + '</div>' +
       '<div class="pb-principal">' + euro(state.principalCents) + '</div>' +
-      '<div class="pb-sub">AMOUNT FINANCED · ' + (state.tan / 100).toFixed(2) + '% TAEG · ' + state.numCoupons + ' INSTALLMENTS</div>' +
+      '<div class="pb-sub">AMOUNT FINANCED · ' + (state.tan / 100).toFixed(2) + '% TAN · ' + state.numCoupons + ' INSTALLMENTS</div>' +
       '<span class="sign-chip asset">asset · receivable — the borrower owes the bank (opposite sign to a deposit)</span>' +
       '<div class="pb-grid">' +
         '<div class="pb-row"><span class="k">Interest earned</span><span class="v net" id="vGross">' + euro(state.intPaid) + '</span></div>' +
@@ -1190,7 +1190,7 @@ body.console-open .hint-bar { display:none; }
       await sleep(550);
       state.depositId = uuid(); state.seq = 1; state.lifecycle = "Active";
       mcpLog('', 'commit #1 · ' + state.depositId.slice(0, 8));
-      addEvent({ seq: 1, name: "LoanOriginated", meta: prod + " · " + (lp.taeg / 100).toFixed(2) + "% TAEG · idem " + state.idemKey.slice(0, 8), amt: euro(amt), amtClass: "gold" });
+      addEvent({ seq: 1, name: "LoanOriginated", meta: prod + " · " + (lp.taeg / 100).toFixed(2) + "% TAN · idem " + state.idemKey.slice(0, 8), amt: euro(amt), amtClass: "gold" });
       pushSpan("loan.originated", 17, [["babelstone.partition_key", shortId()], ["babelstone.product_code", prod]]);
       await sleep(480);
       state.seq = 2;
@@ -1335,7 +1335,7 @@ body.console-open .hint-bar { display:none; }
     el("familySeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.family === fam); });
     var loan = fam === "loan";
     el("principalLabel").textContent = loan ? "Amount financed" : "Principal";
-    el("rateLabel").textContent = loan ? "Rate (TAEG)" : "Rate (TAN)";
+    el("rateLabel").textContent = loan ? "Rate (TAN)" : "Rate (TAN)";
     el("principalHint").textContent = loan ? "EUR · disbursed to the borrower" : "EUR · stored as integer cents";
     el("btnConstitute").childNodes[0].nodeValue = loan ? "Originate loan " : "Constitute deposit ";
     el("btnMature").childNodes[0].nodeValue = loan ? "Settle (run to term) " : "Mature deposit ";
