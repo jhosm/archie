@@ -944,6 +944,28 @@ def test_oidc_mode_with_sca_bypass_injects_on_a_gated_money_mover(monkeypatch):
     assert echoed["x_sca_auth_time"] is not None and echoed["x_sca_auth_time"].isdigit()
 
 
+def test_oidc_bypass_injects_synthetic_sca_when_mint_script_is_absent(monkeypatch):
+    # THE STAGING REGRESSION (bd babelstone-uob5): oidc + MC_SCA_BYPASS on, but the mint script is NOT on
+    # disk (the seam returns None) — exactly the Mission Control container, which ships serve.py +
+    # index.html only. The money-mover must STILL reach the engine with a fresh synthetic X-SCA-* proof
+    # (before this fix it relayed bare and the engine 422'd — the "Mature failed (422)" the user hit).
+    serve.SCA_BYPASS = True
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key)
+    monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)  # no mint script in the container
+    with fake_idp() as idp, fake_engine() as engine:
+        serve.AUTH = _gate_for(idp, signing_key=key)  # oidc mode
+        serve.ENGINE_URL = engine
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, _GATED_ROUTES[0], method="POST",
+                headers={"Cookie": serve._SESSION_COOKIE + "=" + good, "Content-Length": "0"})
+    assert status == 200
+    echoed = json.loads(body)
+    assert echoed["x_sca_acr"] == serve._SYNTHETIC_SCA_ACR   # synthesized in-process, non-empty
+    assert echoed["x_sca_auth_time"] is not None and echoed["x_sca_auth_time"].isdigit()
+
+
 def test_oidc_mode_with_sca_bypass_still_skips_ungated_paths(monkeypatch):
     # The bypass widens the MODE axis (dev-only → oidc too); it must NOT widen the ROUTE set. Even with
     # MC_SCA_BYPASS on, the ungated /v1/* writes and a family read still carry NO attestation — the
@@ -965,20 +987,21 @@ def test_oidc_mode_with_sca_bypass_still_skips_ungated_paths(monkeypatch):
         assert echoed["x_sca_auth_time"] is None, path
 
 
-def test_dev_mode_mint_failure_degrades_without_headers(monkeypatch):
-    # GRACEFUL DEGRADATION: if the mint fails (script missing / non-zero exit → the seam returns None),
-    # serve.py relays the money-mover WITHOUT the attestation rather than 500ing — the engine then 422s
-    # exactly as it does today. Here the fake engine simply echoes back that no X-SCA-* arrived.
-    monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)  # mint unavailable
+def test_mint_unavailable_falls_back_to_in_process_synthetic_sca(monkeypatch):
+    # THE CONTAINER PATH (bd babelstone-uob5): when the mint script is unavailable (the seam returns
+    # None — exactly what happens inside the Mission Control image, which ships no mint script / bash /
+    # key), serve.py must FALL BACK to an in-process synthetic attestation rather than relaying bare.
+    # So the gated money-mover still reaches the engine WITH a fresh X-SCA-* proof and does not 422.
+    monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)  # mint script absent (the container)
     with fake_engine() as engine:
         serve.ENGINE_URL = engine
         with run_mc() as port:
             status, _hdrs, body = http_req(port, _GATED_ROUTES[0], method="POST",
                                            headers={"Content-Length": "0"})
-    assert status == 200  # relayed cleanly, NOT a serve.py 500
+    assert status == 200
     echoed = json.loads(body)
-    assert echoed["x_sca_acr"] is None
-    assert echoed["x_sca_auth_time"] is None
+    assert echoed["x_sca_acr"] == serve._SYNTHETIC_SCA_ACR       # synthesized, non-empty acr
+    assert echoed["x_sca_auth_time"] is not None and echoed["x_sca_auth_time"].isdigit()  # fresh unix ts
 
 
 # ── pure helpers: path matching, claim decode, cache reuse ────────────────────────────────────
@@ -1023,7 +1046,24 @@ def test_mint_sca_headers_caches_within_ttl(monkeypatch):
     assert len(calls) == 1  # the second call hit the cache, not a re-mint
 
 
-def test_mint_sca_headers_returns_none_on_mint_failure(monkeypatch):
+def test_mint_sca_headers_falls_back_to_synthetic_on_mint_failure(monkeypatch):
+    # When the mint seam returns None (script absent — the container), _mint_sca_headers() must NOT
+    # return None; it synthesizes the attestation in-process so the demo bypass always attests
+    # (bd babelstone-uob5). The engine reads these two headers directly and never validates a token.
     monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)
     serve._sca_headers_cache = None
-    assert serve._mint_sca_headers() is None
+    serve._sca_headers_minted_at = 0.0
+    headers = serve._mint_sca_headers()
+    assert headers is not None
+    assert headers[serve.SCA_ACR_HEADER] == serve._SYNTHETIC_SCA_ACR
+    assert headers[serve.SCA_AUTH_TIME_HEADER].isdigit()
+
+
+def test_synthetic_sca_headers_are_fresh_and_nonempty():
+    # The in-process attestation: a non-empty acr (any non-empty string passes the engine's
+    # ScaPrecondition) and auth_time == the passed instant, so it sits well inside the 300 s window.
+    now = 1_783_857_530
+    headers = serve._synthetic_sca_headers(now)
+    assert headers[serve.SCA_ACR_HEADER] == serve._SYNTHETIC_SCA_ACR
+    assert headers[serve.SCA_ACR_HEADER]                              # non-empty
+    assert headers[serve.SCA_AUTH_TIME_HEADER] == str(now)           # fresh unix ts, as a string
