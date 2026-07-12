@@ -644,7 +644,7 @@ body.console-open .hint-bar { display:none; }
     processId: null, streamUrl: null, sagaES: null,
     sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false, sagaReached: 0,
     sagaStalled: false, sagaStallTimer: null,   // watchdog: a non-terminal saga that stops advancing (bd zla1.17)
-    sagaFailCode: null,   // the SPECIFIC settlement machine code from the FAILED leg on a fail-closed run (bd u79p.20)
+    sagaFailCode: null,   // the SPECIFIC settlement machine code from the FAILED leg on a fail-closed run
     // Whether THIS saga run funds against the customer's engine current account (a GUID source_account_ref,
     // NOT the fail-closed 'insufficient' legacy-DDA ref). Only then does the reserve→capture money leg land
     // real holds on OUR account — so only then does bd u79p.9 drive the conta-a-ordem meter IN LOCKSTEP with
@@ -906,10 +906,10 @@ body.console-open .hint-bar { display:none; }
       } else {
         // fail-closed: nothing was committed — surface the refusal as a failed (red) span
         pushSpan("saga.constitution_failed", 8, [["babelstone.process_id", pid], ["babelstone.outcome", "fail_closed"]], false, true);
-        // Name the SPECIFIC settlement machine code the engine returned on the refused leg (bd u79p.20). The
-        // SSE state stream carries only the business state name (ADR-IC-018 §D3), so the precise code lives on
-        // the FAILED saga_outbox leg's structural failure_reason (migration 0004) — read it through the /pg
-        // window and re-render the terminal note. Best-effort: absent the /pg window the note stays generic.
+        // Name the SPECIFIC settlement machine code the engine returned on the refused leg. The SSE state
+        // stream carries only the business state name (ADR-IC-018 §D3), so the precise code lives on the
+        // FAILED saga_outbox leg — read it through the /pg window as the server-derived bounded failure_code
+        // and re-render the terminal note. Best-effort: absent the /pg window the note stays generic.
         loadSagaFailCode();
       }
       if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
@@ -940,11 +940,11 @@ body.console-open .hint-bar { display:none; }
       else { refreshAccount(); }
     }
   }
-  // Read the SPECIFIC settlement machine code off the FAILED saga_outbox leg (bd u79p.20) and re-render the
-  // terminal note. The dispatcher captured the engine's RFC7807 refusal body into the structural failure_reason
-  // column (migration 0004 — bounded, NOT PII); its `code` extension is the bounded ADR-PC-043/§D6 token. We
-  // pull the leg through the /pg process window (structural columns only) and parse the code out — falling back
-  // to the HTTP status when the body isn't JSON, so a legacy-ACL refusal (plain status, no code) still reads.
+  // Read the SPECIFIC settlement machine code off the FAILED saga_outbox leg and re-render the terminal note.
+  // The dispatcher captured the engine's RFC7807 refusal body; serve.py parses it SERVER-SIDE into a bounded
+  // failure_code (the `code` extension — the ADR-PC-043/§D6 token — else the structural title, else the HTTP
+  // status), never the free-form detail, so the raw refusal body never crosses the /pg window. We pull the leg
+  // through the /pg process window and read that bounded projection — absent it, the note stays generic.
   async function loadSagaFailCode() {
     if (!state.processId) return;
     try {
@@ -954,13 +954,7 @@ body.console-open .hint-bar { display:none; }
       var failed = ((d.legs) || []).filter(function (l) { return l.status === "FAILED"; });
       if (!failed.length) return;
       var leg = failed[failed.length - 1];              // the terminal refusal leg
-      var code = "";
-      var reason = leg.failure_reason;
-      if (reason) {
-        try { var pj = JSON.parse(reason); code = (pj && pj.code) || pj.detail || pj.title || ""; }
-        catch (e) { code = reason; }                    // not problem+json (legacy-ACL) — the raw label
-      }
-      if (!code && leg.failure_status_code) code = "HTTP " + leg.failure_status_code;
+      var code = leg.failure_code || "";                // the bounded, server-derived structural code
       if (code) { state.sagaFailCode = code; renderSagaProcess(); }
     } catch (e) { /* /pg read failed — the terminal note keeps the generic blurb */ }
   }
@@ -1532,7 +1526,7 @@ body.console-open .hint-bar { display:none; }
     if (!res.ok) { var err = new Error((json.detail || json.title || res.statusText)); err.status = res.status; err.body = json; throw err; }
     return { json: json, status: res.status, traceId: traceId };
   }
-  // Surface the SPECIFIC settlement machine code the engine returns on a refused leg (bd u79p.20). The
+  // Surface the SPECIFIC settlement machine code the engine returns on a refused leg. The
   // engine-CA settlement ingress emits an RFC7807 problem+json 422 carrying a `code` extension — the bounded
   // ADR-PC-043/ADR-PC-037 §D6 token (LIMIT_EXCEEDED, INSUFFICIENT_AVAILABLE_BALANCE, OVERDRAFT_LIMIT_EXCEEDED,
   // ACCOUNT_NOT_ACTIVE, …) — so the UI can name WHY the source held the funds instead of a generic
@@ -1597,7 +1591,7 @@ body.console-open .hint-bar { display:none; }
     } catch (e) {
       // A LIVE stack without the current_account family wired (or unreachable) — degrade gracefully: the
       // panel keeps its before-open state and the product actions fall back to the opaque legacy-DDA refs. On
-      // a 422 the engine names the SPECIFIC settlement code (bd u79p.20) rather than a generic refusal.
+      // a 422 the engine names the SPECIFIC settlement code rather than a generic refusal.
       var why = e.status === 422 ? declineCode(e) : (e.status || "?");
       toast("Conta a ordem unavailable (" + why + ") — falling back to legacy-DDA funding", "err");
       return null;
