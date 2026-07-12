@@ -76,6 +76,69 @@ print(json.loads(base64.urlsafe_b64decode(seg))["auth_time"])
 }
 
 # ---------------------------------------------------------------------------
+# demo customer conta à ordem — open + seed a starting balance on the engine-owned CA
+# ---------------------------------------------------------------------------
+# In plain English: the products in these demos need a REAL customer current account to settle against —
+# the deposit's principal debit and its maturity credit, a loan's disbursement credit and installment
+# debit. This helper stands one up on the engine: it opens a demand account (POST /v1/accounts) and seeds
+# a non-zero starting balance (POST /v1/accounts/{id}/credit), then echoes the opened account id so the
+# caller can thread it as the funding / settlement account. That id IS the account's opaque account_ref
+# (AccountRef == AccountId.ToString(), ADR-PC-033), so a ce_settlementtarget=engine-ca leg naming it as
+# account_ref lands on this very account (ADR-PC-043).
+#
+# The seed credit goes through the SETTLEMENT-facing credit ingress, whose exactly-once key is the
+# BODY's economic-intent reference — NOT the HTTP Idempotency-Key (the scoped ADR-PC-029 carve-out,
+# ADR-PC-043) — so a demo re-run with the SAME intent reference collapses to one append at command_dedup
+# and the balance is seeded exactly once. The seed money-mover carries the step-up SCA headers too
+# (stepup_sca_headers): the account money-movers get the same Kong-less dev bypass the deposit maturity
+# mover uses, so the whole engine-CA money path is uniform under the demo.
+#
+# Echoes the opened account id (a UUID) on STDOUT — and ONLY the id: the human-readable progress lines are
+# routed to STDERR (info … >&2), so `ACCT_ID="$(open_and_seed_demo_ca …)"` captures the bare id, not the
+# chatter. (info()/ok()/say() print to stdout, so a helper meant for `$(…)` capture must send its own
+# progress to stderr; die() already goes to stderr.)
+#   ACCT_ID="$(open_and_seed_demo_ca "$ENGINE_URL" 200000000 "$RUNDIR")"
+open_and_seed_demo_ca() { # engine_url seed_cents rundir [product_code] [currency]
+  local url="$1" seed_cents="$2" rundir="$3" product="${4:-ca_pt_standard}" currency="${5:-EUR}"
+  local account_id value_date code seed_ref
+  local STEPUP=()
+
+  # A fresh account stream id — also this account's opaque account_ref (ADR-PC-033). Lowercased so the
+  # engine-CA settlement ingress (which Guid.Parses the account_ref) and any string compare agree.
+  account_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+  value_date="$(py -c 'import datetime; print(datetime.date.today().isoformat())')"
+
+  # (a) open the demand account. The Idempotency-Key is OPTIONAL on open (a new-stream append is a
+  # one-shot), but we supply one so a demo re-run of the SAME account_id dedupes to a 200 replay.
+  code="$(curl -sS -o "$rundir/ca-open.json" -w '%{http_code}' \
+    -X POST "$url/v1/accounts" -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: $account_id" \
+    -d "{\"account_id\":\"$account_id\",\"product_code\":\"$product\",\"currency\":\"$currency\"}")" \
+    || die "could not POST /v1/accounts to open the demo customer CA"
+  case "$code" in
+    201) info "opened demo customer CA $account_id ($product / $currency)" >&2 ;;
+    200) info "demo customer CA $account_id already open ($product / $currency) — replayed" >&2 ;;
+    *)   die "open demo CA expected 201 or 200, got $code  ($(cat "$rundir/ca-open.json"))" ;;
+  esac
+
+  # (b) seed a non-zero starting balance via the settlement CREDIT ingress. The intent_reference is the
+  # exactly-once key (ADR-PC-043 slot 4), NOT the HTTP Idempotency-Key — so a re-run with the SAME
+  # reference seeds exactly once. We tie it to the account id so distinct demo accounts get distinct keys.
+  # The money-mover carries the step-up SCA headers, uniform with the deposit maturity mover.
+  seed_ref="DEMO-CA-SEED-${account_id}"
+  while IFS= read -r _hdr; do STEPUP+=("$_hdr"); done < <(stepup_sca_headers)
+  code="$(curl -sS -o "$rundir/ca-credit.json" -w '%{http_code}' \
+    -X POST "$url/v1/accounts/$account_id/credit" -H 'Content-Type: application/json' \
+    "${STEPUP[@]}" \
+    -d "{\"amount_cents\":$seed_cents,\"value_date\":\"$value_date\",\"intent_reference\":\"$seed_ref\"}")" \
+    || die "could not POST /v1/accounts/$account_id/credit to seed the starting balance"
+  [ "$code" = 200 ] || die "seed credit expected 200, got $code  ($(cat "$rundir/ca-credit.json"))"
+  info "seeded starting balance ${seed_cents} cents on demo CA $account_id (settlement credit, intent ${seed_ref})" >&2
+
+  printf '%s\n' "$account_id"
+}
+
+# ---------------------------------------------------------------------------
 # probes & process lifecycle
 # ---------------------------------------------------------------------------
 
@@ -370,7 +433,16 @@ create_orchestrator_db() { # pg_container orch_db
 # Start the orchestrator host (edge + consume loop + dispatcher). Connection strings resolve at the
 # composition root (ADR-PC-004 Amendment A1); the Kafka/Engine/Settlement targets are ENDPOINTS, not
 # credentials. The probe hits an unknown process id — a 404 proves the HTTP surface is live.
-start_orchestrator_host() { # orch_dll orch_conn kafka_bootstrap acl_url engine_url orch_url pidfile logfile
+#
+# Settlement counterparty routing (ADR-PC-043): the dispatcher picks the settlement counterparty from the
+# leg's promoted ce_settlementtarget header ALONE, and only the BASE URL flips. $4 (Settlement__BaseUrl)
+# is the LEGACY-DDA home — the default an absent/legacy-dda target routes to (the WireMock Core-ACL stub);
+# it stays the fallback so the legacy-DDA demo path is preserved. The OPTIONAL 9th arg
+# (Settlement__EngineCaBaseUrl) is the engine-owned CA target: pass the engine's own base URL and a
+# ce_settlementtarget=engine-ca leg routes HOME to the engine's authorize/capture/credit ingress. Omit it
+# (or pass empty) and the router fails an engine-ca leg closed — never a silent settle on the legacy core.
+start_orchestrator_host() { # orch_dll orch_conn kafka_bootstrap acl_url engine_url orch_url pidfile logfile [engine_ca_settlement_url]
+  Settlement__EngineCaBaseUrl="${9:-}" \
   ConnectionStrings__OrchestratorMigration="$2" \
     ConnectionStrings__Orchestrator="$2" \
     Kafka__BootstrapServers="$3" \

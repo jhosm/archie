@@ -17,8 +17,10 @@
 #   2. apply the event-store schema to the `babelstone` DB
 #   3. build the engine, rate-sheet and orchestrator hosts
 #   4. deploy the 3-product rate sheet (so the LIVE·engine variants all price)
-#   5. start the engine on :8080, Redpanda-wired (the superset that serves every mode)
-#   6. start the orchestrator on :8090 (the LIVE·saga edge + saga + dispatcher)
+#   5. start the engine on :8080, Redpanda-wired (the superset that serves every mode), then open +
+#      credit-seed a customer conta à ordem on it — the account products settle against (engine-CA)
+#   6. start the orchestrator on :8090 (the LIVE·saga edge + saga + dispatcher), with the engine-CA
+#      settlement target pointed at the engine so a ce_settlementtarget=engine-ca leg routes home (ADR-PC-043)
 #   7. start the MCP server on :8000 (+ the real-Claude agent host on :8091, if the key is set)
 #   8. start Mission Control (serve.py) on :9000, proxying /v1 + /api/v1 + /agent same-origin
 #
@@ -32,6 +34,8 @@
 #
 # Overridable env: PG_PORT REDPANDA_KAFKA_PORT CORE_ACL_STUB_PORT ENGINE_PORT ORCH_PORT MCP_PORT
 #                  AGENT_BIND_PORT RATESHEET_PORT MC_PORT OTLP_GRPC_PORT GRAFANA_PORT TEMPO_PORT
+#                  ENGINE_CA_SETTLEMENT_URL (engine-CA settlement target; default the engine — set empty for legacy-DDA only)
+#                  DEMO_CA_SEED_CENTS (starting balance seeded on the customer conta à ordem)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,6 +66,10 @@ ORCH_CONN="Host=localhost;Port=${PG_PORT};Database=${PG_ORCH_DB};Username=babels
 ENGINE_URL="http://localhost:${ENGINE_PORT}"
 ORCH_URL="http://localhost:${ORCH_PORT}"
 ACL_URL="http://localhost:${CORE_ACL_STUB_PORT}"
+# The engine-owned CA settlement target (ADR-PC-043). Defaults to the engine's own base URL so a
+# ce_settlementtarget=engine-ca leg routes HOME to the engine's authorize/capture/credit ingress and lands
+# on the seeded conta à ordem. Set ENGINE_CA_SETTLEMENT_URL= (empty) to keep the legacy-DDA-only path.
+ENGINE_CA_SETTLEMENT_URL="${ENGINE_CA_SETTLEMENT_URL-http://localhost:${ENGINE_PORT}}"
 RATESHEET_URL="http://localhost:${RATESHEET_PORT}"
 MCP_URL="http://127.0.0.1:${MCP_PORT}/mcp"
 MIGRATIONS_DIR="engine/src/Babelstone.EventStore.Migrations/Sql"
@@ -194,12 +202,28 @@ say "5/8 Starting the engine host on ${ENGINE_URL} (Redpanda-wired — serves LI
 start_engine_host "$ENGINE_DLL" "$ENGINE_CONN" "$ENGINE_URL" "$ROOT/packs" \
   "$RUNDIR/engine.pid" "$RUNDIR/engine.log" "localhost:${REDPANDA_KAFKA_PORT}"
 
+# Open + seed a customer conta à ordem on the engine — the account products SETTLE against. The seeded id
+# IS the account_ref (AccountRef == AccountId.ToString(), ADR-PC-033); paste it as the source/interest
+# account when constituting a deposit LIVE·saga in the UI, and a ce_settlementtarget=engine-ca leg lands on
+# THIS account (ADR-PC-043) — funding debits it (hold → capture), maturity credits it. The starting balance
+# covers a demo deposit's principal with headroom.
+say "Opening + seeding a customer conta à ordem on the engine (products settle against it)"
+DEMO_CA_ID="$(open_and_seed_demo_ca "$ENGINE_URL" "${DEMO_CA_SEED_CENTS:-200000000}" "$RUNDIR")"
+ok "demo customer CA ${DEMO_CA_ID} open + seeded on the engine (the engine-CA settlement target)"
+
 # ---------------------------------------------------------------------------
 # 6. start the orchestrator (LIVE·saga edge + saga + dispatcher)
 # ---------------------------------------------------------------------------
 say "6/8 Starting the orchestrator host on ${ORCH_URL} (it applies its own saga schema on boot)"
+# Settlement counterparty routing (ADR-PC-043): $ACL_URL is the LEGACY-DDA home (Settlement__BaseUrl,
+# the WireMock Core-ACL stub) — kept as the fallback so the legacy-DDA path stays available. The
+# ENGINE_CA_SETTLEMENT_URL (default: the engine's base URL) is the engine-owned CA target
+# (Settlement__EngineCaBaseUrl): a ce_settlementtarget=engine-ca leg routes HOME to the engine's
+# authorize/capture/credit ingress, landing on the seeded conta à ordem. Set ENGINE_CA_SETTLEMENT_URL=
+# (empty) for the pre-ADR-PC-043 legacy-only behaviour (engine-ca legs then fail closed).
 start_orchestrator_host "$ORCH_DLL" "$ORCH_CONN" "localhost:${REDPANDA_KAFKA_PORT}" \
-  "$ACL_URL" "$ENGINE_URL" "$ORCH_URL" "$RUNDIR/orchestrator.pid" "$RUNDIR/orchestrator.log"
+  "$ACL_URL" "$ENGINE_URL" "$ORCH_URL" "$RUNDIR/orchestrator.pid" "$RUNDIR/orchestrator.log" \
+  "$ENGINE_CA_SETTLEMENT_URL"
 
 # ---------------------------------------------------------------------------
 # 7. start the MCP server (+ the real-Claude agent host, if the key is set)
@@ -230,10 +254,11 @@ cat <<DONE
 $(printf '\033[1;32m✓ The whole Mission Control backend is up.\033[0m')
 
   UI            http://localhost:${MC_PORT}        (logs: .demo-all/serve.log)
-  engine        ${ENGINE_URL}        (LIVE·engine + the saga's ActivateDeposit target; .demo-all/engine.log)
+  engine        ${ENGINE_URL}        (LIVE·engine + the saga's ActivateDeposit target + engine-CA settlement ingress; .demo-all/engine.log)
   orchestrator  ${ORCH_URL}        (LIVE·saga edge + saga + dispatcher; .demo-all/orchestrator.log)
   MCP           ${MCP_URL}   (.demo-all/mcp.log)   agent  http://localhost:${AGENT_PORT}  (.demo-all/agent.log)
-  Core-ACL stub ${ACL_URL}        (settlement; WireMock)
+  Core-ACL stub ${ACL_URL}        (legacy-DDA settlement; WireMock)
+  customer CA   ${DEMO_CA_ID:-—}   (engine-owned conta à ordem — the engine-CA settlement target; GET ${ENGINE_URL}/v1/accounts/${DEMO_CA_ID:-<id>})
   ${AGENT_NOTE}
 
 Open the UI and flip freely — one backend serves every mode:
@@ -241,6 +266,9 @@ Open the UI and flip freely — one backend serves every mode:
   • Mode toggle → DEMO / LIVE·engine / LIVE·saga
   • Operator toggle → YOU / CLAUDE   (CLAUDE drives the engine-direct MCP tools, in any Mode)
   • Telemetry toggle → ON   (LIVE·engine pulls the real Tempo trace — the LGTM stack is up; open it in Grafana on http://localhost:${GRAFANA_PORT})
+  • LIVE·saga engine-CA settlement → constitute with the seeded customer CA id above as the source/interest account
+    (${DEMO_CA_ID:-—}); a GUID funding ref routes ce_settlementtarget=engine-ca (ADR-PC-043), so the funding debit +
+    maturity credit land on that real account. A legacy (non-GUID) ref keeps the legacy-DDA path to the Core-ACL stub.
 
 Stop every host when you're done (infra is left up — use 'make down' for the stack):
 
