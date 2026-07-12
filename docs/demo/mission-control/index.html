@@ -454,7 +454,7 @@ body.console-open .hint-bar { display:none; }
     </div>
     <div class="field">
       <label for="principal" id="principalLabel">Principal</label>
-      <input id="principal" type="text" inputmode="numeric" value="10,000" />
+      <input id="principal" type="text" inputmode="numeric" value="4,000" />
       <div class="hint" id="principalHint">EUR · stored as integer cents</div>
     </div>
     <div class="field">
@@ -1465,7 +1465,10 @@ body.console-open .hint-bar { display:none; }
       o.textContent = loan ? src[k].label : ("12m · " + src[k].label);
       sel.appendChild(o);
     });
-    el("principal").value = loan ? "15,000" : "10,000";
+    // Deposit default is €4,000 — deliberately UNDER the ca_pt_standard €5,000 per-transaction cap (and the
+    // €10,000 daily-velocity cap) so a LIVE·saga constitution funded from the engine CA clears the reserve
+    // hold and completes green (bd u79p.16). A larger amount would be declined LIMIT_EXCEEDED at the authorize.
+    el("principal").value = loan ? "15,000" : "4,000";
     el("term").value = loan ? "360" : "365";
     // Loans now run for real: the demo stack deploys the pt-loans-2026.1 rate sheet (bd babelstone-u79p.7)
     // and the engine maps the /v1/loans surface, so the personal_loan family is selectable in LIVE·engine

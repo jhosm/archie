@@ -161,6 +161,16 @@ public sealed record ReserveAccountBalanceCommand : CommandPayload
     [JsonPropertyName("reservation_ref")]
     public required string ReservationRef { get; init; }
 
+    /// <summary>The amount to HOLD in integer cents — exactly the funded principal the engine-CA authorize
+    /// WRITER sizes the reversible hold to (ADR-PC-043 slot 1, the in-band WRONG-AMOUNT guard). The engine-CA
+    /// authorize ingress requires a POSITIVE amount to place a hold, so an <c>engine-ca</c> reserve that omits
+    /// it is a 400 — the saga never gets past the reversible leg. Symmetric with the capture leg's
+    /// <see cref="ConfirmDebitCommand.AmountCents"/>. Money-as-integer-cents on the wire (ADR-PC-010), never a
+    /// float. Null on a legacy leg (the legacy ACL sizes the hold from the reservation): the field serializes
+    /// as an explicit null there; the logical command and its replay-stability are unchanged.</summary>
+    [JsonPropertyName("amount_cents")]
+    public long? AmountCents { get; init; }
+
     /// <summary>The settlement-COUNTERPARTY discriminator the dispatcher routes on (ADR-PC-043):
     /// <c>engine-ca</c> routes this funding hold to the engine-owned CA authorize
     /// writer, <c>legacy-dda</c> (or null) to the legacy Core ACL (UNCHANGED). Header-only routing: this is
