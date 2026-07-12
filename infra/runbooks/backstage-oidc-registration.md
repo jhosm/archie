@@ -58,7 +58,7 @@ for the full rationale.
    Single-Page App.
 2. Name it so it is unmistakable in the cohort register, e.g. **Backstage (staging)**.
 3. **Read the App ID** (client_id) Logto assigns. Logto generates this value — it is NOT settable to
-   a friendly name. For the current staging app it is **`mdkl6ahqqjy3gc8o6lpn2`**, already wired into
+   a friendly name. For the current staging app it is **`2pcjypvx4typnhjci1clc`**, already wired into
    `BACKSTAGE_OIDC_CLIENT_ID` in `overlays/staging/backstage-oidc.patch.yaml`. If you ever re-create
    the app, Logto assigns a NEW App ID — update `BACKSTAGE_OIDC_CLIENT_ID` to match and redeploy; the
    two MUST be equal.
@@ -120,7 +120,7 @@ filter covers `backstage/**` + `infra/backstage/**`, so a merge rebuilds `:lates
    ```bash
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
      'https://backstage.babelstone.dev/api/auth/oidc/start?env=production'
-   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=mdkl6ahqqjy3gc8o6lpn2...
+   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=2pcjypvx4typnhjci1clc...
    ```
 
 3. In a browser, `https://backstage.babelstone.dev` transparently redirects to Logto (the frontend
