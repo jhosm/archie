@@ -225,6 +225,11 @@ body.console-open .hint-bar { display:none; }
 .ca-head { display:flex; align-items:center; justify-content:space-between; gap:0.6rem; }
 .ca-title { font-family:var(--mono); font-size:0.6rem; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); }
 .ca-title b { color:var(--gold); font-weight:600; }
+/* bd u79p.15: a manual "read balances now" affordance + a transient "settling…" status */
+.ca-refresh { flex:none; background:none; border:1px solid var(--faint); color:var(--faint); border-radius:5px; cursor:pointer; font-size:0.8rem; line-height:1; padding:2px 6px; transition:color .15s, border-color .15s; }
+.ca-refresh:hover { color:var(--gold); border-color:var(--gold); }
+.ca-refresh:active { transform:rotate(90deg); }
+.ca-settling { color:var(--gold); font-style:italic; text-transform:none; letter-spacing:0; }
 .ca-id { font-family:var(--mono); font-size:0.62rem; color:var(--faint); margin-top:0.5rem; word-break:break-all; }
 .ca-empty { font-family:var(--mono); font-size:0.7rem; color:var(--faint); line-height:1.7; padding:0.6rem 0; }
 .ca-balances { display:flex; justify-content:space-between; align-items:flex-end; gap:0.8rem; margin:0.9rem 0 0.55rem; }
@@ -658,7 +663,10 @@ body.console-open .hint-bar { display:none; }
     // SagaCommandPayloadFactory.IsEngineCaFunding). accountOpening guards the open-once. accountSnapshot
     // is the last GET /v1/accounts/{id} read { accountingCents, availableCents, holds[] } (null before
     // the first read) rendered as the two-balance meter + active-holds list.
-    accountId: null, accountOpening: false, accountSnapshot: null
+    accountId: null, accountOpening: false, accountSnapshot: null,
+    // bd u79p.15: true while an async settlement is being reconciled (poll-until-booked-settles), so the
+    // conta-a-ordem panel can show a transient 'settling…' hint instead of looking stuck at a stale balance.
+    accountSettling: false
   };
 
   /* ---------------- elements ---------------- */
@@ -1272,7 +1280,8 @@ body.console-open .hint-bar { display:none; }
         var g = await api("GET", "/v1/loans/" + state.depositId);
         applyLoanReadModel(g.json);
         renderLoanPosition();
-        await refreshAccount();   // bd u79p.8: re-poll the CA so the disbursement credit lands on the panel
+        // bd u79p.15: the disbursement settles async — poll until it lands so the meter doesn't lag a cycle.
+        reconcileAccountAfterMove(state.accountSnapshot ? state.accountSnapshot.accountingCents : null);
         toast("Loan disbursed · " + euro(amt) + " · commit #" + state.seq, "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Disburse failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
@@ -1317,7 +1326,8 @@ body.console-open .hint-bar { display:none; }
         // bd u79p.9: the installment is collected FROM the conta à ordem — a direct debit, no hold leg.
         if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "installment collected from the conta à ordem", amt: euro(dPrin + dInt), amtClass: "gold" });
         renderLoanPosition();
-        await refreshAccount();   // bd u79p.8: re-poll the CA so the installment debit lands on the panel
+        // bd u79p.15: the installment collection settles async — poll until it lands (no one-cycle lag).
+        reconcileAccountAfterMove(state.accountSnapshot ? state.accountSnapshot.accountingCents : null);
         countUp("vGross", state.intPaid); countUp("vNet", state.prinRepaid); countUp("vTotal", state.outstanding);
         toast("Installment " + state.couponsPaid + " · outstanding " + euro(state.outstanding), "verify");
         topoLiveEventChain();
@@ -1361,7 +1371,8 @@ body.console-open .hint-bar { display:none; }
         // bd u79p.9: the run-to-term legs collect every remaining installment FROM the conta à ordem.
         if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "remaining installments collected from the conta à ordem", amt: euro(state.principalCents + state.intPaid), amtClass: "gold" });
         renderLoanPosition();
-        await refreshAccount();   // bd u79p.8: re-poll the CA after the run-to-term collection legs
+        // bd u79p.15: the run-to-term collections settle async — poll until they land (no one-cycle lag).
+        reconcileAccountAfterMove(state.accountSnapshot ? state.accountSnapshot.accountingCents : null);
         countUp("vTotal", state.principalCents + state.intPaid);
         mcpLog('', 'settled · repaid ' + euro(state.principalCents + state.intPaid));
         toast("Loan settled · repaid " + euro(state.principalCents + state.intPaid), "verify");
@@ -1409,7 +1420,8 @@ body.console-open .hint-bar { display:none; }
         // bd u79p.9: the early payoff is debited FROM the conta à ordem.
         if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "early payoff debited from the conta à ordem", amt: euro(payoff), amtClass: "gold" });
         renderLoanPosition();
-        await refreshAccount();   // bd u79p.8: re-poll the CA so the repayment debit lands on the panel
+        // bd u79p.15: the early-payoff debit settles async — poll until it lands (no one-cycle lag).
+        reconcileAccountAfterMove(state.accountSnapshot ? state.accountSnapshot.accountingCents : null);
         countUp("vTotal", state.principalCents + state.intPaid);
         mcpLog('', 'repaid early · payoff ' + euro(payoff));
         toast("Loan repaid early · payoff " + euro(payoff), "verify");
@@ -1580,6 +1592,31 @@ body.console-open .hint-bar { display:none; }
     }
   }
 
+  // bd u79p.15: the engine-DIRECT money leg (loan disbursement/collection, deposit maturity) settles
+  // ASYNCHRONOUSLY (ADR-PC-043) AFTER the command's HTTP 2xx, so a single post-action GET races the
+  // settlement and the meter would lag a whole cycle (the ledger row shows the move; the balance catches up
+  // only on the NEXT action). Instead, poll with backoff until the booked balance has MOVED off its
+  // pre-command baseline AND held steady for a cycle (so a seed + disbursement that land a tick apart both
+  // register) — or we hit the cap. The 'settling…' flag lets the panel show the transient rather than a
+  // stale number. Fire-and-forget: it drives the meter in the background and never blocks the command buttons.
+  async function reconcileAccountAfterMove(baselineBookedCents) {
+    if (!state.accountId) return;
+    state.accountSettling = true; renderAccount();
+    var prev = baselineBookedCents;
+    try {
+      for (var i = 0; i < 8; i++) {
+        await refreshAccount();
+        var snap = state.accountSnapshot;
+        var now = snap && snap.accountingCents != null ? snap.accountingCents : null;
+        if (now !== baselineBookedCents && now === prev) return;   // moved off baseline and stabilised
+        prev = now;
+        await sleep(500);
+      }
+    } finally {
+      state.accountSettling = false; renderAccount();
+    }
+  }
+
   // bd u79p.9: fold a settlement movement into the LOCAL account snapshot so the meter moves AT the saga
   // milestone — not a poll later. This is the in-lockstep half of the story: the reserve/capture legs are
   // async round-trips (orchestrator → Core-ACL stub → engine), so a GET fired at the milestone races the
@@ -1652,8 +1689,13 @@ body.console-open .hint-bar { display:none; }
         }).join("")
       : '<div class="ca-holds-none">No active holds — nothing earmarked.</div>';
     card.className = "ca-panel";
+    // bd u79p.15: header carries a transient 'settling…' hint (while an async settlement reconciles) and a
+    // manual ↻ refresh — a "read balances now" escape hatch for genuinely slow settlement.
     card.innerHTML =
-      '<div class="ca-head"><div class="ca-title"><b>Conta à ordem</b> · demand account</div></div>' +
+      '<div class="ca-head">' +
+        '<div class="ca-title"><b>Conta à ordem</b> · demand account' + (state.accountSettling ? ' <span class="ca-settling">· settling…</span>' : '') + '</div>' +
+        '<button class="ca-refresh" type="button" title="Re-read balances from the engine">↻</button>' +
+      '</div>' +
       '<div class="ca-id">' + esc(state.accountId || "") + '</div>' +
       '<div class="ca-balances">' +
         '<div class="ca-bal available"><div class="k">Available</div><div class="v">' + euro(available) + '</div></div>' +
@@ -1671,6 +1713,9 @@ body.console-open .hint-bar { display:none; }
         '<div class="ca-holds-title">Active holds · ' + holds.length + '</div>' +
         holdsHtml +
       '</div>';
+    // bd u79p.15: wire the manual refresh after each render (innerHTML replaces the node, so re-bind it).
+    var refreshBtn = card.querySelector(".ca-refresh");
+    if (refreshBtn) refreshBtn.onclick = function () { refreshAccount(); };
   }
 
   /* =====================================================================
@@ -1871,7 +1916,8 @@ body.console-open .hint-bar { display:none; }
         }
         renderPosition(p);
         countUp("vTotal", p.total_payout_cents);
-        refreshAccount();   // bd u79p.8: reflect a maturity credit landing on the CA (no-op unless one exists)
+        // bd u79p.15: a maturity payout settles async — poll until it lands (no-op unless a CA exists).
+        reconcileAccountAfterMove(state.accountSnapshot ? state.accountSnapshot.accountingCents : null);
         mcpLog('', 'payout ' + euro(p.total_payout_cents));
         toast("Matured · payout " + euro(p.total_payout_cents), "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
