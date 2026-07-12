@@ -134,6 +134,11 @@ public sealed class MultiSagaSubstrateTests
         Assert.Null(composite.Resolve(ConstitutionProcess.ActivateDeposit, "UnregisteredSaga"));
     }
 
+    // ==== SETTLEMENT_TARGET_HEADER_ONLY ===============================================================
+    // Routing selects the settlement counterparty from the ce_settlementtarget header ALONE; the substrate
+    // router never reads Movement.AccountRef / the body account_ref to route (ADR-PC-043 §Payload-shape /
+    // ADR-IC-018 §D5). See also SettlementProcessSagaTests.Router_routes_by_the_settlement_target_header_
+    // alone_never_the_payload, which pins that an AccountRef-like body hint is ignored.
     [Fact]
     public void CompositeCommandRouter_threads_the_settlement_target_header_to_the_constitution_router()
     {
@@ -213,6 +218,10 @@ public sealed class MultiSagaSubstrateTests
         Assert.Equal("http://legacy-acl", legacy!.BaseUrl);
     }
 
+    // ==== SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED =========================================================
+    // On an engine-ca leg the command's AccountRef equals the PROMOTED Movement.AccountRef (the customer's
+    // real conta-à-ordem account GUID), forwarded untouched — never the ACCT-{processId} placeholder the
+    // legacy/unpromoted path falls back to (ADR-PC-043 §Payload-shape amendment 2026-07-11).
     [Fact]
     public void ConstitutionPayloadFactory_tags_an_engine_owned_funding_account_as_engine_ca()
     {
