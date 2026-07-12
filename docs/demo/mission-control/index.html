@@ -1553,8 +1553,8 @@ body.console-open .hint-bar { display:none; }
         '<div class="ca-empty">The demo opens + credit-seeds a customer current account on the first product action. Fund a deposit or a loan — the money leg settles here (ADR-PC-043).</div>';
       return;
     }
-    var booked = snap.accountingCents || 0;
-    var available = snap.availableCents || 0;
+    var booked = snap.accountingCents != null ? snap.accountingCents : 0;
+    var available = snap.availableCents != null ? snap.availableCents : 0;
     var held = Math.max(0, booked - available);   // accounting − available = the earmarked (held) portion
     // The meter is scaled to booked (the full bar); the held segment is the dimmed/hatched slice, available
     // is the solid slice. Guard a zero booked so we don't divide by zero (both segments collapse to 0%).
@@ -1568,7 +1568,7 @@ body.console-open .hint-bar { display:none; }
             ? '<b>Legal hold</b>' + (h.legalReference ? ' · ' + esc(h.legalReference) : '')
             : '<b>Authorization hold</b> · settlement earmark';
           return '<div class="ca-hold"><span class="why">' + why + ' · ' + esc((h.holdId || "").slice(0, 12)) + '…</span>' +
-                 '<span class="amt">' + euro(h.amountCents) + '</span></div>';
+                 '<span class="amt">' + (h.amountCents != null ? euro(h.amountCents) : '—') + '</span></div>';
         }).join("")
       : '<div class="ca-holds-none">No active holds — nothing earmarked.</div>';
     card.className = "ca-panel";
