@@ -80,14 +80,59 @@ On the new application:
 | **Token endpoint auth** | `client_secret_post` | serve.py posts `client_secret` in the token-exchange body |
 
 Grant the application the scopes **`openid profile email`** (the serve.py `OIDC_SCOPES` default —
-the manifest deliberately leaves `OIDC_SCOPES` unset). No API-resource scopes are needed: Mission
-Control is an owned-channel *login*, not an MCP agent calling a protected resource.
+the manifest deliberately leaves `OIDC_SCOPES` unset). For the LOGIN itself that is all that is
+needed: Mission Control is an owned-channel *login*.
+
+> **Update (bd babelstone-zla1.10.9).** Once Mission Control routes its product-API calls
+> (`/v1/*` + `/api/v1/*`) **through Kong** with a real access token, the login is no longer *only* a
+> login — it must also obtain a token the product API accepts. That needs the shared **product-API
+> API resource + scopes** to exist in Logto and to be granted to the operator. The earlier "no
+> API-resource scopes are needed" posture held only while the demo bypassed Kong; see **§2a** below.
 
 > **PSD2 SCA at login (Boundary 1).** Where the Mission Control session will drive money operations,
 > configure Logto's WebAuthn/TOTP MFA so login emits `acr`/`auth_time`
 > ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
 > rollout step 2). serve.py's gate establishes the *session*; the engine-side SCA gate remains the
 > control that refuses to settle without fresh `acr`/`auth_time`.
+
+## 2a. Register the product-API resource + grant it to the operator (bd babelstone-zla1.10.9.1)
+
+Plain English: give the operator's login a real product-API *audience* to ask for, so that once
+Mission Control routes through Kong (bd babelstone-zla1.10.9) the engine/orchestrator accept its
+token. This is the AS-side substrate; it does not change any demo traffic on its own.
+
+1. **Create the resource + scopes** (idempotent; the CD `configure-logto` job runs this on every
+   promote, so a re-onboard self-heals — the same reproduce-path guarantee as
+   [`register-mcp-resource.py`](../../scripts/iam/register-mcp-resource.py)):
+
+   ```bash
+   python3 scripts/iam/register-product-api-resource.py
+   # → resource created: id=<generated> indicator=https://api.babelstone.dev/
+   #   scope created: deposits:read / deposits:write / loans:write
+   ```
+
+   The indicator `https://api.babelstone.dev/` is ONE shared resource covering **both** the engine
+   `/v1/*` and orchestrator `/api/v1/*` surfaces (bd babelstone-zla1.10.9 decision). It is DISTINCT
+   from the MCP-server resource `https://api.babelstone.dev/mcp` (an operator token and an agent
+   token are different audiences and must not be replayable across). Override with
+   `PRODUCT_API_RESOURCE_URI`, but the value MUST equal **byte-for-byte** the `resource=` serve.py
+   sends (bd babelstone-zla1.10.9.3) and any `aud` Kong enforces (bd babelstone-zla1.10.9.2) — a
+   trailing-slash / host mismatch breaks `aud` binding (indicator slash-sensitivity is
+   [`iam-mcp-resource-registration.md` §1 step 2 + §4](./iam-mcp-resource-registration.md); on the
+   **interactive** auth-code flow serve.py uses, an unsent/mismatched `resource` fails *silently* to a
+   default resource rather than the M2M flow's fail-closed `invalid_target`).
+
+2. **Grant the scopes to the operator — curated hand-step.** Operator access is role-scoped
+   (ADR-IC-021 **C7**): operators sign in as Logto *users*, so their `authorization_code` access token
+   carries a resource's scopes via their **role** (RBAC), not via an app grant. In the Logto console:
+   create (or reuse) an operator role, add the `babelstone-product-api` scopes to it, and assign that
+   role to the operator user(s). Until a user holds a role granting these scopes, their token will not
+   carry them. Grant by hand rather than auto-granting — the same curated, no-DCR discipline
+   ADR-IC-021 §C6 applies to agent clients.
+
+3. **serve.py requests them at login** by sending `resource=https://api.babelstone.dev/` + the scopes
+   on the authorization *and* token requests (`OIDC_RESOURCE`) — wired in bd babelstone-zla1.10.9.3.
+   Kong then validates the resulting token at the edge in bd babelstone-zla1.10.9.2.
 
 ## 3. Seed the client secret + the session-signing key
 
