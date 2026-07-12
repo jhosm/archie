@@ -406,6 +406,12 @@ setup_mcp_venv() { # extras
 # port (8000), both so the readiness probe + the agent host's BABELSTONE_AGENT_MCP_URL find it and so
 # it doesn't collide with the engine on :8080. (We leave MCP_BIND_HOST at its 0.0.0.0 default.)
 start_mcp_server() { # engine_url mcp_port pidfile logfile mcp_url
+  # DEPLOYMENT_ENVIRONMENT is REQUIRED here, not optional: the MCP server's telemetry
+  # (telemetry.py resolve_environment) fails fast — refuses to boot — when no deployment
+  # environment is set, rather than guess one (ADR-IC-007 §P1). We set it inline here, mirroring
+  # the .NET hosts' inline ASPNETCORE_ENVIRONMENT=Development, so the demo boots without the
+  # operator having to export it in their shell.
+  DEPLOYMENT_ENVIRONMENT=Development \
   BABELSTONE_ENGINE_URL="$1" MCP_BIND_PORT="$2" \
     nohup "$ROOT/mcp-server/.venv/bin/python" -m babelstone_mcp > "$4" 2>&1 &
   echo $! > "$3"
@@ -463,6 +469,11 @@ start_orchestrator_host() { # orch_dll orch_conn kafka_bootstrap acl_url engine_
 # ANTHROPIC_API_KEY is exported. The probe GETs the POST-only host (404 → live). mcp_url is the same
 # value for both the tool-call URL and the audience/server-uri.
 start_agent_host() { # mcp_url agent_port pidfile logfile
+  # DEPLOYMENT_ENVIRONMENT=Development for the same reason as start_mcp_server: any telemetry the
+  # agent host wires (now or later) fails fast without a deployment environment (ADR-IC-007 §P1).
+  # The agent subpackage does not call configure_tracing today, so this is harmless when unused;
+  # we set it anyway for correct env attribution and to keep the two Python launchers symmetric.
+  DEPLOYMENT_ENVIRONMENT=Development \
   BABELSTONE_AGENT_MCP_URL="$1" BABELSTONE_MCP_SERVER_URI="$1" \
   AGENT_BIND_HOST=127.0.0.1 AGENT_BIND_PORT="$2" \
     nohup "$ROOT/mcp-server/.venv/bin/python" -m babelstone_mcp.agent > "$4" 2>&1 &
