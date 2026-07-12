@@ -544,9 +544,11 @@ _PG_ALLOWLIST = {
         "traceparent",
         # The TERMINAL-refusal surface (migration 0004): the engine HTTP status + the reason the dispatcher
         # captured from a 4xx refusal — contracted as "a ProblemDetails title / transition label … NEVER the
-        # request body or any PII (ADR-PC-004 §P2)". failure_reason is read only SERVER-SIDE: _project_saga_legs
-        # parses it into a bounded failure_code (never the free-form detail) so the raw column never crosses to
-        # the browser, letting the Telemetry/saga lens name the SPECIFIC settlement machine code on a fail run.
+        # request body or any PII (ADR-PC-004 §P2)", and bounded to {code, title, status} at the producer.
+        # failure_reason is still read only SERVER-SIDE: _project_saga_legs parses it into
+        # a bounded failure_code (never the free-form detail) as read-side defence-in-depth, so the raw column
+        # never crosses to the browser, letting the Telemetry/saga lens name the SPECIFIC settlement machine
+        # code on a fail run.
         "failure_status_code", "failure_reason",
     },
     ("orchestrator", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
@@ -847,11 +849,13 @@ def pg_provenance(stream_id):
 
 # ── Bounded saga-failure projection ──────────────────────────────────────────────────────────
 # The saga_outbox.failure_reason column is CONTRACTED (migration 0004) as a bounded ProblemDetails
-# title / transition label — never the request body or PII. But the dispatcher's producer currently
-# captures the WHOLE raw RFC7807 body into it (truncated only to 1024 chars), so the column can hold
-# a free-form `detail` member. Because the string "failure_reason" trips none of the _PG_FORBIDDEN
-# substrings, the column-name PII firewall would let that raw blob cross to the browser unbounded.
-# So we NEVER return failure_reason itself: this projection parses the problem+json SERVER-SIDE and
+# title / transition label — never the request body or PII. The dispatcher's producer now BOUNDS it
+# at write time: it parses the RFC7807 refusal and stores only the structural
+# {code, title, status} projection, dropping the free-form `detail`, so the column matches its
+# contract at rest. This projection is the read-side twin of that write-side bound — defence-in-depth,
+# not the sole guard: because the string "failure_reason" trips none of the _PG_FORBIDDEN substrings,
+# the column-name PII firewall would otherwise let a mis-populated or legacy row cross to the browser
+# unbounded. So we NEVER return failure_reason itself: this parses the problem+json SERVER-SIDE and
 # emits only a bounded `failure_code` — the machine `code` extension (the ADR-PC-043 / ADR-PC-037
 # §D6 settlement token) when present, else the structural `title`, else the HTTP status — capped to
 # a short label. The free-form `detail` is deliberately dropped. The raw column stays server-side.
