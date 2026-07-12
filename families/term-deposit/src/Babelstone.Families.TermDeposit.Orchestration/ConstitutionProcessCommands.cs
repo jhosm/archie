@@ -219,8 +219,9 @@ public sealed record ConfirmDebitCommand : CommandPayload
 
     /// <summary>The captured amount in integer cents — exactly the funded principal (the in-band
     /// WRONG-AMOUNT guard the engine-CA capture writer enforces, ADR-PC-043). Money-as-integer-cents
-    /// on the wire (ADR-PC-010), never a float. Null/zero on a legacy leg (the legacy ACL derives the amount
-    /// from the reserved hold), so the byte-stable body is unchanged there.</summary>
+    /// on the wire (ADR-PC-010), never a float. Null on a legacy leg (the legacy ACL derives the amount
+    /// from the reserved hold): the field serializes as an explicit null there; the logical command and its
+    /// replay-stability are unchanged.</summary>
     [JsonPropertyName("amount_cents")]
     public long? AmountCents { get; init; }
 

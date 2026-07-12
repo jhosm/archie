@@ -339,6 +339,9 @@ public sealed class SettlementProcessSagaTests
 
     // ---- The counterparty router (ADR-PC-043 slots 1-2 — route by ce_settlementtarget, header-only) ----
 
+    // ==== SETTLEMENT_TARGET_HEADER_ONLY ===============================================================
+    // Routing keys on ce_settlementtarget ALONE — an AccountRef-like body/header hint is ignored, so the
+    // substrate router never reads Movement.AccountRef to route (ADR-PC-043 / ADR-IC-018 §D5).
     [Fact]
     public void Router_routes_by_the_settlement_target_header_alone_never_the_payload()
     {
