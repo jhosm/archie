@@ -254,15 +254,12 @@ builder.Services.AddHostedService(sp => new SagaMigrationHostedService(migration
 //     offset commit (commit AFTER the DB tx → at-least-once delivery, effectively-once advance).
 //   • AddHostedService<SagaInboxConsumerService> — the poll loop that drives the loop with
 //     exponential backoff on a transient failure (the offset stays uncommitted → redelivery).
-// ONE consume loop PER MODULE, each on its OWN consumer group (ADR-IC-018 §P4 / Risk 3; bd
-// babelstone-mtto PR2). The substrate's hosted-service shape registered a SINGLE
-// SagaInboxConsumerOptions/SagaConsumeLoop/SagaInboxConsumerService as DI singletons; with a SECOND
-// module those singletons would COLLIDE (the first registration wins, so the renewal loop would never
-// run). The resolution: build a per-module options + loop and register the hosted service via a FACTORY
-// that closes over them — no shared singleton to collide on. Each loop owns its module's consumer group,
-// so the two sagas read the shared term_deposit topic independently (no shared-group contention). The
-// SagaAdvanceHandler is shared (it hosts all N machines + the auto-start registry); only the
-// options/loop/hosted-service are per-module.
+// ONE consume loop PER MODULE, each on its OWN consumer group (ADR-IC-018). Each loop owns its module's
+// consumer group, so the sagas read the shared term_deposit topic independently (no shared-group
+// contention). The SagaAdvanceHandler is shared (it hosts all N machines + the auto-start registry); only
+// the options + loop are per-module, built inside the registration FACTORY closure below (not a DI
+// singleton) so each hosted service gets its OWN loop+group while the shared advance handler is still
+// resolved from DI.
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
 foreach (var module in sagaModules)
 {
@@ -292,17 +289,12 @@ foreach (var module in sagaModules)
         KafkaDebug = builder.Configuration["Kafka:Debug"],
     };
 
-    // Capture the per-module loop in the factory closure (NOT a DI singleton) so each hosted service
-    // gets its OWN loop+group; the shared advance handler is resolved from DI. Both the hosted service and
-    // the loop get their loggers wired (bd babelstone-u79p.17): a null logger on either turned a dead
-    // consumer into a silent stall — the loop's error/log handlers + the service's backoff log now surface it.
-    builder.Services.AddHostedService(sp =>
-        new SagaInboxConsumerService(
-            new SagaConsumeLoop(
-                moduleOptions,
-                sp.GetRequiredService<SagaAdvanceHandler>(),
-                logger: sp.GetRequiredService<ILogger<SagaConsumeLoop>>()),
-            sp.GetRequiredService<ILogger<SagaInboxConsumerService>>()));
+    // Host ONE consume-loop BackgroundService for this module. AddPerModuleSagaConsumeLoop registers it
+    // with AddSingleton<IHostedService>, never AddHostedService — the latter's TryAddEnumerable dedupes
+    // same-typed hosted services and would silently host only the first of these N loops (that method's
+    // remarks document the dead-consumer failure it caused). Extracted so the "all N same-typed loops are
+    // hosted" invariant is unit-testable without booting the host.
+    builder.Services.AddPerModuleSagaConsumeLoop(moduleOptions);
 }
 
 // The saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029). The consume loop above advances the
