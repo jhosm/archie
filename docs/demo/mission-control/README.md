@@ -153,7 +153,7 @@ at `GET /v1/deposits/{process_id}`), and the refusal path reaches terminal
 database, distinct from the engine's `babelstone`, so there's no `inbox`-table collision with
 `demo-mcp.sh`.)
 
-## The engine-CA demo path — a real `conta à ordem` a deposit and a loan move against
+## The engine-CA demo path — a real `conta à ordem` that a deposit and a loan move against
 
 **In plain English.** So far the demo opens a deposit and settles its cash leg against a stubbed
 external core. This path shows the newer, fuller story: the customer holds a **real current account
@@ -188,8 +188,10 @@ mapping each to its own current-account authorize / capture / credit.
 
 ### The `conta à ordem` visualization — two balances and active holds
 
-Mission Control gets a **persistent conta-a-ordem panel** sourced from `GET /v1/accounts/{id}`. It
-shows a **two-balance meter** and the **active holds**:
+**Not yet wired in the UI — the render lands with bd `u79p.8`/`.9`.** The design below is what Mission
+Control *will* gain once those sibling issues merge; today only the backend seams (`u79p.2`/`.4`/`.5`)
+are built. Mission Control **will gain** a **persistent conta-a-ordem panel** sourced from
+`GET /v1/accounts/{id}`, showing a **two-balance meter** and the **active holds**:
 
 - **Available** vs **Booked** — the ADR-PC-033 split: `available balance = booked (accounting)
   balance − Σ active holds`. When a Debit leg places a **hold**, the *available* meter drops
@@ -198,13 +200,14 @@ shows a **two-balance meter** and the **active holds**:
   gap that opens between the two bars and then closes.
 - **Active holds** — a list of the outstanding reservations (the `HoldPlaced` that have not yet
   `HoldCaptured`/`HoldExpired`), each shrinking the available balance until it resolves.
-- A **movement strip** (debit/credit history) sourced from the movement-history read surface
+- A **movement strip** (debit/credit history) will be sourced from the movement-history read surface
   (`GET /v1/accounts/{id}/movements`, ADR-PC-032) — a real posted-movement list, not one
   reconstructed from actions.
 
-The panel updates **in lockstep with the LIVE·saga pane**: as the settlement saga walks
+The panel is designed to update **in lockstep with the LIVE·saga pane**: as the settlement saga walks
 `HoldPlaced → HoldCaptured` (or a credit lands), the account meters and the ledger feed move
-together, so the money story and the saga story are one screen.
+together, so the money story and the saga story are one screen. This lockstep behaviour ships with the
+UI render (bd `u79p.8`/`.9`), not the backend seams already merged.
 
 ### Mode behaviour for the engine-CA loop
 
