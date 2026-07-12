@@ -1,0 +1,156 @@
+# Lifecycle-driver — the clock-owning lifecycle-command driver (ADR-PC-036 §Decision 2),
+# bd babelstone-zla1.5.11.
+#
+# Plain English: this is the always-on background worker that owns the clock the engine
+# deliberately lacks (ADR-PC-023). It ticks on a cadence, asks each family rule which
+# lifecycle commands are due as-of today (a deposit's maturity/coupon, a loan's installment),
+# and POSTs each to the engine's command surface. It is a headless .NET BackgroundService
+# (Host.CreateApplicationBuilder), NOT an HTTP API — so, like the notification worker, it has
+# NO inbound port: no Service, no Ingress, no port probe (there is nothing listening).
+#
+# ── SHIPPED AT replicas: 0 — GO-LIVE IS BLOCKED ON THE m2m AUTH PATH (bd babelstone-zla1.5.12) ──
+# The driver POSTs money-movers (maturity / interest / installment) through Kong's jwt-gated
+# `engine-lifecycle-movers` route (infra/kong/kong.yml). The engine authorises those routes ONLY
+# when Kong attests an X-SCA-Service-Principal carrying the `lifecycle:deposit-money-mover` scope,
+# copied from a validated Logto m2m token (Babelstone.Engine.Hosting.ScaServicePrincipal; the
+# attest-not-deny boundary, ADR-IC-006 §P2 / ADR-IC-010 §P8). The host's HttpLifecycleCommandSink
+# does NOT yet acquire that token — and no Logto m2m client / scope is registered for the driver —
+# so at replicas > 0 every POST would 401 at Kong. This manifest therefore ships the full runtime
+# topology at replicas: 0; SCALING ABOVE 0 waits on bd babelstone-zla1.5.12 (the client-credentials
+# token acquisition + the IAM registration + the client-secret seed). This mirrors the agent-host
+# precedent (bd babelstone-zla1.5.6), which ships deferred at replicas: 0 for the same reason.
+#
+# ── Runtime wiring (correct-by-construction for when it is scaled up) ──
+# It resolves THREE Postgres connections (all on the shared instance) plus the engine command URL:
+#   • Engine__ReadModelConnectionString → the engine read models the family rules range-scan
+#     as-of today (read_model.deposits, installment_calendar; the babelstone DB, ADR-IC-005).
+#   • Lifecycle__LedgerConnectionString → its OWN durable dispatch ledger (ADR-PC-038 §Decision 1),
+#     which the host self-migrates on boot (LifecycleLedgerMigrationHostedService — no separate
+#     migration Job). Its atomic per-occurrence claim is the multi-replica single-firing guard.
+#   • Lifecycle__SettlementHealthConnectionString → the orchestrator saga_state row the LCD-2
+#     settlement-health gate reads (the babelstone_orchestrator DB, ADR-PC-036 §Decision 4).
+#   • Engine__BaseUrl → the Kong `engine-lifecycle-movers` edge (kong:8000), NOT engine:8080
+#     directly: the money-mover authorisation is a Kong-attested principal, never a self-asserted
+#     header, so the driver goes through the gateway (once it can present the m2m Bearer).
+# Staging single-credential convenience (ADR-PC-001 §P3, lifted): the loop connects as the
+# `babelstone` owner rather than a least-privilege `babelstone_lifecycle` login — the same
+# single-credential posture the engine uses on this demo box. The ledger migration still creates
+# the `babelstone_lifecycle` NOLOGIN group role; a real tier grants a concrete login user into it.
+# NO regulatory pack is loaded (Program.cs resolves none), so — UNLIKE engine/notification — this
+# runs the plain base image, with no pack-baked `-staging` derivative.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lifecycle-driver
+  labels:
+    app.kubernetes.io/name: lifecycle-driver
+spec:
+  # replicas: 0 — DEFERRED until the m2m token path lands (bd babelstone-zla1.5.12). See the
+  # header: a scaled-up driver would 401 at Kong's jwt-gated money-mover route. Flip to 1 (single
+  # node → single replica; the durable ledger's atomic claim is the multi-replica single-firing
+  # guard for a real tier) in the same change that ships the token acquisition + client secret.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lifecycle-driver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lifecycle-driver
+    spec:
+      # Gate the driver on the event-store migration sentinel (the same poll the engine uses):
+      # it guarantees Postgres + the babelstone DB schema exist before the host opens its read-model
+      # / ledger / settlement-health connections and self-applies the ledger migration. (Full go-live
+      # ordering also wants the engine's read-model tables + the orchestrator saga schema present —
+      # a go-live concern tracked with the replicas flip, bd babelstone-zla1.5.12.)
+      initContainers:
+        - name: wait-for-event-store-migration
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until psql -tAc "SELECT 1 FROM _event_store_apply_complete LIMIT 1" 2>/dev/null | grep -q 1; do
+                echo "waiting for event-store migration to complete ..."
+                sleep 3
+              done
+              echo "event-store migration complete; starting lifecycle-driver."
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      containers:
+        - name: lifecycle-driver
+          image: ghcr.io/jhosm/babelstone-lifecycle-driver:latest
+          env:
+            # Password first, so the $(POSTGRES_PASSWORD) interpolation in the connection strings resolves.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            # The engine's ADR-PC-029 command surface the sink POSTs to — the Kong
+            # `engine-lifecycle-movers` edge (kong:8000), NOT engine:8080 directly. The money-mover
+            # authorisation is a Kong-attested service principal (ADR-PC-036 §Decision 1); go-live
+            # needs the driver to present a Logto m2m Bearer here (bd babelstone-zla1.5.12).
+            - name: Engine__BaseUrl
+              value: http://kong:8000
+            # The engine read-model tier the family rules range-scan as-of today (ADR-IC-005;
+            # read_model.deposits + installment_calendar live in the babelstone DB).
+            - name: Engine__ReadModelConnectionString
+              value: Host=postgres;Port=5432;Database=babelstone;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # The driver's OWN durable dispatch ledger (ADR-PC-038 §Decision 1), self-migrated on
+            # boot. Staging single-credential convenience: connects as the babelstone owner (the
+            # migration still creates the babelstone_lifecycle NOLOGIN group role). No separate
+            # migration connection is set — Program.cs falls back to this one for the DDL apply.
+            - name: Lifecycle__LedgerConnectionString
+              value: Host=postgres;Port=5432;Database=babelstone;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # The orchestrator saga_state read the LCD-2 settlement-health gate consults before
+            # surfacing a recurring instance's next occurrence (ADR-PC-036 §Decision 4 — the
+            # babelstone_orchestrator DB, a DIFFERENT service's database on the same instance).
+            - name: Lifecycle__SettlementHealthConnectionString
+              value: Host=postgres;Port=5432;Database=babelstone_orchestrator;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # BabelstoneResource.ResolveEnvironment() fail-fasts without a deployment environment
+            # (ADR-IC-007 §P1 non-blank requirement); the host reads DOTNET_ENVIRONMENT.
+            - name: DOTNET_ENVIRONMENT
+              value: Production
+            # Telemetry to the Collector only (ADR-IC-007 §P1), never direct-to-backend.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+          # No inbound port → no httpGet/tcpSocket probe is meaningful (nothing listens). On a
+          # transient failure the poll loop backs off and keeps running rather than crashing, so a
+          # liveness probe would only cause false restarts — the same posture as the notification worker.
+          # Sized inline (like the other app services — engine/orchestrator/notification/mcp-server/
+          # mission-control — not in resources.patch.yaml); at replicas: 0 it consumes nothing.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

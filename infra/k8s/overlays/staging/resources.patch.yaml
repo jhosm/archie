@@ -24,8 +24,10 @@
 #   openbao            100m / 500m      128Mi / 512Mi     dev mode (in-memory)
 #   redpanda-console   50m / 250m       128Mi / 512Mi     read-only UI
 #   registry           50m / 250m       128Mi / 512Mi     OCI pack registry
-#   (app services — engine/orchestrator/mcp-server/notification/mission-control — are sized
-#    inline in their own base manifests; together ≈1.15 Gi req / ≈3.2 Gi lim.)
+#   (app services — engine/orchestrator/mcp-server/notification/mission-control, and the
+#    lifecycle-driver — are sized inline in their own base manifests; together ≈1.15 Gi req /
+#    ≈3.2 Gi lim. The lifecycle-driver — 100m/128Mi req — ships at replicas: 0 (bd
+#    babelstone-zla1.5.11/.12), so it adds nothing to the budget until it is scaled up.)
 #   ─────────────────────────────────────────────────────────────────────────
 #   Σ requests (WHOLE stack) ≈ 5.9 Gi / ≈4 vCPU  (fits 15.6 Gi → schedules, no Pending)
 #   Σ limits   (WHOLE stack) ≈ 17 Gi  (mild overcommit vs 15.6 Gi; realistic concurrent
