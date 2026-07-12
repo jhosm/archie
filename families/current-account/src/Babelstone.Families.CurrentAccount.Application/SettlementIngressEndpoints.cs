@@ -118,9 +118,7 @@ public static class SettlementIngressEndpoints
             // holds the funds; a decline surfaces as a 4xx on this settlement surface (ADR-PC-043 error model).
             return verdict.Outcome == AuthorizeOutcomes.Authorized
                 ? SettlementResult(accountId, verdict.CommitSequence)
-                : Results.Problem(
-                    $"authorize declined ({verdict.DeclinedReason}) — the source holds the funds (ADR-PC-043).",
-                    statusCode: StatusCodes.Status422UnprocessableEntity);
+                : DeclinedProblem(verdict.DeclinedReason);
         }
         catch (DuplicateCommandException e)
         {
@@ -252,6 +250,24 @@ public static class SettlementIngressEndpoints
         var intentReference = FirstNonBlank(
             request.IntentReference, request.ReservationRef, request.CoreHoldRef, request.CreditRef);
         return string.IsNullOrWhiteSpace(intentReference) ? null : (accountId, intentReference!);
+    }
+
+    // A settlement-facing DECLINED authorize as an RFC7807 problem+json 422 that carries the SPECIFIC bounded
+    // machine code (ADR-PC-043 error model / ADR-PC-037 §D6 taxonomy) — LIMIT_EXCEEDED, INSUFFICIENT_AVAILABLE_
+    // BALANCE, OVERDRAFT_LIMIT_EXCEEDED, ACCOUNT_NOT_ACTIVE — so the dispatcher/UI can name WHY the source held
+    // the funds instead of a generic "precondition refused". The code rides a structural `code` extension member
+    // (the machine token) alongside the human `detail`; both are STRUCTURAL only — no PII (ADR-PC-004). Fail-
+    // closed is unchanged: this is still a 422, nothing was committed. A null reason (unreachable — a decline
+    // always carries a code) degrades to the safe generic detail without an invented code.
+    private static IResult DeclinedProblem(string? declinedReason)
+    {
+        var extensions = declinedReason is { Length: > 0 } code
+            ? new Dictionary<string, object?> { ["code"] = code }
+            : null;
+        return Results.Problem(
+            $"authorize declined ({declinedReason}) — the source holds the funds (ADR-PC-043).",
+            statusCode: StatusCodes.Status422UnprocessableEntity,
+            extensions: extensions);
     }
 
     private static IResult BadAccountOrAmount(SettlementLegRequest request)

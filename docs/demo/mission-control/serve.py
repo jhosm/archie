@@ -542,6 +542,11 @@ _PG_ALLOWLIST = {
         # Outbound W3C Trace Context (migration 0003: "opaque 00-<trace-id>-<span-id>-<flags>;
         # operational, NOT PII") — the saga-leg → Tempo deep-link key (bd babelstone-f0ic.15.9).
         "traceparent",
+        # The TERMINAL-refusal surface (migration 0004): the engine HTTP status + the bounded, structural
+        # reason the dispatcher captured from a 4xx refusal — "a ProblemDetails title / transition label …
+        # NEVER the request body or any PII (ADR-PC-004 §P2)" by that column's own contract. Surfaced so the
+        # Telemetry/saga lens can name the SPECIFIC settlement machine code (bd u79p.20) on a fail-closed run.
+        "failure_status_code", "failure_reason",
     },
     ("orchestrator", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
 }
@@ -865,7 +870,10 @@ def pg_process_transitions(handle):
                             where=[("process_id", pid)], order="id", descending=False, limit=200)
     legs = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
-                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
+                      "correlation_id", "status", "created_at", "published_at", "traceparent",
+                      # The FAILED-leg refusal surface (migration 0004) — the engine status + the bounded
+                      # structural reason, so a fail-closed run names the specific settlement code (bd u79p.20).
+                      "failure_status_code", "failure_reason"],
                      where=[("process_id", pid)], order="seq", descending=False, limit=200)
     return {"process": process, "transitions": transitions, "legs": legs}
 
@@ -890,7 +898,11 @@ def pg_saga_outbox_tail(process_id=None, limit=20):
         where.append(("process_id", process_id))
     rows = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
-                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
+                      "correlation_id", "status", "created_at", "published_at", "traceparent",
+                      # A FAILED (4xx) leg carries the engine's status + the bounded structural refusal reason
+                      # (migration 0004) — NULL on a PENDING/PUBLISHED leg. Lets the UI name the specific
+                      # settlement machine code on a fail-closed saga run (bd u79p.20).
+                      "failure_status_code", "failure_reason"],
                      where=where, order="seq", descending=True, limit=limit)
     return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": rows}
 
