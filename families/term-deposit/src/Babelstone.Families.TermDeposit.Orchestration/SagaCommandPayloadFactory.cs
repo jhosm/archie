@@ -83,6 +83,11 @@ public static class SagaCommandPayloadFactory
                 // on a legacy leg it is the opaque ACL token, unchanged.
                 AccountRef = reference.SourceAccountRef,
                 ReservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId),
+                // The funded principal to HOLD (ADR-PC-043 slot 1). The engine-CA authorize ingress requires a
+                // POSITIVE amount to place the hold — without it the reserve is a 400 and the saga fails closed
+                // at the reversible leg. Exactly the confirm-debit leg's amount; null (→ legacy-DDA, UNCHANGED)
+                // when the funding account is not an engine-owned CA.
+                AmountCents = IsEngineCaFunding(reference.SourceAccountRef) ? reference.AmountMinorUnits : null,
                 // The counterparty discriminator the dispatcher routes on: engine-ca
                 // when the funding account is an engine-owned CA (its account_ref IS the account GUID —
                 // AccountRef == AccountId.ToString()); null (→ legacy-DDA, UNCHANGED) otherwise. A pure,

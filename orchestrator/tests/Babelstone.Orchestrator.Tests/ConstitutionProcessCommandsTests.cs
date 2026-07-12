@@ -225,6 +225,38 @@ public sealed class ConstitutionProcessCommandsTests
         Assert.Equal(original.CoreHoldRef, clearance.CoreHoldRef);
     }
 
+    [Fact]
+    public void Engine_ca_reserve_leg_carries_the_funding_amount_so_the_authorize_ingress_can_size_the_hold()
+    {
+        // Regression (bd u79p.16): the engine-CA reserve leg used to omit amount_cents, so the engine-CA
+        // authorize ingress — which requires a POSITIVE amount to place the hold — rejected it with a 400 and
+        // the constitution saga failed closed at the reversible leg. The reserve now carries the funded
+        // principal, symmetric with the confirm-debit capture leg, and it rides the snake_case body.
+        var engineCa = new SagaBusinessReference(
+            ProcessId: ProcessId,
+            ProductRef: "PROD-TD-12M",
+            AmountMinorUnits: 4_000_00,
+            SourceAccountRef: "0d16eee2-4eff-44d5-93f0-7a3cec93ceca", // a GUID ⇒ engine-CA funding
+            InterestAccountRef: null,
+            DepositRef: "DEP-2026-00012345",
+            ClientType: ClientType.Existing,
+            AutoApprovalThresholdMinorUnits: 25_000_00);
+
+        var reserve = (ReserveAccountBalanceCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ReserveAccountBalance, ProcessId, CausationId, CorrelationId, engineCa)!;
+
+        Assert.Equal(4_000_00, reserve.AmountCents);
+        Assert.Equal("engine-ca", reserve.SettlementTarget);
+        Assert.Contains("\"amount_cents\":400000", Encoding.UTF8.GetString(reserve.ToBytes()));
+
+        // Legacy-DDA (a non-GUID ref) is unchanged: the engine-CA amount stays null on the reserve.
+        var legacy = engineCa with { SourceAccountRef = "ACCT-REF-0001" };
+        var legacyReserve = (ReserveAccountBalanceCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ReserveAccountBalance, ProcessId, CausationId, CorrelationId, legacy)!;
+        Assert.Null(legacyReserve.AmountCents);
+        Assert.Null(legacyReserve.SettlementTarget);
+    }
+
     // ---- ActivateDeposit serializes the engine's ConstituteDepositRequest (bd babelstone-t7o3.11) ----
 
     [Fact]
