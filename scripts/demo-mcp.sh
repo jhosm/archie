@@ -9,7 +9,9 @@
 #   2. apply the forward-only event-store schema (shared apply_event_store_schema)
 #   3. deploy the rate sheet via the REAL C.6 deploy API (ADR-PC-008 §P2), asserting
 #      201-deploy / 200-idempotent-replay / 409-forward-only-conflict — the validated seam
-#   4. start the engine command/query host (Babelstone.Engine.Api, ADR-PC-021 §D5)
+#   4. start the engine command/query host (Babelstone.Engine.Api, ADR-PC-021 §D5), then open +
+#      credit-seed a customer conta à ordem on it — the deposit's funding account (a real engine-owned
+#      account whose id IS its account_ref, ADR-PC-033, threaded as funding_account below)
 #   5. drive constitute -> read -> mature over HTTP and assert the canonical AT_MATURITY numbers
 #   6. start the Python MCP server (Streamable HTTP) in front of the engine
 # then print the `claude mcp add` wiring. The engine + MCP are left RUNNING; stop with: down.
@@ -20,7 +22,7 @@
 #   scripts/demo-mcp.sh [up]    # run the demo, leave engine + MCP up   (make demo-mcp)
 #   scripts/demo-mcp.sh down    # stop the engine + MCP this demo started (make demo-mcp-down)
 #
-# Overridable env: PG_PORT RATESHEET_PORT ENGINE_PORT
+# Overridable env: PG_PORT RATESHEET_PORT ENGINE_PORT DEMO_CA_SEED_CENTS
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -158,12 +160,21 @@ say "4/6 Starting the engine host on ${ENGINE_URL}"
 start_engine_host "$ENGINE_DLL" "$PG_CONN" "$ENGINE_URL" "$ROOT/packs" \
   "$RUNDIR/engine.pid" "$RUNDIR/engine.log"
 
+# Open + seed a customer conta à ordem on the engine — the account the deposit funds from. This
+# walking-skeleton path constitutes DIRECT on the engine (no saga, so no settlement leg fires here), but we
+# still stand up + fund a REAL account and thread its id as funding_account, so the demo's funding reference
+# is a live engine-owned account (its id IS the account_ref, AccountRef == AccountId.ToString(), ADR-PC-033)
+# rather than the PT50-DDA-001 stub token — the same account the saga/all paths settle against engine-CA.
+say "Opening + seeding a customer conta à ordem on the engine (the deposit's funding account)"
+DEMO_CA_ID="$(open_and_seed_demo_ca "$ENGINE_URL" "${DEMO_CA_SEED_CENTS:-200000000}" "$RUNDIR")"
+ok "demo customer CA ${DEMO_CA_ID} open + seeded on the engine (readable at GET ${ENGINE_URL}/v1/accounts/${DEMO_CA_ID})"
+
 # ---------------------------------------------------------------------------
 # 5. drive constitute -> read -> mature and assert the canonical numbers
 # ---------------------------------------------------------------------------
 say "5/6 Driving constitute → read → mature and asserting the canonical AT_MATURITY numbers"
 cat > "$RUNDIR/constitute-req.json" <<JSON
-{"principal_cents":1000000,"product_id":"${PRODUCT}","role":"standard","term_days":365,"start_date":"2026-01-15","interest_variant":"AT_MATURITY","auto_renewal_policy":"NONE","funding_account":"PT50-DDA-001"}
+{"principal_cents":1000000,"product_id":"${PRODUCT}","role":"standard","term_days":365,"start_date":"2026-01-15","interest_variant":"AT_MATURITY","auto_renewal_policy":"NONE","funding_account":"${DEMO_CA_ID}"}
 JSON
 
 code="$(curl -sS -o "$RUNDIR/constitute-resp.json" -w '%{http_code}' \
@@ -218,6 +229,7 @@ $(printf '\033[1;32m✓ Walking skeleton is up.\033[0m')
 
   engine  ${ENGINE_URL}            (logs: .demo-mcp/engine.log)
   MCP     ${MCP_URL}   (logs: .demo-mcp/mcp.log)
+  customer CA  ${DEMO_CA_ID}   (engine-owned conta à ordem; the deposit's funding account — GET ${ENGINE_URL}/v1/accounts/${DEMO_CA_ID})
   a deposit was already constituted + matured as a smoke test: ${DID}
 
 Wire it into Claude Code (the MCP server must stay running, which it is):
@@ -229,7 +241,7 @@ Then, in a Claude Code session, exercise it:
 
   • "Using the babelstone-deposits MCP, call constitute_deposit with product_id
      ${PRODUCT}, role standard, principal_cents 1000000, term_days 365,
-     start_date 2026-01-15, funding_account PT50-DDA-001 — then call get_deposit
+     start_date 2026-01-15, funding_account ${DEMO_CA_ID} — then call get_deposit
      with that deposit_id and show the position."
 
   • "Then call mature_deposit with that deposit_id and show the matured payout"

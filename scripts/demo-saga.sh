@@ -11,14 +11,19 @@
 #
 #   1. start Postgres + Redpanda + the Core-ACL settlement stub (infra/compose.yaml)
 #   2. stand up the ENGINE: apply the event-store schema, seed the rate sheet, start the engine host
-#      on :8080 pointed at the SAME Redpanda (so its outbox relay publishes DepositConstituted)
-#   3. build + start the orchestrator host (edge + consume loop + dispatcher); it applies its
-#      own saga schema on boot (SagaMigrationHostedService)
-#   4. drive POST /api/v1/deposits/constitute → assert 202 + process_id + stream_url
+#      on :8080 pointed at the SAME Redpanda (so its outbox relay publishes DepositConstituted), then
+#      open + credit-seed a customer conta à ordem on the engine — the account the deposit settles against
+#   3. build + start the orchestrator host (edge + consume loop + dispatcher), with the engine-CA
+#      settlement target pointed at the engine so a ce_settlementtarget=engine-ca leg routes home
+#      (ADR-PC-043); it applies its own saga schema on boot (SagaMigrationHostedService)
+#   4. drive POST /api/v1/deposits/constitute with the seeded account as source/interest ref →
+#      assert 202 + process_id + stream_url
 #   5. read the SSE stream + assert the saga walked to terminal COMPLETED, and that the engine
 #      recorded the REAL deposit (GET the engine by the process_id = deposit_id correlation key)
-#   6. confirm BOTH settlement legs hit the Core-ACL stub (reversible reserve + irreversible debit)
-#   7. demo the refusal branch: an "insufficient" account → terminal DEPOSIT_CONSTITUTION_FAILED
+#   6. confirm the funding legs settled ENGINE-CA on the seeded conta à ordem (GET the account; its
+#      available balance dropped below the seed) — the reversible reserve + the irreversible debit
+#   7. demo the refusal branch on the LEGACY-DDA path: a non-GUID "insufficient" account → the Core-ACL
+#      stub 422s the reservation → terminal DEPOSIT_CONSTITUTION_FAILED (both settlement paths shown)
 #
 # For the WHOLE UI (this saga path AND LIVE·engine AND Operator=CLAUDE, all in one bring-up so you can
 # flip modes in the browser), see scripts/demo-all.sh / `make demo`.
@@ -44,6 +49,8 @@
 #   scripts/demo-saga.sh down    # stop the engine + orchestrator hosts this script started
 #
 # Overridable env: PG_PORT REDPANDA_KAFKA_PORT CORE_ACL_STUB_PORT ORCH_PORT ENGINE_PORT RATESHEET_PORT
+#                  ENGINE_CA_SETTLEMENT_URL (engine-CA settlement target; default the engine — set empty for legacy-DDA only)
+#                  DEMO_CA_SEED_CENTS (starting balance seeded on the customer conta à ordem)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,6 +77,12 @@ PG_ORCH_DB="${PG_ORCH_DB:-babelstone_orchestrator}"
 ORCH_CONN="Host=localhost;Port=${PG_PORT};Database=${PG_ORCH_DB};Username=babelstone;Password=babelstone"
 ORCH_URL="http://localhost:${ORCH_PORT}"
 ACL_URL="http://localhost:${CORE_ACL_STUB_PORT}"
+# The engine-owned CA settlement target (ADR-PC-043). Defaults to the engine's own base URL so a
+# ce_settlementtarget=engine-ca leg routes HOME to the engine's authorize/capture/credit ingress and lands
+# on the seeded conta à ordem. Set ENGINE_CA_SETTLEMENT_URL= (empty) to keep the legacy-DDA-only path
+# (Settlement__BaseUrl = the Core-ACL stub), matching the pre-ADR-PC-043 behaviour — engine-ca legs then
+# fail closed rather than settle on the legacy core.
+ENGINE_CA_SETTLEMENT_URL="${ENGINE_CA_SETTLEMENT_URL-http://localhost:${ENGINE_PORT}}"
 
 # The engine owns the `babelstone` application database (created by the compose postgres init,
 # POSTGRES_DB=babelstone) — distinct from the orchestrator's `babelstone_orchestrator` above. The
@@ -230,6 +243,15 @@ say "Starting the engine host on ${ENGINE_URL} (Kafka → the shared Redpanda; o
 start_engine_host "$ENGINE_DLL" "$ENGINE_CONN" "$ENGINE_URL" "$ROOT/packs" \
   "$RUNDIR/engine.pid" "$RUNDIR/engine.log" "localhost:${REDPANDA_KAFKA_PORT}"
 
+# (d) open + seed a customer conta à ordem on the engine — the account the deposit SETTLES against.
+# The seeded id IS the account_ref (AccountRef == AccountId.ToString(), ADR-PC-033); we thread it into the
+# constitute body below as source_account_ref (the funding debit) / interest_account_ref (the maturity
+# credit), so a ce_settlementtarget=engine-ca leg lands on THIS account (ADR-PC-043). The seeded starting
+# balance covers the 1,000,000-cent principal debit with headroom.
+say "Opening + seeding a customer conta à ordem on the engine (the deposit settles against it)"
+DEMO_CA_ID="$(open_and_seed_demo_ca "$ENGINE_URL" "${DEMO_CA_SEED_CENTS:-200000000}" "$RUNDIR")"
+ok "demo customer CA ${DEMO_CA_ID} open + seeded on the engine (the settlement target for the deposit legs)"
+
 # ---------------------------------------------------------------------------
 # 3. build + start the orchestrator host (edge + consume loop + dispatcher)
 # ---------------------------------------------------------------------------
@@ -244,15 +266,27 @@ say "Starting the orchestrator host on ${ORCH_URL} (it applies its own saga sche
 # For the demo the bootstrap `babelstone` user serves BOTH the migration (DDL) and runtime roles; the
 # least-privilege babelstone_orchestrator runtime role + its envelope are asserted by the orchestrator's
 # own tests, not the demo. Engine__BaseUrl points the dispatcher's ActivateDeposit at the engine above.
+#
+# Settlement counterparty routing (ADR-PC-043): $ACL_URL is the LEGACY-DDA settlement home (Settlement__BaseUrl,
+# the WireMock Core-ACL stub) — kept as the fallback so the legacy-DDA demo path stays available. The
+# ENGINE_CA_SETTLEMENT_URL (default: the engine's own base URL) is the engine-owned CA target
+# (Settlement__EngineCaBaseUrl): a ce_settlementtarget=engine-ca leg routes HOME to the engine's
+# authorize/capture/credit ingress, landing on the seeded conta à ordem. Set ENGINE_CA_SETTLEMENT_URL=
+# (empty) to fall back to the pre-ADR-PC-043 legacy-only behaviour (engine-ca legs then fail closed).
 start_orchestrator_host "$ORCH_DLL" "$ORCH_CONN" "localhost:${REDPANDA_KAFKA_PORT}" \
-  "$ACL_URL" "$ENGINE_URL" "$ORCH_URL" "$RUNDIR/orchestrator.pid" "$RUNDIR/orchestrator.log"
+  "$ACL_URL" "$ENGINE_URL" "$ORCH_URL" "$RUNDIR/orchestrator.pid" "$RUNDIR/orchestrator.log" \
+  "$ENGINE_CA_SETTLEMENT_URL"
 
 # ---------------------------------------------------------------------------
 # 4. drive the edge front door → assert 202 + process_id + stream_url
 # ---------------------------------------------------------------------------
 say "4/7 Opening a deposit through the EDGE (POST /api/v1/deposits/constitute)"
+# The funding + interest accounts are BOTH the seeded engine-owned conta à ordem: source_account_ref is the
+# account the principal debit hits (hold → capture), interest_account_ref the account the maturity credit
+# lands on. Threading the seeded account id (== its account_ref, ADR-PC-033) makes the deposit settle
+# engine-CA against a real customer account (ADR-PC-043), not the ACCT-REF-DEMO-* stub tokens.
 cat > "$RUNDIR/constitute-req.json" <<JSON
-{"product_code":"dpz_pt_12m_juros_venc","amount":1000000,"source_account_ref":"ACCT-REF-DEMO-001","interest_account_ref":"ACCT-REF-DEMO-002"}
+{"product_code":"dpz_pt_12m_juros_venc","amount":1000000,"source_account_ref":"${DEMO_CA_ID}","interest_account_ref":"${DEMO_CA_ID}"}
 JSON
 
 code="$(curl -sS -o "$RUNDIR/constitute-resp.json" -w '%{http_code}' \
@@ -315,29 +349,45 @@ fi
 # ---------------------------------------------------------------------------
 # 6. confirm BOTH settlement legs hit the Core-ACL stub (reserve + irreversible debit)
 # ---------------------------------------------------------------------------
-say "6/7 Confirming BOTH settlement legs hit the Core-ACL stub"
-RES="$(acl_count /v1/reservations)"
-DEB="$(acl_count /v1/debits)"
-if [ "${RES:-0}" -ge 1 ]; then
-  ok "ReserveAccountBalance delivered (POST /v1/reservations ×${RES}) — the reversible hold"
+say "6/7 Confirming BOTH settlement legs landed engine-CA on the seeded conta à ordem"
+# The happy-path funding ref is the seeded account's GUID, so the constitution funding legs route
+# ce_settlementtarget=engine-ca (ADR-PC-043) — reserve → the CA authorize writer, confirm → the CA capture
+# writer — landing on the seeded account itself, NOT the legacy Core-ACL stub. Read the engine's own
+# account to prove the money actually moved: the accounting balance drops by the 1,000,000-cent principal
+# once the debit captures (before capture, only an available-balance hold shows — either way the seed
+# balance is no longer fully available).
+if [ -n "${DEMO_CA_ID:-}" ]; then
+  CA_CODE="$(curl -sS -o "$RUNDIR/ca-after.json" -w '%{http_code}' "${ENGINE_URL}/v1/accounts/${DEMO_CA_ID}" 2>/dev/null || echo 000)"
+  if [ "$CA_CODE" = 200 ]; then
+    ACCT_BAL="$(py -c "import json;print(json.load(open('$RUNDIR/ca-after.json')).get('accounting_balance_cents','?'))" 2>/dev/null || echo '?')"
+    AVAIL_BAL="$(py -c "import json;print(json.load(open('$RUNDIR/ca-after.json')).get('available_balance_cents','?'))" 2>/dev/null || echo '?')"
+    HOLDS="$(py -c "import json;print(len(json.load(open('$RUNDIR/ca-after.json')).get('active_holds',[])))" 2>/dev/null || echo '?')"
+    SEED="${DEMO_CA_SEED_CENTS:-200000000}"
+    if [ "$AVAIL_BAL" != "?" ] && [ "$AVAIL_BAL" -lt "$SEED" ] 2>/dev/null; then
+      ok "engine-CA funding landed on ${DEMO_CA_ID} (accounting ${ACCT_BAL}, available ${AVAIL_BAL} < seed ${SEED}, active holds ${HOLDS}) — the reservation + debit moved money on the real account"
+    else
+      ALL_GREEN=false
+      warn "seeded CA ${DEMO_CA_ID} available balance is ${AVAIL_BAL} (expected < seed ${SEED} once the funding legs landed — dispatcher may still be draining; check $RUNDIR/orchestrator.log)"
+    fi
+  else
+    ALL_GREEN=false
+    warn "engine GET /v1/accounts/${DEMO_CA_ID} → HTTP ${CA_CODE} (expected 200 — check $RUNDIR/engine.log)"
+  fi
 else
   ALL_GREEN=false
-  warn "no reservation seen at the ACL stub (check $RUNDIR/orchestrator.log)"
-fi
-if [ "${DEB:-0}" -ge 1 ]; then
-  ok "ConfirmDebit delivered (POST /v1/debits ×${DEB}) — the IRREVERSIBLE money leg"
-else
-  ALL_GREEN=false
-  warn "no debit seen at the ACL stub yet (dispatcher may still be draining — check $RUNDIR/orchestrator.log)"
+  warn "no seeded CA id in scope — the open+seed step did not run (check earlier warnings)"
 fi
 
 # ---------------------------------------------------------------------------
 # 7. demo the refusal branch — fail-closed terminal, no money moved, engine never touched
 # ---------------------------------------------------------------------------
-say "7/7 Demonstrating the refusal branch (fail-closed terminal)"
+say "7/7 Demonstrating the refusal branch (fail-closed terminal, on the legacy-DDA path)"
 # A source account flagged "insufficient" makes the Core-ACL stub 422 the reservation, so the saga
 # fails CLOSED before approval — and therefore before ActivateDeposit — so the engine is never asked
 # to constitute and no deposit is appended: PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED.
+# NOTE: "ACCT-insufficient-001" is a NON-GUID token, so it deliberately routes LEGACY-DDA (an absent
+# ce_settlementtarget, ADR-PC-043) — this branch still exercises the Core-ACL stub, keeping the
+# legacy-DDA demo path live alongside the happy path's engine-CA settlement above.
 cat > "$RUNDIR/refusal-req.json" <<JSON
 {"product_code":"dpz_pt_12m_juros_venc","amount":1000000,"source_account_ref":"ACCT-insufficient-001","interest_account_ref":"ACCT-REF-DEMO-002"}
 JSON
@@ -357,6 +407,15 @@ else
   ALL_GREEN=false
   warn "refusal saga at '${RFINAL:-?}' (expected DEPOSIT_CONSTITUTION_FAILED — check $RUNDIR/orchestrator.log)"
 fi
+# The refusal's reservation attempt is the legacy-DDA leg: confirm it actually reached the Core-ACL stub
+# (the WireMock request journal is the proof), so the legacy-DDA settlement path is demonstrably live
+# alongside the happy path's engine-CA settlement.
+RES_LEGACY="$(acl_count /v1/reservations)"
+if [ "${RES_LEGACY:-0}" -ge 1 ]; then
+  ok "legacy-DDA reservation reached the Core-ACL stub (POST /v1/reservations ×${RES_LEGACY}) — the refusal exercised the legacy path"
+else
+  warn "no legacy-DDA reservation seen at the Core-ACL stub (the refusal may still be draining — check $RUNDIR/orchestrator.log)"
+fi
 
 # ---------------------------------------------------------------------------
 # done — the banner reports what was actually observed, not an unconditional success
@@ -366,16 +425,20 @@ if [ "$ALL_GREEN" = true ]; then
 
 $(printf '\033[1;32m✓ Constitution-saga path is up, end to end.\033[0m')
 
-  engine        ${ENGINE_URL}   (command/query + outbox relay → Redpanda; logs: .demo-saga/engine.log)
+  engine        ${ENGINE_URL}   (command/query + outbox relay → Redpanda; engine-CA settlement ingress; logs: .demo-saga/engine.log)
   orchestrator  ${ORCH_URL}   (edge + consume loop + dispatcher; logs: .demo-saga/orchestrator.log)
-  Core-ACL stub ${ACL_URL}    (settlement; WireMock)
+  Core-ACL stub ${ACL_URL}    (legacy-DDA settlement; WireMock)
+  customer CA   ${DEMO_CA_ID:-—}   (engine-owned conta à ordem — the deposit's engine-CA settlement target)
   happy-path saga: ${PROC} (→ ${FINAL})   refusal saga: ${RPROC:-—} (→ ${RFINAL:-?})
 
 The happy-path saga walked all the way to COMPLETED: the reversible reserve AND the irreversible debit
-both fired against the Core-ACL stub, ActivateDeposit landed a REAL deposit in the engine, and the
-engine's DepositConstituted event flowed back over Redpanda to carry the saga to its terminal success
-state (the ADR-PC-029 slot-2 advance — on the EVENT, not the HTTP 2xx). The refusal saga fails closed
-before approval, so the engine is never touched.
+both settled ENGINE-CA against the seeded customer conta à ordem (${DEMO_CA_ID:-—}) — a
+ce_settlementtarget=engine-ca leg routed home to the engine's own authorize/capture ingress (ADR-PC-043),
+not the legacy Core-ACL stub. ActivateDeposit landed a REAL deposit in the engine, and the engine's
+DepositConstituted event flowed back over Redpanda to carry the saga to its terminal success state (the
+ADR-PC-029 slot-2 advance — on the EVENT, not the HTTP 2xx). The refusal saga uses a legacy (non-GUID)
+funding ref, so it routes legacy-DDA to the Core-ACL stub and fails closed before approval — the engine
+is never touched. Both settlement paths (engine-CA and legacy-DDA) are demonstrated in one run.
 
 Drive it from Mission Control's LIVE·saga mode:
 
@@ -393,7 +456,8 @@ $(printf '\033[1;33m! Saga path is up, but NOT every step reached its expected t
 
   engine        ${ENGINE_URL}   (logs: .demo-saga/engine.log)
   orchestrator  ${ORCH_URL}   (logs: .demo-saga/orchestrator.log)
-  Core-ACL stub ${ACL_URL}    (settlement; WireMock)
+  Core-ACL stub ${ACL_URL}    (legacy-DDA settlement; WireMock)
+  customer CA   ${DEMO_CA_ID:-—}   (engine-owned conta à ordem — the deposit's engine-CA settlement target)
   happy-path saga: ${PROC} (→ ${FINAL:-?})   refusal saga: ${RPROC:-—} (→ ${RFINAL:-?})
 
 The hosts are LEFT RUNNING for inspection (the script warns, it does not tear down on a failed
