@@ -145,6 +145,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 import time
 from http.cookies import SimpleCookie
 
@@ -207,9 +208,12 @@ _SCA_MINT_SCRIPT = os.path.join(_REPO_ROOT, "infra", "stub-as", "mint-stepup-tok
 
 # The precise set of SCA-gated money-mover routes (each route group carries the engine's
 # AddEndpointFilter<ScaPreconditionFilter>): the term-deposit maturity / interest / terminate and the
-# personal-loan installment / early-repayment. Anchored + segment-precise so a GET, a query read, or
-# an UNGATED write (settlement-ingress /v1/reservations|/debits|/credits, the current-account
-# authorize route) can NEVER match — we only ever attest on exactly these five POST money-movers.
+# personal-loan installment / early-repayment. The {id} segment is deliberately PERMISSIVE ([^/]+ — one
+# non-empty path segment, not the engine's verbose {id:guid} constraint, which buys little for a demo);
+# precision comes from the ^…$ anchors plus the fixed (deposits|loans) prefix and the closed money-mover
+# LEAF alternation — so a GET, a query read, or an UNGATED write (settlement-ingress
+# /v1/reservations|/debits|/credits, the current-account authorize route) can NEVER match. We only ever
+# attest on exactly these five POST money-movers.
 _SCA_GATED_PATH_RE = re.compile(
     r"^/v1/(deposits|loans)/[^/]+/(maturity|interest|terminate|installment|early-repayment)$")
 
@@ -221,6 +225,11 @@ _SCA_GATED_PATH_RE = re.compile(
 _SCA_CACHE_TTL_SECONDS = 60
 _sca_headers_cache = None      # the last {X-SCA-Acr, X-SCA-Auth-Time} dict, or None
 _sca_headers_minted_at = 0.0   # monotonic-ish wall-clock stamp of the cached mint
+# serve.py runs under a ThreadingTCPServer, so a first-use BURST could race the check-mint-write below
+# and fork one subprocess mint per concurrent request. Each mint yields a valid token and the dict
+# assign is atomic, so the race is harmless — but it contradicts the "a burst reuses one mint" promise.
+# This lock serialises the check-mint-write so exactly ONE thread in a burst mints and the rest reuse it.
+_sca_mint_lock = threading.Lock()
 
 
 def _mint_stepup_token():
@@ -267,24 +276,29 @@ def _mint_sca_headers():
     when stale, so a burst of money-movers reuses one mint. DEV/DEMO-MODE ONLY — the caller (_route)
     invokes this solely on the AUTH-is-None branch; it never forges an attestation in oidc mode."""
     global _sca_headers_cache, _sca_headers_minted_at
-    now = time.time()
-    if _sca_headers_cache is not None and (now - _sca_headers_minted_at) < _SCA_CACHE_TTL_SECONDS:
+    # Serialise the check-mint-write so a first-use burst under the threading server mints ONCE and the
+    # rest of the burst reuses that entry (the "a burst reuses one mint" promise above). On a mint/decode
+    # FAILURE we return None from inside the `with`; the lock releases on that exit exactly as on success,
+    # so graceful degradation is unchanged and a later request simply retries the mint.
+    with _sca_mint_lock:
+        now = time.time()
+        if _sca_headers_cache is not None and (now - _sca_headers_minted_at) < _SCA_CACHE_TTL_SECONDS:
+            return _sca_headers_cache
+        token = _mint_stepup_token()
+        if not token:
+            return None
+        decoded = _decode_stepup_claims(token)
+        if decoded is None:
+            sys.stderr.write("WARNING: step-up SCA token missing acr/auth_time; relaying the money-mover "
+                             "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n")
+            return None
+        acr, auth_time = decoded
+        _sca_headers_cache = {
+            SCA_ACR_HEADER: acr,
+            SCA_AUTH_TIME_HEADER: auth_time,
+        }
+        _sca_headers_minted_at = now
         return _sca_headers_cache
-    token = _mint_stepup_token()
-    if not token:
-        return None
-    decoded = _decode_stepup_claims(token)
-    if decoded is None:
-        sys.stderr.write("WARNING: step-up SCA token missing acr/auth_time; relaying the money-mover "
-                         "WITHOUT X-SCA-* — the engine will 422 SCA_REQUIRED (bd babelstone-e4mq)\n")
-        return None
-    acr, auth_time = decoded
-    _sca_headers_cache = {
-        SCA_ACR_HEADER: acr,
-        SCA_AUTH_TIME_HEADER: auth_time,
-    }
-    _sca_headers_minted_at = now
-    return _sca_headers_cache
 
 
 # ── Caller-side internal mTLS on the engine + orchestrator proxy hops ─────────────────────────
@@ -837,7 +851,6 @@ def _json_default(o):
 # draws is sourced from the same artefacts the architecture docs render, and a C4 edit flows into
 # the lens without touching this file. Everything here is structural (service names, topic names,
 # relationship labels) — no PII surface exists in a C4 model.
-import re as _re
 
 _C4_DIAGRAM_DIR = os.path.normpath(os.path.join(
     ROOT, "..", "..", "product-management", "product_concepts", "diagrams"))
@@ -847,9 +860,9 @@ _C4_SOURCES = (
     "c4-l2-agent-channel.puml",             # the MCP server + agent channel
 )
 # Container(id, "label", "tech", "desc"…) / ContainerDb / System / System_Ext / Person / Person_Ext.
-_C4_NODE_RE = _re.compile(
+_C4_NODE_RE = re.compile(
     r'^\s*(Person_Ext|Person|System_Ext|System|ContainerDb|Container)\(\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"\s*(?:,\s*"([^"]*)")?')
-_C4_REL_RE = _re.compile(
+_C4_REL_RE = re.compile(
     r'^\s*(?:Bi)?Rel(?:_[A-Za-z]+)?\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"')
 
 
