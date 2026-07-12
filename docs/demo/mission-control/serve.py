@@ -542,10 +542,11 @@ _PG_ALLOWLIST = {
         # Outbound W3C Trace Context (migration 0003: "opaque 00-<trace-id>-<span-id>-<flags>;
         # operational, NOT PII") — the saga-leg → Tempo deep-link key (bd babelstone-f0ic.15.9).
         "traceparent",
-        # The TERMINAL-refusal surface (migration 0004): the engine HTTP status + the bounded, structural
-        # reason the dispatcher captured from a 4xx refusal — "a ProblemDetails title / transition label …
-        # NEVER the request body or any PII (ADR-PC-004 §P2)" by that column's own contract. Surfaced so the
-        # Telemetry/saga lens can name the SPECIFIC settlement machine code (bd u79p.20) on a fail-closed run.
+        # The TERMINAL-refusal surface (migration 0004): the engine HTTP status + the reason the dispatcher
+        # captured from a 4xx refusal — contracted as "a ProblemDetails title / transition label … NEVER the
+        # request body or any PII (ADR-PC-004 §P2)". failure_reason is read only SERVER-SIDE: _project_saga_legs
+        # parses it into a bounded failure_code (never the free-form detail) so the raw column never crosses to
+        # the browser, letting the Telemetry/saga lens name the SPECIFIC settlement machine code on a fail run.
         "failure_status_code", "failure_reason",
     },
     ("orchestrator", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
@@ -844,6 +845,49 @@ def pg_provenance(stream_id):
     return {"stream_id": stream_id, "pin": pin, "pack": pack}
 
 
+# ── Bounded saga-failure projection ──────────────────────────────────────────────────────────
+# The saga_outbox.failure_reason column is CONTRACTED (migration 0004) as a bounded ProblemDetails
+# title / transition label — never the request body or PII. But the dispatcher's producer currently
+# captures the WHOLE raw RFC7807 body into it (truncated only to 1024 chars), so the column can hold
+# a free-form `detail` member. Because the string "failure_reason" trips none of the _PG_FORBIDDEN
+# substrings, the column-name PII firewall would let that raw blob cross to the browser unbounded.
+# So we NEVER return failure_reason itself: this projection parses the problem+json SERVER-SIDE and
+# emits only a bounded `failure_code` — the machine `code` extension (the ADR-PC-043 / ADR-PC-037
+# §D6 settlement token) when present, else the structural `title`, else the HTTP status — capped to
+# a short label. The free-form `detail` is deliberately dropped. The raw column stays server-side.
+_FAILURE_CODE_MAX = 64  # a machine code / short title — never a sentence of free-form detail
+
+
+def _derive_failure_code(reason, status_code):
+    """Turn a saga_outbox row's raw failure_reason blob into a BOUNDED, structural failure code.
+    Prefers the RFC7807 machine `code` extension, falls back to the structural `title`, then the
+    HTTP status. The free-form `detail` member is never surfaced. Returns None when nothing bounded
+    can be derived. Capped at _FAILURE_CODE_MAX chars so a mis-populated raw body can't leak here."""
+    code = None
+    if reason:
+        try:
+            pj = json.loads(reason)
+            if isinstance(pj, dict):
+                code = pj.get("code") or pj.get("title")  # NB: never pj["detail"] (free-form)
+        except (ValueError, TypeError):
+            code = None  # not problem+json — do NOT fall back to the raw blob; keep it server-side
+    if not code and status_code is not None:
+        code = "HTTP %s" % status_code
+    if code is None:
+        return None
+    code = str(code)
+    return code[:_FAILURE_CODE_MAX]
+
+
+def _project_saga_legs(legs):
+    """Replace each saga_outbox row's raw failure_reason with a bounded failure_code IN PLACE and
+    drop the raw column, so only the bounded structural projection ever crosses to the browser."""
+    for leg in legs:
+        leg["failure_code"] = _derive_failure_code(leg.pop("failure_reason", None),
+                                                    leg.get("failure_status_code"))
+    return legs
+
+
 # ── Topology lens history reads (bd babelstone-f0ic.15.3) ────────────────────────────────────
 def pg_resolve_process(handle):
     """Resolve a process handle to its saga_state row. Accepts the client-facing PROC-… reference
@@ -871,11 +915,12 @@ def pg_process_transitions(handle):
     legs = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
                       "correlation_id", "status", "created_at", "published_at", "traceparent",
-                      # The FAILED-leg refusal surface (migration 0004) — the engine status + the bounded
-                      # structural reason, so a fail-closed run names the specific settlement code (bd u79p.20).
+                      # The FAILED-leg refusal surface (migration 0004) — the engine status + the raw reason.
+                      # The raw reason is parsed SERVER-SIDE into a bounded failure_code below; it never
+                      # crosses to the browser, so a fail-closed run names the specific settlement code.
                       "failure_status_code", "failure_reason"],
                      where=[("process_id", pid)], order="seq", descending=False, limit=200)
-    return {"process": process, "transitions": transitions, "legs": legs}
+    return {"process": process, "transitions": transitions, "legs": _project_saga_legs(legs)}
 
 
 def pg_stream_events(stream_id, limit=200):
@@ -899,12 +944,13 @@ def pg_saga_outbox_tail(process_id=None, limit=20):
     rows = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
                       "correlation_id", "status", "created_at", "published_at", "traceparent",
-                      # A FAILED (4xx) leg carries the engine's status + the bounded structural refusal reason
-                      # (migration 0004) — NULL on a PENDING/PUBLISHED leg. Lets the UI name the specific
-                      # settlement machine code on a fail-closed saga run (bd u79p.20).
+                      # A FAILED (4xx) leg carries the engine's status + the raw refusal reason (migration
+                      # 0004) — NULL on a PENDING/PUBLISHED leg. The raw reason is parsed SERVER-SIDE into a
+                      # bounded failure_code below; only that projection lets the UI name the specific
+                      # settlement machine code on a fail-closed saga run.
                       "failure_status_code", "failure_reason"],
                      where=where, order="seq", descending=True, limit=limit)
-    return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": rows}
+    return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": _project_saga_legs(rows)}
 
 
 def _json_default(o):
