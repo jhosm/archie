@@ -188,10 +188,8 @@ mapping each to its own current-account authorize / capture / credit.
 
 ### The `conta à ordem` visualization — two balances and active holds
 
-**Not yet wired in the UI — the render lands with bd `u79p.8`/`.9`.** The design below is what Mission
-Control *will* gain once those sibling issues merge; today only the backend seams (`u79p.2`/`.4`/`.5`)
-are built. Mission Control **will gain** a **persistent conta-a-ordem panel** sourced from
-`GET /v1/accounts/{id}`, showing a **two-balance meter** and the **active holds**:
+Mission Control renders a **persistent conta-a-ordem panel** sourced from `GET /v1/accounts/{id}`
+(shipped in bd `u79p.8`/`.9`), showing a **two-balance meter** and the **active holds**:
 
 - **Available** vs **Booked** — the ADR-PC-033 split: `available balance = booked (accounting)
   balance − Σ active holds`. When a Debit leg places a **hold**, the *available* meter drops
@@ -200,14 +198,14 @@ are built. Mission Control **will gain** a **persistent conta-a-ordem panel** so
   gap that opens between the two bars and then closes.
 - **Active holds** — a list of the outstanding reservations (the `HoldPlaced` that have not yet
   `HoldCaptured`/`HoldExpired`), each shrinking the available balance until it resolves.
-- A **movement strip** (debit/credit history) will be sourced from the movement-history read surface
-  (`GET /v1/accounts/{id}/movements`, ADR-PC-032) — a real posted-movement list, not one
-  reconstructed from actions.
+- A **movement strip** (debit/credit history): today the panel folds each settlement move into a
+  local snapshot as it happens (`applyAccountMovement`); a future refinement will source it from the
+  movement-history read surface (`GET /v1/accounts/{id}/movements`, ADR-PC-032 — the endpoint is now
+  live, bd `u79p.11`) for a real posted-movement list rather than one reconstructed from actions.
 
-The panel is designed to update **in lockstep with the LIVE·saga pane**: as the settlement saga walks
+The panel updates **in lockstep with the LIVE·saga pane**: as the settlement saga walks
 `HoldPlaced → HoldCaptured` (or a credit lands), the account meters and the ledger feed move
-together, so the money story and the saga story are one screen. This lockstep behaviour ships with the
-UI render (bd `u79p.8`/`.9`), not the backend seams already merged.
+together, so the money story and the saga story are one screen (bd `u79p.9`).
 
 ### Mode behaviour for the engine-CA loop
 
@@ -225,6 +223,19 @@ LIVE·engine the engine lands the leg in one step, and in DEMO the beat is illus
 settlement is unchanged in every mode: a deposit that does *not* target `engine-ca` still settles
 against the Core-ACL stub exactly as the [LIVE·saga section](#livesaga-mode--drives-the-constitution-saga)
 above describes — the engine-CA loop is a purely additive path, not a replacement.
+
+**Amounts and the current-account authorization limit (LIVE·saga funding).** The engine-CA funding
+Debit is a *real authorization* against the `ca_pt_standard` account, so it is subject to that
+account's **per-transaction / velocity limits** (a declarative pack rule; the decline is the
+`LIMIT_EXCEEDED` reason in the [ADR-PC-037 §D6](../../product-management/product_concepts/adrs/ADR-PC-037-current-account-family.md)
+authorize taxonomy). A funding leg above the limit is
+declined `422 LIMIT_EXCEEDED` and the saga **fails closed** before any commit — so keep a **LIVE·saga**
+deposit **at or under €4,000** (the UI's default principal; empirically €5,000 still authorises, €10,000
+is refused). The canonical **€10,000 → €10,219.00** example is a **LIVE·engine** story — LIVE·engine
+lands the leg directly with no authorization gate, so €10,000 constitutes fine there; driving €10,000
+through **LIVE·saga** trips the CA limit and refuses. (The UI ledger currently labels this leg
+"dispatched to Core ACL" even when it routes `engine-ca`; the refusal detail is legible in the engine's
+`422` problem body — surfacing it in the UI is bd `u79p.20`.)
 
 ## The demo beats (what to click)
 
