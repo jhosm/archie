@@ -245,9 +245,13 @@ start_engine_host "$ENGINE_DLL" "$ENGINE_CONN" "$ENGINE_URL" "$ROOT/packs" \
 
 # (d) open + seed a customer conta à ordem on the engine — the account the deposit SETTLES against.
 # The seeded id IS the account_ref (AccountRef == AccountId.ToString(), ADR-PC-033); we thread it into the
-# constitute body below as source_account_ref (the funding debit) / interest_account_ref (the maturity
-# credit), so a ce_settlementtarget=engine-ca leg lands on THIS account (ADR-PC-043). The seeded starting
-# balance covers the 1,000,000-cent principal debit with headroom.
+# constitute body below as source_account_ref AND interest_account_ref (ADR-PC-043). Two DISTINCT mechanisms
+# make each leg land engine-CA on THIS account:
+#   - the FUNDING debit flips to engine-CA because source_account_ref parses as a GUID
+#     (SagaCommandPayloadFactory.IsEngineCaFunding → Guid.TryParse) — a legacy opaque token would route legacy-DDA;
+#   - the MATURITY credit routes engine-CA because the engine's configured SettlementTarget defaults to EngineCa;
+#     threading the GUID as interest_account_ref only pins WHICH account it lands on (Movement.AccountRef), not the routing.
+# The seeded starting balance covers the 1,000,000-cent principal debit with headroom.
 say "Opening + seeding a customer conta à ordem on the engine (the deposit settles against it)"
 DEMO_CA_ID="$(open_and_seed_demo_ca "$ENGINE_URL" "${DEMO_CA_SEED_CENTS:-200000000}" "$RUNDIR")"
 ok "demo customer CA ${DEMO_CA_ID} open + seeded on the engine (the settlement target for the deposit legs)"
@@ -283,8 +287,10 @@ start_orchestrator_host "$ORCH_DLL" "$ORCH_CONN" "localhost:${REDPANDA_KAFKA_POR
 say "4/7 Opening a deposit through the EDGE (POST /api/v1/deposits/constitute)"
 # The funding + interest accounts are BOTH the seeded engine-owned conta à ordem: source_account_ref is the
 # account the principal debit hits (hold → capture), interest_account_ref the account the maturity credit
-# lands on. Threading the seeded account id (== its account_ref, ADR-PC-033) makes the deposit settle
-# engine-CA against a real customer account (ADR-PC-043), not the ACCT-REF-DEMO-* stub tokens.
+# lands on. Threading the seeded account id (== its account_ref, ADR-PC-033) is what makes the FUNDING debit
+# route engine-CA — source_account_ref parses as a GUID (SagaCommandPayloadFactory.IsEngineCaFunding), not an
+# ACCT-REF-DEMO-* stub token. The maturity CREDIT settles engine-CA independently (the engine's SettlementTarget
+# defaults to EngineCa); interest_account_ref only pins WHICH account it lands on (Movement.AccountRef). ADR-PC-043.
 cat > "$RUNDIR/constitute-req.json" <<JSON
 {"product_code":"dpz_pt_12m_juros_venc","amount":1000000,"source_account_ref":"${DEMO_CA_ID}","interest_account_ref":"${DEMO_CA_ID}"}
 JSON
@@ -350,12 +356,14 @@ fi
 # 6. confirm BOTH settlement legs hit the Core-ACL stub (reserve + irreversible debit)
 # ---------------------------------------------------------------------------
 say "6/7 Confirming BOTH settlement legs landed engine-CA on the seeded conta à ordem"
-# The happy-path funding ref is the seeded account's GUID, so the constitution funding legs route
-# ce_settlementtarget=engine-ca (ADR-PC-043) — reserve → the CA authorize writer, confirm → the CA capture
-# writer — landing on the seeded account itself, NOT the legacy Core-ACL stub. Read the engine's own
-# account to prove the money actually moved: the accounting balance drops by the 1,000,000-cent principal
-# once the debit captures (before capture, only an available-balance hold shows — either way the seed
-# balance is no longer fully available).
+# The happy-path FUNDING ref is the seeded account's GUID, so the constitution funding leg routes
+# ce_settlementtarget=engine-ca (SagaCommandPayloadFactory.IsEngineCaFunding, ADR-PC-043) — reserve → the CA
+# authorize writer, confirm → the CA capture writer — landing on the seeded account itself, NOT the legacy
+# Core-ACL stub. (The maturity CREDIT settles engine-CA too, but via the engine's SettlementTarget default,
+# not the funding-ref GUID — and it fires only at maturity, so this GET checks the funding leg alone.) Read the
+# engine's own account to prove the money actually moved: the accounting balance drops by the 1,000,000-cent
+# principal once the debit captures (before capture, only an available-balance hold shows — either way the
+# seed balance is no longer fully available).
 if [ -n "${DEMO_CA_ID:-}" ]; then
   CA_CODE="$(curl -sS -o "$RUNDIR/ca-after.json" -w '%{http_code}' "${ENGINE_URL}/v1/accounts/${DEMO_CA_ID}" 2>/dev/null || echo 000)"
   if [ "$CA_CODE" = 200 ]; then
