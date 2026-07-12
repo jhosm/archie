@@ -146,7 +146,9 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
    > [`../k8s/components/openbao-csi/README.md`](../k8s/components/openbao-csi/README.md).)
 
    Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
-   the Kong mTLS material (via `deck-sync`).
+   the Kong mTLS material (via `deck-sync`, on any environment where OpenBao holds real edge
+   material — **not** staging today, where `deck-sync` is skipped and the boot-time initContainer
+   splice provides Kong's edge cert instead; see §9).
 6. Deploy: `mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging | kubectl apply -f -`
    (or dispatch `cd.yml` with `overlay: staging`, which runs exactly this). **Do NOT use plain
    `kubectl apply -k`** — the `base` generates a ConfigMap from `../../kong/kong.yml` (above the
@@ -206,8 +208,9 @@ Then continue with step 2 (DNS) → step 3 (`bootstrap/`, Phase 2) above.
 
 `cd.yml` (workflow_dispatch, `overlay: staging`, `apply: true`) cosign-verifies the images by
 digest, gates the forward-only migrations, renders + kubeconforms the overlay, applies it,
-`deck sync`s Kong, and finally reconciles the first-party Logto config (the `configure-logto`
-job). The event-store migration Job + the engine initContainer handle schema ordering
+`deck sync`s Kong (**skipped on staging** — the empty `-dev` OpenBao has no edge material, so
+Kong's edge cert comes from the boot-time initContainer splice instead; see §9), and finally
+reconciles the first-party Logto config (the `configure-logto` job). The event-store migration Job + the engine initContainer handle schema ordering
 automatically (the engine waits on the migration sentinel).
 
 **Logto Management-API config is now pipeline-driven (bd babelstone-zla1.10.x).** The three
@@ -423,9 +426,11 @@ This is a **coordinated maintenance window** — do all steps together, and be r
 
 1. **Apply the bootstrap certs** (out-of-band — cert-manager CRDs are not in the kustomize build):
    ```bash
-   kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/mcp-mtls.yaml       # the mcp-mtls-ca Issuer (prereq)
+   kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/mcp-mtls.yaml       # the mcp-mtls-ca Issuer (prereq) + the Kong→mcp client cert
    kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/internal-mtls.yaml  # engine/orchestrator server + caller client certs
-   kubectl -n babelstone-staging wait --for=condition=Ready certificate/engine-tls certificate/orchestrator-tls --timeout=120s
+   kubectl -n babelstone-staging apply -f infra/k8s/overlays/staging/bootstrap/kong-edge-mtls.yaml # Kong's EDGE client cert for engine/orchestrator (bd babelstone-fhw2.1)
+   kubectl -n babelstone-staging wait --for=condition=Ready \
+     certificate/engine-tls certificate/orchestrator-tls certificate/kong-engine-client --timeout=120s
    ```
 2. **Deploy engine + orchestrator images** built from a commit that carries the server-side trust
    code (bd babelstone-zla1.12.25). Confirm the running images post-date the merge, else
@@ -434,25 +439,53 @@ This is a **coordinated maintenance window** — do all steps together, and be r
    [`overlays/staging/kustomization.yaml`](../k8s/overlays/staging/kustomization.yaml) and deploy
    the overlay. The engine/orchestrator now bind HTTPS + require a client cert; the tcpSocket
    probes still pass.
-4. **Re-run `deck-sync`** so Kong flips `tls_verify: true` and presents its internal-CA client
-   cert on the engine/orchestrator upstreams:
+4. **Kong presents a real edge client cert automatically — no `deck-sync` needed on staging** (bd
+   babelstone-fhw2.1). On staging `deck-sync` is deliberately skipped (the `-dev` OpenBao holds no
+   real edge material — real provisioning is deferred to M.2/bd babelstone-puu3), so it can NOT be
+   the path that gives Kong its client cert here. Instead the `kong-edge-mtls.patch.yaml` overlay
+   patch adds a Kong **initContainer** that, at pod start, splices the real `mcp-mtls-ca` material
+   from the Secrets applied in step 1 (`babelstone-kong-engine-client-tls`, `mcp-kong-client-tls`)
+   over kong.yml's committed **POC** placeholders — entities `7e9b6f1a-…` (engine/orchestrator
+   client cert), `a1b2c3d4-…` (mcp-server client cert), and `f0e1d2c3-…` (the `mcp-mtls-ca` bundle
+   Kong verifies `mcp-server` against). So once the step-1 Secrets exist and the overlay is deployed
+   (step 3), a fresh Kong pod already presents a cert that chains to `mcp-mtls-ca`. If Kong was
+   running **before** the Secrets landed, roll its pod so the initContainer re-runs against them:
    ```bash
-   scripts/deck-sync.sh    # via kubectl port-forward to the Kong Admin loopback (see §7 / kong-admin-localhost)
+   kubectl -n babelstone-staging rollout restart deploy/kong
+   kubectl -n babelstone-staging rollout status  deploy/kong --timeout=120s
+   # confirm the init spliced real material (fail-closed: it aborts the pod on a leftover POC body):
+   kubectl -n babelstone-staging logs deploy/kong -c edge-cert-splice
    ```
-   ⚠️ **Kong caveat:** on staging `deck-sync` is normally skipped (the `-dev` OpenBao holds no real
-   edge material), so Kong keeps its committed **POC** client cert. If that cert does not chain to
-   `mcp-mtls-ca`, the Kong→engine hops (e.g. the lifecycle-driver route) will be rejected once the
-   engine requires a cert. Confirm Kong presents an internal-CA-signed client cert **before** the
-   flip, or expect those specific hops to break until it does.
-5. **Verify** — positive: a properly-provisioned caller succeeds over mTLS and a constitution saga
-   reaches `COMPLETED`; Mission Control's `/v1` probe returns 200 (`live·engine · reachable`).
-   Negative: a cert-less caller is refused at the handshake.
+   ℹ️ This bridge deliberately does **not** flip `tls_verify` on the engine/orchestrator upstreams
+   (the §P5 reverse half — Kong verifying the *upstream server* cert): those services carry no
+   `ca_certificates` reference, so flipping them would make Kong verify an `mcp-mtls-ca` server cert
+   against the system store and break the hop. The engine's own `RequireCertificate` + CA-pin — the
+   enforcement that matters — is unaffected; the client-cert splice is what lets Kong through it. The
+   reverse half returns with the full `deck-sync` path once M.2 provisions real edge material. See
+   the [ADR-IC-006 §P1 Amendment 2026-07-12](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md).
+5. **Verify (internal hops)** — positive: a properly-provisioned caller succeeds over mTLS and a
+   constitution saga reaches `COMPLETED`; Mission Control's `/v1` probe returns 200 (`live·engine ·
+   reachable`). Negative: a cert-less caller is refused at the handshake.
    ```bash
    # from a caller pod — mounted client cert succeeds, no cert is refused at the handshake:
    kubectl -n babelstone-staging exec deploy/mission-control -- sh -c \
      'curl -sS -o /dev/null -w "with-cert=%{http_code}\n" --cacert /certs/ca.crt --cert /certs/tls.crt --key /certs/tls.key https://engine:8080/v1/deposits/maturities?from=2000-01-01\&to=2000-01-02;
       curl -sS -o /dev/null -w "no-cert=%{http_code}\n" --cacert /certs/ca.crt https://engine:8080/v1/ || echo "no-cert refused (expected)"'
    ```
-   **Rollback:** re-comment the patch in `kustomization.yaml` and redeploy — the servers revert to
-   plain HTTP and the (still-https) callers 502 again, so this is a return to the pre-flip state,
-   not a clean recovery; only roll back if the flip itself is the problem.
+6. **Verify (the Kong-fronted public path)** — the bd babelstone-fhw2.1 acceptance check: an
+   authenticated request through `api.babelstone.dev` → Kong → engine returns **200**, proving Kong
+   now presents a cert that chains to `mcp-mtls-ca` (a POC cert would be rejected at the handshake).
+   ```bash
+   # with a valid IAM bearer token for a query route (e.g. GET /v1/deposits/maturities):
+   curl -sS -o /dev/null -w "edge→engine=%{http_code}\n" \
+     -H "Authorization: Bearer $TOKEN" \
+     'https://api.babelstone.dev/v1/deposits/maturities?from=2000-01-01&to=2000-01-02'
+   # the initContainer's own confirmation line proves the POC placeholders were replaced by real
+   # mcp-mtls-ca material (it fails closed on any leftover POC body, so a running pod == real certs):
+   kubectl -n babelstone-staging logs deploy/kong -c edge-cert-splice
+   ```
+   **Rollback:** re-comment `internal-mtls.patch.yaml` in `kustomization.yaml` and redeploy — the
+   servers revert to plain HTTP and the (still-https) callers 502 again, so this is a return to the
+   pre-flip state, not a clean recovery; only roll back if the flip itself is the problem. (The
+   `kong-edge-mtls.patch.yaml` bridge is inert without the flip — Kong simply presents a cert no one
+   requires — so it need not be reverted in lockstep.)

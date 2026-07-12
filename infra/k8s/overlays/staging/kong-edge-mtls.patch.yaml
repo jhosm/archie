@@ -1,0 +1,127 @@
+# Give the staging Kong pod a REAL mcp-mtls-ca edge client cert, spliced at pod start
+# (bd babelstone-fhw2.1; ADR-IC-006 §P1/§P5 Boundary 2 / ADR-IC-016 plane (i)).
+#
+# Plain English: since bd babelstone-zla1.12.25 the engine + orchestrator REQUIRE a
+# client cert that chains to the cluster-generated internal CA (mcp-mtls-ca), and
+# mcp-server always has. The committed kong.yml ships THROWAWAY POC client certs
+# (entities 7e9b6f1a-… engine/orchestrator, a1b2c3d4-… mcp-server) that cannot chain
+# to it, so the Kong-fronted public path is rejected at the TLS handshake. On a real
+# deploy scripts/deck-sync.sh splices real material from OpenBao; on staging deck-sync
+# is skipped (empty -dev OpenBao — real edge provisioning is deferred to M.2/bd puu3).
+# This patch is the staging bridge: an initContainer mounts cert-manager Secrets
+# holding real mcp-mtls-ca material and runs infra/kong/splice-edge-certs.sh to splice
+# it over the POC placeholders BY ENTITY ID, writing the config Kong then loads from a
+# shared emptyDir. It is the pod-start mirror of the deck-sync splice — still the
+# ADR-IC-006 §P1 DB-less declarative path (Kong loads one rendered file; no Admin-API
+# mutation), just converged at boot from a mounted Secret instead of at deploy from
+# OpenBao. See the dated ADR-IC-006 §D5 amendment (this change) acknowledging the
+# second convergence path, and staging-ops.md §9.
+#
+# SCOPE: this fixes the CLIENT cert Kong PRESENTS (the actual handshake breakage — the
+# engine's RequireCertificate + CA-pin). It deliberately does NOT flip tls_verify on
+# the engine/orchestrator upstreams (the §P5 reverse half — Kong VERIFYING the upstream
+# server cert): those services carry no ca_certificates reference and there is no
+# KONG_LUA_SSL_TRUSTED_CERTIFICATE, so flipping them true would make Kong verify an
+# mcp-mtls-ca server cert against the system store and BREAK the hop. The mcp-server
+# upstream keeps its committed tls_verify:true — it works once its ca_certificates
+# bundle (f0e1d2c3-…) holds the real mcp-mtls-ca, which the splice provides.
+#
+# PREREQS (out-of-band bootstrap, same maintenance window): mcp-mtls.yaml (the
+# mcp-mtls-ca Issuer + the mcp-kong-client-tls Secret), internal-mtls.yaml, and
+# kong-edge-mtls.yaml (the kong-engine-client Certificate → babelstone-kong-engine-
+# client-tls Secret). Without those Secrets the initContainer fails closed and the pod
+# never serves a half-spliced config.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  template:
+    spec:
+      initContainers:
+        # Render kong.yml with the real edge certs BEFORE Kong boots. Reuses the SAME
+        # kong:3.9.1 image the main container runs (the staging images: transformer
+        # pins its digest too — no new third-party image), so bash+awk are already
+        # present; the splice logic rides in via the kong-edge-splice ConfigMap.
+        - name: edge-cert-splice
+          image: kong:3.9.1
+          command: ["bash", "/splice/splice-edge-certs.sh"]
+          # A modest, capped footprint (the "no OOM mid-demo" staging invariant, bd
+          # babelstone-zla1.4): a short-lived bash+awk splice of a ~1400-line file needs
+          # very little, and the memory limit keeps the Kong pod fully sized now that it
+          # is multi-container (the resources.patch.yaml sizing covers only the main
+          # container, which it targets by name).
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          # The init only writes to the shared emptyDir, so it runs with a read-only
+          # root filesystem — a tighter posture than the main Kong container (which
+          # must write its nginx prefix), and CIS-PSA clean.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The committed POC kong.yml (source) — read-only; the splice never edits it.
+            - name: kong-config
+              mountPath: /kong-src
+              readOnly: true
+            # The rendered config (destination) — shared with the main container below.
+            - name: kong-rendered
+              mountPath: /kong-rendered
+            # The splice script (from the kong-edge-splice ConfigMap).
+            - name: kong-edge-splice
+              mountPath: /splice
+              readOnly: true
+            # Real mcp-mtls-ca material: Kong's engine/orchestrator client cert…
+            - name: kong-engine-client-tls
+              mountPath: /edge-certs/engine
+              readOnly: true
+            # …Kong's mcp-server client cert (+ its ca.crt = the mcp-mtls-ca bundle the
+            # splice puts on the mcp-server upstream's ca_certificates entity).
+            - name: mcp-kong-client-tls
+              mountPath: /edge-certs/mcp
+              readOnly: true
+      containers:
+        - name: kong
+          env:
+            # Load the RENDERED config (real edge certs), not the committed POC source.
+            - name: KONG_DECLARATIVE_CONFIG
+              value: /kong-rendered/kong.yml
+          volumeMounts:
+            # The main container no longer reads the POC ConfigMap directly — the init
+            # container consumes it and emits the rendered config to the emptyDir.
+            - name: kong-config
+              $patch: delete
+            - name: kong-rendered
+              mountPath: /kong-rendered
+              readOnly: true
+      volumes:
+        # The rendered-config hand-off between the init and main containers.
+        - name: kong-rendered
+          emptyDir: {}
+        # The splice script, delivered as a ConfigMap (generated from
+        # infra/kong/splice-edge-certs.sh in kustomization.yaml).
+        - name: kong-edge-splice
+          configMap:
+            name: kong-edge-splice
+            defaultMode: 0555
+        # Kong's engine/orchestrator client cert (bootstrap/kong-edge-mtls.yaml).
+        - name: kong-engine-client-tls
+          secret:
+            secretName: babelstone-kong-engine-client-tls
+        # Kong's mcp-server client cert (bootstrap/mcp-mtls.yaml — reused; its ca.crt is
+        # the mcp-mtls-ca bundle for the mcp-server upstream's tls_verify).
+        - name: mcp-kong-client-tls
+          secret:
+            secretName: mcp-kong-client-tls

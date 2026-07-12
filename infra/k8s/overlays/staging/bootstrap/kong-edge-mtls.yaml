@@ -1,0 +1,54 @@
+# Kong EDGE client cert for the engine/orchestrator upstreams — the staging bridge
+# that survives the internal-mTLS RequireCertificate flip WITHOUT OpenBao/deck-sync
+# (bd babelstone-fhw2.1; ADR-IC-006 §P1/§P5 Boundary 2 / ADR-IC-016 plane (i)).
+# Cluster bootstrap, applied ONCE alongside mcp-mtls.yaml + internal-mtls.yaml — NOT
+# part of the kustomize overlay (cert-manager CRDs would fail the strict kubeconform
+# gate, same reasoning as those two files).
+#
+# Plain English: since bd babelstone-zla1.12.25 the engine + orchestrator REQUIRE a
+# client certificate that chains to the cluster-generated internal CA (mcp-mtls-ca).
+# The in-cluster callers already present one; the one hop that does not is Kong, the
+# public edge — its committed kong.yml carries a THROWAWAY POC client cert (entity
+# 7e9b6f1a-…) that cannot chain to mcp-mtls-ca, so Kong→engine/orchestrator (and, for
+# the same reason, Kong→mcp-server) is rejected at the TLS handshake. On a real deploy
+# scripts/deck-sync.sh splices real material from OpenBao; but on staging deck-sync is
+# skipped (the -dev OpenBao is empty — real edge provisioning is deferred to M.2/bd
+# puu3). This Certificate mints the missing edge client cert off the SAME mcp-mtls-ca
+# chain (one CA underwrites everything — the load-bearing §P5 constraint), and the
+# staging Kong patch (overlays/staging/kong-edge-mtls.patch.yaml) mounts it + splices
+# it over the POC placeholder at pod start (infra/kong/splice-edge-certs.sh).
+#
+# Prereqs (same maintenance window): mcp-mtls.yaml (the mcp-mtls-ca Issuer) and
+# internal-mtls.yaml applied first. The Kong→mcp-server client cert is NOT minted here
+# — it reuses the mcp-kong-client-tls Secret already issued by mcp-mtls.yaml (CN
+# babelstone-mcp-client), and the mcp-mtls-ca bundle Kong verifies mcp-server against
+# is that Secret's own ca.crt. So this file adds exactly the one cert that did not yet
+# exist: Kong's engine/orchestrator client cert.
+#
+#   CA Issuer (mcp-mtls-ca, from mcp-mtls.yaml) ─► kong-engine-client CLIENT cert
+#
+# ── Kong's CLIENT cert for the engine + orchestrator upstreams ──────────────────────
+# Presented by Kong when it dials https://engine:8080 / https://orchestrator:8080
+# (kong.yml entity 7e9b6f1a-…, shared across those upstreams). CN is a caller identity,
+# not a Service name (this cert never serves); the engine/orchestrator validate it by
+# CA-pin only (Babelstone.Engine.Api.InternalMtls — chain to mcp-mtls-ca, no CN/SAN
+# allowlist), so any mcp-mtls-ca-issued client-auth cert is accepted. Carries the
+# `client auth` EKU only, so it can never be mistaken for a server cert on the same CA.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kong-engine-client
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-kong-engine-client-tls
+  commonName: kong-edge-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h      # 90 days
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
