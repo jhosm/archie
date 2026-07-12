@@ -59,7 +59,7 @@ for the full rationale.
 3. Logto **generates** the **App ID** (= the OAuth `client_id`) and it is immutable — you do NOT get
    to choose it. Copy the generated value into `OIDC_CLIENT_ID` in
    `overlays/staging/mission-control.yaml` and redeploy; the two MUST match. (The current staging
-   value is `9lxmle8419mf1v4zpyqsl`; Logto regenerates this id on every re-seed, so treat it as
+   value is `237fljdnwu8hx5t634uv7`; Logto regenerates this id on every re-seed, so treat it as
    illustrative, not fixed — it is the *requirement* to pin the minted id that is bd babelstone-zla1.10.12.)
    The CD `configure-logto` job **enforces**
    this match: it runs `scripts/iam/register-ops-console.py` with `OPS_EXPECT_CLIENT_ID` set to the
@@ -121,10 +121,10 @@ holds a `dev-placeholder-…` value.
    ```bash
    curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
      -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' https://app.babelstone.dev/
-   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=9lxmle8419mf1v4zpyqsl...
+   # → 302 https://auth.babelstone.dev/oidc/auth?...client_id=237fljdnwu8hx5t634uv7...
    ```
 
-   A `302` to `auth.babelstone.dev` with `client_id=9lxmle8419mf1v4zpyqsl` confirms the app is
+   A `302` to `auth.babelstone.dev` with `client_id=237fljdnwu8hx5t634uv7` confirms the app is
    registered and the discovery + redirect wiring agree. Completing the login in a browser lands you
    back at `https://app.babelstone.dev/callback` and then the UI.
 
