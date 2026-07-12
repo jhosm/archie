@@ -286,13 +286,23 @@ foreach (var module in sagaModules)
         // to see existing DepositMatured facts on the retained topic rather than silently skipping the
         // backlog (the default is already Earliest; pinned here for intent).
         StartFromEarliest = true,
+        // Off by default; Kafka:Debug (e.g. "cgrp,broker,consumer") makes the loop's log handler surface
+        // the librdkafka group-coordination sequence — for diagnosing a consumer that connects but never
+        // joins its group (bd babelstone-u79p.17).
+        KafkaDebug = builder.Configuration["Kafka:Debug"],
     };
 
     // Capture the per-module loop in the factory closure (NOT a DI singleton) so each hosted service
-    // gets its OWN loop+group; the shared advance handler is resolved from DI.
+    // gets its OWN loop+group; the shared advance handler is resolved from DI. Both the hosted service and
+    // the loop get their loggers wired (bd babelstone-u79p.17): a null logger on either turned a dead
+    // consumer into a silent stall — the loop's error/log handlers + the service's backoff log now surface it.
     builder.Services.AddHostedService(sp =>
         new SagaInboxConsumerService(
-            new SagaConsumeLoop(moduleOptions, sp.GetRequiredService<SagaAdvanceHandler>())));
+            new SagaConsumeLoop(
+                moduleOptions,
+                sp.GetRequiredService<SagaAdvanceHandler>(),
+                logger: sp.GetRequiredService<ILogger<SagaConsumeLoop>>()),
+            sp.GetRequiredService<ILogger<SagaInboxConsumerService>>()));
 }
 
 // The saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029). The consume loop above advances the

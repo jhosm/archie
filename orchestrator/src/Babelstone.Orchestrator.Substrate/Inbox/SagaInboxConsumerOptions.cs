@@ -51,4 +51,13 @@ public sealed record SagaInboxConsumerOptions
     /// poll just loops.
     /// </summary>
     public TimeSpan ConsumeTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Optional librdkafka debug contexts (e.g. <c>"cgrp,broker,consumer"</c>) surfaced through the
+    /// loop's log handler. Off by default (<c>null</c>); set via <c>Kafka:Debug</c> to diagnose a
+    /// consumer that connects but never joins its group (bd babelstone-u79p.17) — it turns the otherwise
+    /// invisible librdkafka group-coordination sequence into logged lines. Verbose; leave unset in
+    /// normal operation.
+    /// </summary>
+    public string? KafkaDebug { get; init; }
 }
