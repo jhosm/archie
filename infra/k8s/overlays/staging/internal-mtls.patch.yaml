@@ -1,7 +1,8 @@
-# GATED OPT-IN — internal mTLS on the engine + orchestrator hops (bd
+# ENABLED — internal mTLS on the engine + orchestrator hops (bd
 # babelstone-zla1.12.8 sub-gap (c); ADR-IC-006 §P5 Boundary 2 / ADR-IC-016
-# plane (i)). NOT enabled by default: the patch reference in kustomization.yaml
-# ships COMMENTED OUT — uncomment it to roll the mTLS extension out to staging.
+# plane (i)). Applied via the (now uncommented) patch reference in
+# kustomization.yaml. It takes effect only WITH the out-of-band bootstrap certs
+# and the deck-sync tls_verify flip — the ROLLOUT ORDER below + staging-ops.md §9.
 #
 # Plain English: this flips the two Kestrel hosts from plain HTTP to HTTPS with
 # a REQUIRED client certificate, using the server certs that

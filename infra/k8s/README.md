@@ -381,16 +381,16 @@ invariants are preserved:
   drops its 8001 Service port (`kong-admin-localhost.patch.yaml` — the base table
   above still lists 8001 for the dev rendering); operator `deck sync` reaches it via
   `kubectl port-forward` (which targets the pod loopback). The internal-mTLS
-  extension to the engine/orchestrator hops is authored but still **gated off**
-  (`internal-mtls.patch.yaml` + `bootstrap/internal-mtls.yaml` — rollout order in
-  the patch header). The server-side internal-CA trust that used to block it has
-  **landed** (bd babelstone-zla1.12.25): each host's `InternalMtls` pins
-  `/certs/ca.crt` in a Kestrel `ClientCertificateValidation` callback, so
-  `RequireCertificate` accepts valid internal-CA client certs rather than
-  rejecting every hop. Enabling is now a pure operator step — uncomment the patch,
-  apply the bootstrap certs, and re-run `deck sync` in one maintenance window
-  (the callers already dial https + present a client cert, so they 502 until the
-  servers serve TLS).
+  extension to the engine/orchestrator hops is **enabled** (`internal-mtls.patch.yaml`
+  is uncommented in the staging overlay; server certs come from
+  `bootstrap/internal-mtls.yaml`). The server-side internal-CA trust landed in bd
+  babelstone-zla1.12.25: each host's `InternalMtls` pins `/certs/ca.crt` in a
+  Kestrel `ClientCertificateValidation` callback, so `RequireCertificate` accepts
+  valid internal-CA client certs rather than rejecting every hop. It takes effect
+  only alongside the out-of-band bootstrap certs and the `deck sync` `tls_verify`
+  flip — landed together in one maintenance window (the callers already dial https
+  + present a client cert, so they 502 until the servers serve TLS). Rollout +
+  rollback order: the patch header and `infra/runbooks/staging-ops.md` §9.
 
 **TLS issuance is a cluster CRD, kept out of the kustomize build.** cert-manager's
 `ClusterIssuer` (and `Certificate`) are CRDs, and the CI gate runs

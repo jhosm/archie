@@ -43,7 +43,7 @@ the whole posture on one screen; the sections below add detail.
 | # | Boundary | The control | Where it lives | Status |
 |---|---|---|---|---|
 | **B1** | External clients → gateway (incl. the owned-channel Mission Control UI) | OAuth token validation, PSD2 SCA for money ops, rate-limiting, payload validation; the Mission Control demo UI is gated by a Logto OIDC login | [`kong/kong.yml`](../kong/kong.yml); `scripts/edge-contract-test.sh`; `infra/k8s/overlays/staging/mission-control.yaml` | **Live** — edge policies enforced; Mission Control OIDC gate deploy-wired to Logto (staging); full SCA depends on the issuer |
-| **B2** | Gateway → internal services | Mutual TLS on every hop; plain HTTP is a config error | `kong/kong.yml` + `mcp-certgen`; [ADR-IC-016 plane (i)](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Partial** — Kong↔MCP mTLS is live; the engine/orchestrator server-side mTLS trust is code-complete (bd babelstone-zla1.12.25, `InternalMtls`) and a gated staging flip away (`internal-mtls.patch.yaml`); the ACL hop still waits on the real ACL |
+| **B2** | Gateway → internal services | Mutual TLS on every hop; plain HTTP is a config error | `kong/kong.yml` + `mcp-certgen`; [ADR-IC-016 plane (i)](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Partial** — Kong↔MCP and the engine/orchestrator hops now enforce mutual TLS (`internal-mtls.patch.yaml` enabled + `deck-sync` `tls_verify:true`, bd babelstone-zla1.12.25); the ACL hop still waits on the real ACL |
 | **B3** | Producer → Redpanda | Distinct SASL/SCRAM identity per producer; topic ACLs as config | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml); `KafkaSaslOptions` | **Partial** — producer-side wiring live; broker-side ACL enforcement planned |
 | **B4** | Redpanda → each consumer | Each consumer subscribes only to the topics it needs; data minimization | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml) | **Planned** — lands per consumer as each consumer service is built |
 | **B5** | ACL → Core Banking | Dedicated service account; orchestrator-only command port; read-only reconciliation credential | [ADR-IC-012](../../docs/product-management/integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md), [ADR-IC-016](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Blocked** — the real ACL is not built; the stub stands in |
@@ -63,10 +63,11 @@ because they fail differently:
 - **Plane (i) — service-to-service is mutual TLS.** Every internal hop presents an
   X.509 certificate naming its identity, checked before the connection is accepted.
   Certificates come from the OpenBao secret boundary, never from a saga message.
-  *Today:* live for Kong↔MCP; the engine/orchestrator server-side mTLS is
-  code-complete (bd babelstone-zla1.12.25 — each host pins the internal CA in a
-  Kestrel `ClientCertificateValidation` callback) and a gated staging flip away;
-  the ACL hop remains blocked on the real ACL having real listening code.
+  *Today:* live for Kong↔MCP and the engine/orchestrator hops (bd
+  babelstone-zla1.12.25 — each host pins the internal CA in a Kestrel
+  `ClientCertificateValidation` callback; `internal-mtls.patch.yaml` enabled +
+  `deck-sync` `tls_verify:true`); the ACL hop remains blocked on the real ACL
+  having real listening code.
 - **Plane (ii) — the event bus is SASL/SCRAM + topic ACLs.** The bus is
   **Redpanda** (Kafka-API-compatible), so these are the Kafka wire protocol's own
   SASL/SCRAM and topic-ACL primitives. Every client that connects to Redpanda logs
