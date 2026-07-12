@@ -74,3 +74,10 @@ __pycache__/
 
 # Playwright MCP browser-automation artefacts (console + page snapshots) — local only
 /.playwright-mcp/
+
+# infra/runbooks/ holds Markdown runbooks ONLY. Ignore any non-.md file there so a shell command
+# accidentally saved as a file (e.g. a pasted `kubectl … create secret …`) can never leak cleartext
+# secrets into git. Re-include subdirectories so nested runbook assets still track.
+/infra/runbooks/*
+!/infra/runbooks/*.md
+!/infra/runbooks/*/

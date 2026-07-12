@@ -122,10 +122,16 @@ spec:
                 secretKeyRef:
                   name: babelstone-dev-secrets
                   key: MC_READONLY_DB_PASSWORD
+            # libpq KEYWORD form, NOT a postgresql:// URL — deliberately. serve.py's _dsn_host parses
+            # the DSN authority to enforce MC_PG_ALLOW_HOSTS; in URL form a URL-reserved char in the
+            # interpolated password breaks that parse — a '/' (which `openssl rand -base64` emits ~40%
+            # of the time) truncates the authority, so the host mis-reads as the role
+            # 'babelstone_readonly' and the /pg lens 403s ("non-local DSN refused"). Keyword form has
+            # no authority to truncate, so ANY password char is safe. Do NOT rewrite these as URLs.
             - name: MC_ENGINE_DSN
-              value: postgresql://babelstone_readonly:$(MC_READONLY_DB_PASSWORD)@postgres:5432/babelstone
+              value: "host=postgres port=5432 dbname=babelstone user=babelstone_readonly password=$(MC_READONLY_DB_PASSWORD)"
             - name: MC_ORCH_DSN
-              value: postgresql://babelstone_readonly:$(MC_READONLY_DB_PASSWORD)@postgres:5432/babelstone_orchestrator
+              value: "host=postgres port=5432 dbname=babelstone_orchestrator user=babelstone_readonly password=$(MC_READONLY_DB_PASSWORD)"
             # The agent host is DEFERRED (zla1.5.6); until it exists /agent/* returns 502 and
             # Operator=CLAUDE degrades to illustrative narration — every other mode still works.
             - name: AGENT_URL
