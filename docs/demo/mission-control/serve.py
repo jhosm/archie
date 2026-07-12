@@ -97,6 +97,12 @@ Options (env vars):
     MC_AUTH_MODE      'dev' (ungated) or 'oidc' (login gate)   (default dev)
     MC_ALLOW_UNAUTHENTICATED  accept a PUBLIC + dev (ungated)  (default off — a public,
                       bind explicitly (fail-safe override)     ungated bind is REFUSED)
+    MC_SCA_BYPASS     inject the demo step-up SCA attestation   (default off — dev mode
+                      on the gated money-movers in oidc mode     already injects; this only
+                      too, so the UI can sidestep the engine's   EXTENDS it to oidc, and is a
+                      SCA gate. TEMPORARY demo/staging scaffold  DELIBERATE, greppable hole)
+                      until the real interactive step-up flow
+                      is built (ADR-IC-010 2026-07-12 amend.)
     OIDC_ISSUER       OIDC issuer base URL (discovery is at     (oidc mode; required)
                       {issuer}/.well-known/openid-configuration)
     OIDC_CLIENT_ID    OAuth client id registered at the IdP    (oidc mode; required)
@@ -185,14 +191,24 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 # would); this mirrors that on the engine /v1/* arm for the five SCA-gated money-mover routes only —
 # EXACTLY what the CLI demo's scripts/demo-lib.sh stepup_sca_headers() already does for curl.
 #
-# CRITICAL SECURITY GUARD (ADR-IC-010 §P8): this attestation is injected ONLY in dev/demo mode (the
-# AUTH-is-None branch, the same condition that gates the static DEMO_CLIENT_ID fallback). In oidc
-# mode — the staging/real deployment where serve.py fronts auth.babelstone.dev — NOTHING is injected:
-# forging a gateway SCA attestation against a real deployment would be a security hole. The mint
-# script itself is explicitly LOCAL-dev-only (it signs over the THROWAWAY infra/kong/kong.yml key,
-# so a token it mints is invalid the moment that key is replaced at deploy time). The engine's
-# fail-closed ScaPrecondition guard is UNCHANGED — the fix supplies the demo gateway's attestation,
-# it does not remove the check.
+# CRITICAL SECURITY GUARD (ADR-IC-010 §P8): by DEFAULT this attestation is injected ONLY in dev/demo
+# mode (the AUTH-is-None branch, the same condition that gates the static DEMO_CLIENT_ID fallback).
+# In oidc mode — the staging/real deployment where serve.py fronts auth.babelstone.dev — NOTHING is
+# injected by default: forging a gateway SCA attestation against a real deployment would be a security
+# hole. The mint script itself is explicitly LOCAL-dev-only (it signs over the THROWAWAY
+# infra/kong/kong.yml key, so a token it mints is invalid the moment that key is replaced at deploy
+# time). The engine's fail-closed ScaPrecondition guard is UNCHANGED — the demo gateway's attestation
+# is supplied, the check is never removed.
+#
+# TEMPORARY BYPASS (MC_SCA_BYPASS, ADR-IC-010 2026-07-12 amendment, bd babelstone-13zf): the real
+# interactive step-up flow (an in-UI SCA challenge that mints a genuine fresh proof) is NOT built yet,
+# so in oidc/staging every UI-driven money-mover 422s SCA_REQUIRED with no way for the operator to
+# clear it. Until that lands, an EXPLICIT, default-off MC_SCA_BYPASS flag extends the SAME demo mint
+# into oidc mode so the money-movers work in staging too. This is a DELIBERATE, self-documenting,
+# greppable hole confined to a demo host — the default stays fail-safe (the flag must be opted into,
+# never reached by accident, the same posture as MC_ALLOW_UNAUTHENTICATED), and the amendment records
+# it as an acknowledged, time-boxed divergence (ADR-PC-020 §D3 explicit-drift gate), to be removed
+# when the interactive step-up flow ships (bd babelstone-aggc). The engine's ScaPrecondition is STILL unchanged.
 
 # The gateway-attested SCA header NAMES the engine's ScaPrecondition reads (kept as module constants
 # so the injected names stay in lock-step with engine/src/Babelstone.Engine.Hosting/ScaPrecondition.cs
@@ -273,8 +289,10 @@ def _mint_sca_headers():
     headers — the engine then 422s exactly as it does today, never a serve.py 500.
 
     Cached for _SCA_CACHE_TTL_SECONDS (well inside the engine's 300 s freshness window) and re-minted
-    when stale, so a burst of money-movers reuses one mint. DEV/DEMO-MODE ONLY — the caller (_route)
-    invokes this solely on the AUTH-is-None branch; it never forges an attestation in oidc mode."""
+    when stale, so a burst of money-movers reuses one mint. DEV/DEMO-MODE by default — the caller
+    (_route) invokes this on the AUTH-is-None branch, OR, when the explicit default-off MC_SCA_BYPASS
+    flag is set, in oidc mode too (the temporary demo/staging scaffold — ADR-IC-010 2026-07-12
+    amendment, bd babelstone-13zf). It never mints unless one of those two conditions holds."""
     global _sca_headers_cache, _sca_headers_minted_at
     # Serialise the check-mint-write so a first-use burst under the threading server mints ONCE and the
     # rest of the burst reuses that entry (the "a burst reuses one mint" promise above). On a mint/decode
@@ -397,6 +415,13 @@ MC_AUTH_MODE = os.environ.get("MC_AUTH_MODE", "dev").strip().lower()
 # INSECURE state (a public bind with no auth) is the thing that must be opted into. A non-loopback
 # bind in dev mode is REFUSED at startup unless this is set (see _preflight below).
 MC_ALLOW_UNAUTHENTICATED = os.environ.get("MC_ALLOW_UNAUTHENTICATED", "").lower() in ("1", "true", "yes")
+
+# The demo step-up SCA bypass (MC_SCA_BYPASS, ADR-IC-010 2026-07-12 amendment, bd babelstone-13zf).
+# Same opt-in posture as MC_ALLOW_UNAUTHENTICATED above: the SAFE default is off, and the CONVENIENCE
+# (extend the demo SCA mint into oidc mode so staging money-movers don't 422 while the real
+# interactive step-up flow is unbuilt) must be opted into. Dev mode injects regardless of this flag;
+# it only ever WIDENS injection to oidc mode. See the CRITICAL SECURITY GUARD note above _mint_sca_headers.
+SCA_BYPASS = os.environ.get("MC_SCA_BYPASS", "").lower() in ("1", "true", "yes")
 
 # OIDC gate configuration (oidc mode only). No IdP-specific endpoint path is hardcoded — the
 # authorization/token/jwks/end-session endpoints are DISCOVERED from OIDC_ISSUER at startup
@@ -1525,13 +1550,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # ScaPrecondition (ADR-IC-010 §P8) fail-closes with 422 SCA_REQUIRED unless a GATEWAY
             # attested a fresh step-up SCA proof. serve.py is the demo's gateway stand-in, so it
             # supplies that attestation (X-SCA-Acr / X-SCA-Auth-Time) the SAME WAY the CLI demo's
-            # stepup_sca_headers() does — but ONLY in dev/demo mode (AUTH is None), NEVER in oidc mode
-            # (forging a gateway SCA attestation against a real deployment would be a security hole;
-            # the mint script signs over the throwaway kong.yml key and is LOCAL-dev-only). On a mint
-            # failure _mint_sca_headers() returns None and we relay WITHOUT the headers — the engine
+            # stepup_sca_headers() does — by default ONLY in dev/demo mode (AUTH is None), NEVER in
+            # oidc mode, because forging a gateway SCA attestation against a real deployment would be a
+            # security hole (the mint script signs over the throwaway kong.yml key and is LOCAL-dev-only).
+            # The explicit default-off MC_SCA_BYPASS flag (SCA_BYPASS) WIDENS the mint into oidc mode as
+            # a temporary demo/staging scaffold until the interactive step-up flow is built (ADR-IC-010
+            # 2026-07-12 amendment, bd babelstone-13zf) — a deliberate, greppable, opted-into hole. On a
+            # mint failure _mint_sca_headers() returns None and we relay WITHOUT the headers — the engine
             # then 422s exactly as it does today (graceful degradation, never a serve.py 500).
             path_only = self.path.split("?", 1)[0]
-            if AUTH is None and _SCA_GATED_PATH_RE.match(path_only):
+            if (AUTH is None or SCA_BYPASS) and _SCA_GATED_PATH_RE.match(path_only):
                 sca = _mint_sca_headers()
                 if sca:
                     return ENGINE_URL, dict(sca), self.path

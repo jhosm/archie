@@ -140,6 +140,17 @@ spec:
             # client id); never PII.
             - name: DEMO_CLIENT_ID
               value: CLI-DEMO-0001
+            # TEMPORARY demo SCA bypass (MC_SCA_BYPASS, ADR-IC-010 2026-07-12 amendment, bd
+            # babelstone-13zf). serve.py mints + injects the step-up SCA attestation (X-SCA-Acr /
+            # X-SCA-Auth-Time) on the five gated money-movers ONLY in dev mode by default; staging runs
+            # MC_AUTH_MODE=oidc, where that injection is off — so every UI-driven Mature / coupon /
+            # installment 422s SCA_REQUIRED because the real interactive step-up flow is NOT built yet.
+            # This flag opts staging into the SAME demo mint so those money-movers work here too. It is a
+            # DELIBERATE, greppable, time-boxed hole confined to this demo host (the engine's fail-closed
+            # ScaPrecondition is UNCHANGED) — REMOVE it when the interactive step-up flow ships
+            # (tracked by bd babelstone-aggc).
+            - name: MC_SCA_BYPASS
+              value: "1"
             # ── Boundary-1 owned-channel login gate (ADR-IC-021 rollout step 2, bd zla1.10.8.3) ──
             # oidc mode makes serve.py DISCOVER Logto's endpoints from
             # {OIDC_ISSUER}/.well-known/openid-configuration and run the auth-code + PKCE(S256)
