@@ -247,6 +247,9 @@ public sealed class SettlementIngressEndpointsHandlerTests
             Leg(accountId, 500_000, "RSV-declined-1"), world.Authorize, world.Log, world.Clock);
 
         AssertStatus(result, StatusCodes.Status422UnprocessableEntity);
+        // The 422 carries the SPECIFIC bounded machine code, not a generic refusal: a ca_pt_basic account (no
+        // arranged overdraft) with zero balance declines with INSUFFICIENT_AVAILABLE_BALANCE (ADR-PC-043).
+        AssertDeclineCode(result, AccountDeclinedReason.InsufficientAvailableBalance);
     }
 
     [Fact]
@@ -263,6 +266,9 @@ public sealed class SettlementIngressEndpointsHandlerTests
             Leg(accountId, 500_000, "RSV-closed-1"), world.Authorize, world.Log, world.Clock);
 
         AssertStatus(result, StatusCodes.Status422UnprocessableEntity);
+        // The lifecycle gate's specific code — a Closed account is one of the ACCOUNT_NOT_ACTIVE cases
+        // (ADR-PC-037 §D6), surfaced on the settlement 422 so the dispatcher/UI names it (ADR-PC-043).
+        AssertDeclineCode(result, AccountDeclinedReason.AccountNotActive);
     }
 
     [Fact]
@@ -364,6 +370,18 @@ public sealed class SettlementIngressEndpointsHandlerTests
         var prop = result.GetType().GetProperty("StatusCode");
         var status = prop?.GetValue(result) as int?;
         Assert.Equal(expected, status);
+    }
+
+    // Assert a ProblemHttpResult carries the SPECIFIC bounded machine code on its `code` extension member and
+    // names it in the human detail (ADR-PC-043 error model) — the surfacing the settlement dispatcher/UI reads
+    // to show WHY the source held the funds instead of a generic "precondition refused".
+    private static void AssertDeclineCode(IResult result, string expectedCode)
+    {
+        var problem = Assert.IsAssignableFrom<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>(result)
+            .ProblemDetails;
+        Assert.True(problem.Extensions.TryGetValue("code", out var code), "problem+json is missing the `code` extension");
+        Assert.Equal(expectedCode, code);
+        Assert.Contains(expectedCode, problem.Detail);
     }
 
     /// <summary>

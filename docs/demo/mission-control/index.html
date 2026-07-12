@@ -644,6 +644,7 @@ body.console-open .hint-bar { display:none; }
     processId: null, streamUrl: null, sagaES: null,
     sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false, sagaReached: 0,
     sagaStalled: false, sagaStallTimer: null,   // watchdog: a non-terminal saga that stops advancing (bd zla1.17)
+    sagaFailCode: null,   // the SPECIFIC settlement machine code from the FAILED leg on a fail-closed run (bd u79p.20)
     // Whether THIS saga run funds against the customer's engine current account (a GUID source_account_ref,
     // NOT the fail-closed 'insufficient' legacy-DDA ref). Only then does the reserve→capture money leg land
     // real holds on OUR account — so only then does bd u79p.9 drive the conta-a-ordem meter IN LOCKSTEP with
@@ -823,7 +824,7 @@ body.console-open .hint-bar { display:none; }
       case "COMPLETED": return "deposit constituted · saga complete";
       case "CANCELLED": return "validation failed · reversible hold released";
       case "CANCELLED_AFTER_DEBIT": return "activation failed after debit · debit reversed";
-      case "DEPOSIT_CONSTITUTION_FAILED": return "precondition refused · nothing committed";
+      case "DEPOSIT_CONSTITUTION_FAILED": return "settlement leg refused · nothing committed";
       case "HUMAN_INTERVENTION_REQUIRED": return "compensation could not complete · escalated";
       default: return s.toLowerCase().replace(/_/g, " ");
     }
@@ -905,6 +906,11 @@ body.console-open .hint-bar { display:none; }
       } else {
         // fail-closed: nothing was committed — surface the refusal as a failed (red) span
         pushSpan("saga.constitution_failed", 8, [["babelstone.process_id", pid], ["babelstone.outcome", "fail_closed"]], false, true);
+        // Name the SPECIFIC settlement machine code the engine returned on the refused leg (bd u79p.20). The
+        // SSE state stream carries only the business state name (ADR-IC-018 §D3), so the precise code lives on
+        // the FAILED saga_outbox leg's structural failure_reason (migration 0004) — read it through the /pg
+        // window and re-render the terminal note. Best-effort: absent the /pg window the note stays generic.
+        loadSagaFailCode();
       }
       if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
       // Config-provenance strip (bd babelstone-f0ic.15.8): the saga landed a REAL deposit — read
@@ -934,6 +940,30 @@ body.console-open .hint-bar { display:none; }
       else { refreshAccount(); }
     }
   }
+  // Read the SPECIFIC settlement machine code off the FAILED saga_outbox leg (bd u79p.20) and re-render the
+  // terminal note. The dispatcher captured the engine's RFC7807 refusal body into the structural failure_reason
+  // column (migration 0004 — bounded, NOT PII); its `code` extension is the bounded ADR-PC-043/§D6 token. We
+  // pull the leg through the /pg process window (structural columns only) and parse the code out — falling back
+  // to the HTTP status when the body isn't JSON, so a legacy-ACL refusal (plain status, no code) still reads.
+  async function loadSagaFailCode() {
+    if (!state.processId) return;
+    try {
+      var res = await fetch(API_BASE + "/pg/processes/" + encodeURIComponent(state.processId) + "/transitions");
+      if (!res.ok) return;                              // /pg window unavailable — the note stays generic
+      var d = await res.json();
+      var failed = ((d.legs) || []).filter(function (l) { return l.status === "FAILED"; });
+      if (!failed.length) return;
+      var leg = failed[failed.length - 1];              // the terminal refusal leg
+      var code = "";
+      var reason = leg.failure_reason;
+      if (reason) {
+        try { var pj = JSON.parse(reason); code = (pj && pj.code) || pj.detail || pj.title || ""; }
+        catch (e) { code = reason; }                    // not problem+json (legacy-ACL) — the raw label
+      }
+      if (!code && leg.failure_status_code) code = "HTTP " + leg.failure_status_code;
+      if (code) { state.sagaFailCode = code; renderSagaProcess(); }
+    } catch (e) { /* /pg read failed — the terminal note keeps the generic blurb */ }
+  }
   function renderSagaProcess() {
     var s = state.sagaState || "STARTED";
     var failure = sagaIsFailure(s), complete = s === "COMPLETED";
@@ -959,7 +989,8 @@ body.console-open .hint-bar { display:none; }
     var note = complete
       ? '<div class="pb-sub" style="color:var(--verify)">✓ DepositConstituted — the saga drove edge → settlement → engine end-to-end.</div>'
       : failure
-        ? '<div class="pb-sub" style="color:var(--wrong)">Fail-closed · ' + sagaStateBlurb(s) + ' — nothing was committed.</div>'
+        ? '<div class="pb-sub" style="color:var(--wrong)">Fail-closed · ' + sagaStateBlurb(s) +
+          (state.sagaFailCode ? ' · <b>' + esc(state.sagaFailCode) + '</b>' : '') + ' — nothing was committed.</div>'
         : stalled
           ? '<div class="pb-sub" style="color:var(--wrong)">⚠ Stalled — no saga advance for ' + Math.round(SAGA_STALL_MS / 1000) + 's. The orchestrator has not progressed past <b>' + s + '</b>; the engine\'s constitute leg may be failing (check the engine and the Outbox·Inbox lens). Nothing is confirmed — this is NOT a completed deposit.</div>'
           : s === "APPROVED"
@@ -1501,6 +1532,20 @@ body.console-open .hint-bar { display:none; }
     if (!res.ok) { var err = new Error((json.detail || json.title || res.statusText)); err.status = res.status; err.body = json; throw err; }
     return { json: json, status: res.status, traceId: traceId };
   }
+  // Surface the SPECIFIC settlement machine code the engine returns on a refused leg (bd u79p.20). The
+  // engine-CA settlement ingress emits an RFC7807 problem+json 422 carrying a `code` extension — the bounded
+  // ADR-PC-043/ADR-PC-037 §D6 token (LIMIT_EXCEEDED, INSUFFICIENT_AVAILABLE_BALANCE, OVERDRAFT_LIMIT_EXCEEDED,
+  // ACCOUNT_NOT_ACTIVE, …) — so the UI can name WHY the source held the funds instead of a generic
+  // "precondition refused". Returns the machine code when present, else the safe human detail, else "". All
+  // three are STRUCTURAL only — never PII (ADR-PC-004). Works for the engine-CA path (the `code` extension) AND
+  // the legacy Core-ACL refusal (which carries only the detail/title, so the fallback names that).
+  function declineCode(errOrBody) {
+    var b = (errOrBody && errOrBody.body) ? errOrBody.body : errOrBody;
+    if (b && typeof b === "object" && typeof b.code === "string" && b.code) return b.code;
+    if (b && typeof b === "object" && (b.detail || b.title)) return b.detail || b.title;
+    if (errOrBody && errOrBody.message) return errOrBody.message;
+    return "";
+  }
   async function pingConn() {
     if (state.mode === "live") {
       try { await api("GET", "/v1/deposits/maturities?from=2000-01-01&to=2000-01-02"); setConn("ok", "live·engine · reachable"); }
@@ -1551,8 +1596,10 @@ body.console-open .hint-bar { display:none; }
       return accountId;
     } catch (e) {
       // A LIVE stack without the current_account family wired (or unreachable) — degrade gracefully: the
-      // panel keeps its before-open state and the product actions fall back to the opaque legacy-DDA refs.
-      toast("Conta a ordem unavailable (" + (e.status || "?") + ") — falling back to legacy-DDA funding", "err");
+      // panel keeps its before-open state and the product actions fall back to the opaque legacy-DDA refs. On
+      // a 422 the engine names the SPECIFIC settlement code (bd u79p.20) rather than a generic refusal.
+      var why = e.status === 422 ? declineCode(e) : (e.status || "?");
+      toast("Conta a ordem unavailable (" + why + ") — falling back to legacy-DDA funding", "err");
       return null;
     } finally {
       state.accountOpening = false;
@@ -1798,6 +1845,7 @@ body.console-open .hint-bar { display:none; }
         state.streamUrl = sr.json.stream_url;
         state.lifecycle = "Processing"; state.sagaState = "STARTED"; state.sagaVersion = 0;
         state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
+        state.sagaFailCode = null;
         mcpLog('', '202 · ' + state.processId);
         addEvent({ seq: "▶", name: "ConstitutionRequested", meta: "saga STARTED · " + state.processId, amt: euro(principalCents), amtClass: "gold" });
         pushSpan("saga.constitution_requested", 6, [["babelstone.process_id", state.processId.slice(0, 8) + "…"], ["babelstone.amount_cents", principalCents]]);
@@ -1999,6 +2047,7 @@ body.console-open .hint-bar { display:none; }
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
     state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
+    state.sagaFailCode = null;
     state.sagaEngineCa = false;   // bd u79p.9: a fresh product Reset drops the engine-CA-funded choreography flag
     state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
     state.productConfigVersion = null;
