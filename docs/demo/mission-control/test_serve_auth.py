@@ -44,7 +44,10 @@ _TOUCHED = (
     "AUTH", "MC_AUTH_MODE", "MC_BIND", "MC_ALLOW_UNAUTHENTICATED",
     "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES",
     "OIDC_REDIRECT_URL", "MC_PUBLIC_BASE_URL", "MC_SESSION_SIGNING_KEY", "MC_SESSION_TTL",
-    "ORCHESTRATOR_URL",
+    "ORCHESTRATOR_URL", "ENGINE_URL",
+    # the demo step-up SCA seam + its cache (bd babelstone-e4mq) — reset so mint-injection tests
+    # neither trigger a real subprocess mint nor leak a cached attestation across tests.
+    "_mint_stepup_token", "_sca_headers_cache", "_sca_headers_minted_at",
 )
 
 
@@ -56,6 +59,10 @@ def _restore_serve_globals():
     serve.MC_AUTH_MODE = "dev"
     serve.MC_BIND = "127.0.0.1"
     serve.MC_ALLOW_UNAUTHENTICATED = False
+    # The step-up SCA attestation cache starts empty each test (bd babelstone-e4mq), so a test that
+    # asserts injection observes a fresh mint (the seam below), not a stale cached value.
+    serve._sca_headers_cache = None
+    serve._sca_headers_minted_at = 0.0
     yield
     for name, val in saved.items():
         setattr(serve, name, val)
@@ -760,3 +767,216 @@ def test_oidc_multi_audience_requires_azp():
     # multi-audience, azp == our client_id → accepted
     st, cookies = _callback_status(key, aud=[cid, "other-client"], azp=cid)
     assert st == 302 and _has_session(cookies)
+
+
+# ── demo step-up SCA attestation on the engine money-mover routes (bd babelstone-e4mq) ─────────
+# The engine's ScaPrecondition (ADR-IC-010 §P8) fail-closes an irreversible money-mover with 422
+# SCA_REQUIRED unless a GATEWAY attested a fresh step-up SCA proof (X-SCA-Acr / X-SCA-Auth-Time).
+# serve.py is the demo's gateway stand-in, so it must supply that attestation on the five gated
+# money-mover /v1/* routes — but ONLY in dev/demo mode, NEVER in oidc mode (forging a gateway SCA
+# attestation against a real deployment would be a security hole; the mint script is LOCAL-dev-only).
+# A tiny fake engine echoes back the X-SCA-* headers it received so we assert exactly what serve.py
+# injected. _mint_stepup_token is monkeypatched (the seam) so these tests need no live mint.
+class _EngineHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _echo(self):
+        body = json.dumps({
+            "x_sca_acr": self.headers.get("X-SCA-Acr"),
+            "x_sca_auth_time": self.headers.get("X-SCA-Auth-Time"),
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def do_GET(self):
+        self._echo()
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        self.rfile.read(length)
+        self._echo()
+
+
+@contextmanager
+def fake_engine():
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _EngineHandler)
+    base = "http://127.0.0.1:%d" % httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield base
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# A FRESH minted step-up token, carrying the acr / auth_time claims the engine's ScaPrecondition reads
+# (mirroring infra/stub-as/mint-stepup-token.sh's defaults). auth_time == now keeps it inside the
+# engine's 300 s freshness window. This is the value the _mint_stepup_token seam returns in these tests.
+def _fresh_stepup_token(acr="urn:bank:sca:psd2", auth_time=None):
+    auth_time = int(time.time()) if auth_time is None else auth_time
+    return make_jwt(iss="http://as.local", sub="CLI-DEMO-0001", aud="http://localhost:8000/mcp",
+                    scope="deposits:write", acr=acr, auth_time=auth_time)
+
+
+# The five SCA-gated money-mover routes serve.py must attest on (and only these).
+_GATED_ROUTES = (
+    "/v1/deposits/11111111-1111-1111-1111-111111111111/maturity",
+    "/v1/deposits/11111111-1111-1111-1111-111111111111/interest",
+    "/v1/deposits/11111111-1111-1111-1111-111111111111/terminate",
+    "/v1/loans/22222222-2222-2222-2222-222222222222/installment",
+    "/v1/loans/22222222-2222-2222-2222-222222222222/early-repayment",
+)
+
+# UNGATED /v1/* paths that must NEVER receive a forged attestation: the settlement-ingress writes and
+# the current-account authorize route (all ungated at the engine), plus every read.
+_UNGATED_POST_PATHS = (
+    "/v1/reservations",
+    "/v1/debits",
+    "/v1/credits",
+    "/v1/accounts/33333333-3333-3333-3333-333333333333/authorize",
+    "/v1/deposits",  # the constitute write is NOT a money-mover
+)
+
+
+def test_dev_mode_injects_sca_on_each_gated_money_mover(monkeypatch):
+    # dev mode (AUTH is None): each of the five gated money-mover POSTs reaches the engine WITH a fresh
+    # X-SCA-Acr / X-SCA-Auth-Time attestation minted via the seam — so the engine would not 422.
+    monkeypatch.setattr(serve, "_mint_stepup_token", _fresh_stepup_token)
+    for route in _GATED_ROUTES:
+        serve._sca_headers_cache = None  # force a fresh mint per route (independent of TTL cache)
+        with fake_engine() as engine:
+            serve.ENGINE_URL = engine  # AUTH stays None from the autouse fixture (dev mode)
+            with run_mc() as port:
+                status, _hdrs, body = http_req(port, route, method="POST",
+                                               headers={"Content-Length": "0"})
+        assert status == 200, route
+        echoed = json.loads(body)
+        assert echoed["x_sca_acr"] == "urn:bank:sca:psd2", route
+        assert echoed["x_sca_auth_time"] is not None and echoed["x_sca_auth_time"].isdigit(), route
+
+
+def test_dev_mode_does_not_inject_sca_on_ungated_v1_paths(monkeypatch):
+    # dev mode, but an UNGATED /v1/* path (settlement-ingress reserve/debit/credit, the CA authorize
+    # route, the constitute write): serve.py must NOT forge an attestation there — the engine keeps
+    # those routes ungated on purpose, so injecting would be spurious.
+    monkeypatch.setattr(serve, "_mint_stepup_token", _fresh_stepup_token)
+    for path in _UNGATED_POST_PATHS:
+        with fake_engine() as engine:
+            serve.ENGINE_URL = engine
+            with run_mc() as port:
+                status, _hdrs, body = http_req(port, path, method="POST",
+                                               headers={"Content-Length": "0"})
+        assert status == 200, path
+        echoed = json.loads(body)
+        assert echoed["x_sca_acr"] is None, path
+        assert echoed["x_sca_auth_time"] is None, path
+
+
+def test_dev_mode_does_not_inject_sca_on_a_gated_path_read(monkeypatch):
+    # A GET on a deposit (an ungated read) must NOT carry the attestation, even though its path prefix
+    # matches a family — the regex is POST-money-mover-precise (anchored on the trailing leaf).
+    monkeypatch.setattr(serve, "_mint_stepup_token", _fresh_stepup_token)
+    with fake_engine() as engine:
+        serve.ENGINE_URL = engine
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, "/v1/deposits/11111111-1111-1111-1111-111111111111", method="GET")
+    assert status == 200
+    echoed = json.loads(body)
+    assert echoed["x_sca_acr"] is None
+    assert echoed["x_sca_auth_time"] is None
+
+
+def test_oidc_mode_never_injects_sca_on_a_gated_money_mover(monkeypatch):
+    # THE SECURITY GUARD: in oidc mode (AUTH is not None — the real/staging deployment where serve.py
+    # fronts auth.babelstone.dev) serve.py must NEVER forge a gateway SCA attestation. A valid session
+    # gets past the login gate, but the relayed money-mover carries NO X-SCA-* headers — the mint seam
+    # is not even consulted. (Forging one against a real deployment would be a security hole,
+    # ADR-IC-010 §P8; the mint script signs over the throwaway kong.yml key and is LOCAL-dev-only.)
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key)
+    mint_calls = []
+    monkeypatch.setattr(serve, "_mint_stepup_token",
+                        lambda: (mint_calls.append(1), _fresh_stepup_token())[1])
+    with fake_idp() as idp, fake_engine() as engine:
+        serve.AUTH = _gate_for(idp, signing_key=key)  # oidc mode
+        serve.ENGINE_URL = engine
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, _GATED_ROUTES[0], method="POST",
+                headers={"Cookie": serve._SESSION_COOKIE + "=" + good, "Content-Length": "0"})
+    assert status == 200
+    echoed = json.loads(body)
+    assert echoed["x_sca_acr"] is None       # NO forged attestation in oidc mode
+    assert echoed["x_sca_auth_time"] is None
+    assert mint_calls == []                   # the mint seam was never even invoked in oidc mode
+
+
+def test_dev_mode_mint_failure_degrades_without_headers(monkeypatch):
+    # GRACEFUL DEGRADATION: if the mint fails (script missing / non-zero exit → the seam returns None),
+    # serve.py relays the money-mover WITHOUT the attestation rather than 500ing — the engine then 422s
+    # exactly as it does today. Here the fake engine simply echoes back that no X-SCA-* arrived.
+    monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)  # mint unavailable
+    with fake_engine() as engine:
+        serve.ENGINE_URL = engine
+        with run_mc() as port:
+            status, _hdrs, body = http_req(port, _GATED_ROUTES[0], method="POST",
+                                           headers={"Content-Length": "0"})
+    assert status == 200  # relayed cleanly, NOT a serve.py 500
+    echoed = json.loads(body)
+    assert echoed["x_sca_acr"] is None
+    assert echoed["x_sca_auth_time"] is None
+
+
+# ── pure helpers: path matching, claim decode, cache reuse ────────────────────────────────────
+def test_sca_gated_path_regex_matches_exactly_the_five_routes():
+    for route in _GATED_ROUTES:
+        assert serve._SCA_GATED_PATH_RE.match(route), route
+    # ungated /v1/* writes + reads must NOT match
+    for path in _UNGATED_POST_PATHS:
+        assert serve._SCA_GATED_PATH_RE.match(path) is None, path
+    for path in (
+        "/v1/deposits/11111111-1111-1111-1111-111111111111",            # a read
+        "/v1/deposits/11111111-1111-1111-1111-111111111111/partial-withdrawal",  # ungated write
+        "/v1/deposits/11111111-1111-1111-1111-111111111111/maturity/x",  # trailing extra segment
+        "/v1/loans/22222222-2222-2222-2222-222222222222/write-off",     # ungated write
+        "/api/v1/deposits/x/maturity",                                   # the orchestrator arm, not /v1/
+    ):
+        assert serve._SCA_GATED_PATH_RE.match(path) is None, path
+
+
+def test_decode_stepup_claims_reads_acr_and_auth_time():
+    tok = _fresh_stepup_token(acr="urn:bank:sca:psd2", auth_time=1783857530)
+    acr, auth_time = serve._decode_stepup_claims(tok)
+    assert acr == "urn:bank:sca:psd2"
+    assert auth_time == "1783857530"
+    # a malformed token yields None rather than raising
+    assert serve._decode_stepup_claims("not-a-jwt") is None
+    assert serve._decode_stepup_claims(make_jwt(sub="x")) is None  # no acr/auth_time claims
+
+
+def test_mint_sca_headers_caches_within_ttl(monkeypatch):
+    # A burst of money-movers must reuse ONE mint while the proof stays fresh (well inside the engine's
+    # 300 s window): the seam is invoked once, then the cached headers are returned.
+    calls = []
+    monkeypatch.setattr(serve, "_mint_stepup_token",
+                        lambda: (calls.append(1), _fresh_stepup_token())[1])
+    serve._sca_headers_cache = None
+    serve._sca_headers_minted_at = 0.0
+    first = serve._mint_sca_headers()
+    second = serve._mint_sca_headers()
+    assert first == second
+    assert first[serve.SCA_ACR_HEADER] == "urn:bank:sca:psd2"
+    assert len(calls) == 1  # the second call hit the cache, not a re-mint
+
+
+def test_mint_sca_headers_returns_none_on_mint_failure(monkeypatch):
+    monkeypatch.setattr(serve, "_mint_stepup_token", lambda: None)
+    serve._sca_headers_cache = None
+    assert serve._mint_sca_headers() is None
