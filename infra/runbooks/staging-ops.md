@@ -85,7 +85,7 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
 
    ```bash
    kubectl -n babelstone-staging create secret generic babelstone-dev-secrets \
-     --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
+     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
      --from-literal=OPENBAO_DEV_TOKEN="<real OpenBao token — never 'root'>" \
      --from-literal=SECRET_VAULT_KEK="$(openssl rand -base64 32)" \
      --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>" \
@@ -93,8 +93,17 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
      --from-literal=MC_SESSION_SIGNING_KEY="$(openssl rand -base64 32)" \
      --from-literal=LOGTO_BACKSTAGE_CLIENT_SECRET="<the Logto backstage app client secret>" \
      --from-literal=BACKSTAGE_AUTH_SESSION_SECRET="$(openssl rand -base64 32)" \
-     --from-literal=MC_READONLY_DB_PASSWORD="$(openssl rand -base64 24)"
+     --from-literal=MC_READONLY_DB_PASSWORD="$(openssl rand -hex 24)"
    ```
+
+   > **Why `openssl rand -hex` (not `-base64`) for the two DB passwords.** `POSTGRES_PASSWORD` and
+   > `MC_READONLY_DB_PASSWORD` are embedded in Postgres connection strings. base64's alphabet includes
+   > `/`, and in a `postgres://user:PW@host` **URL** DSN a `/` truncates the authority and corrupts the
+   > parsed host — Logto's `DB_URL` is URL form, so a `/` there breaks IdP boot; Mission Control's `/pg`
+   > lens hit the same fault ("non-local DSN refused ('babelstone_readonly')"). Hex is URL-safe (same
+   > 24 bytes / 192 bits of entropy). Mission Control now uses libpq *keyword* form and tolerates any
+   > char, but keep the mint URL-safe as defence-in-depth for every consumer. The base64 mints below
+   > (`SECRET_VAULT_KEK`, the HMAC session keys) are fine — they never ride a DSN authority.
 
    > **No `OIDC_PRIVATE_KEYS` is provisioned.** Logto **generates and owns** its own OIDC signing key
    > (`oidc.privateKeys`, created by `db seed`, persisted in Logto's DB, annually rotated in place) —
@@ -105,9 +114,9 @@ layer, because DR is deliberately **out of scope on staging** (the production-sh
    `MC_READONLY_DB_PASSWORD` (bd zla1.17.3) is the password for the dedicated read-only Postgres
    role `babelstone_readonly` that Mission Control's Outbox·Inbox `/pg` lens connects as: the
    `mission-control-db-readonly` Job SETS the role's password from this key and the Mission Control
-   Deployment reads it for the `/pg` DSNs — mint it with `openssl rand` as shown. To add it to an
-   already-provisioned Secret without disturbing the other keys:
-   `kubectl -n babelstone-staging patch secret babelstone-dev-secrets --type merge -p "{\"stringData\":{\"MC_READONLY_DB_PASSWORD\":\"$(openssl rand -base64 24)\"}}"`,
+   Deployment reads it for the `/pg` DSNs — mint it with `openssl rand -hex` (URL-safe, see the note
+   above) as shown. To add it to an already-provisioned Secret without disturbing the other keys:
+   `kubectl -n babelstone-staging patch secret babelstone-dev-secrets --type merge -p "{\"stringData\":{\"MC_READONLY_DB_PASSWORD\":\"$(openssl rand -hex 24)\"}}"`,
    then re-run the Job (`kubectl -n babelstone-staging delete job mission-control-db-readonly` +
    re-apply) and `kubectl -n babelstone-staging rollout restart deploy/mission-control`.
 
