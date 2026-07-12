@@ -53,6 +53,20 @@ Postgres-only one: LIVE·engine just calls `/v1` directly and doesn't care that 
 publishing, so a single engine serves every mode. The four launchers share one bring-up library
 (`scripts/demo-lib.sh`); the per-slice scripts below stay for the minimal, fast, single-purpose runs.
 
+**Port clash with `make up` — handled automatically (bd `babelstone-3xtq`).** The normal dev stack
+(`make up` / `make reset`) binds **Kong on `:8000`** and the **Redpanda Console on `:8080`** — the exact
+ports the demo's **MCP server (`:8000`)** and **engine (`:8080`)** need. So `make demo` straight after
+`make reset` used to fail its port preflight until you manually `docker stop babelstone-kong
+babelstone-console`. `serve.py` is the demo's gateway stand-in, so Kong isn't needed on the demo path and
+the demo has no Console — so the demo preflight now **stops just those two named containers** when they
+are what's holding `:8000` / `:8080`, and only then (a `free_makeup_demo_clashes` helper in
+`demo-lib.sh`, wired into `demo-all.sh` / `demo-mcp.sh` / `demo-saga.sh`). It is **surgical**: it only
+ever stops a container named exactly `babelstone-kong` or `babelstone-console` that positively publishes
+the clashing host port — any *other* listener is left for the normal port-busy check to flag, so an
+unrelated process on `:8000` still fails loud. It does **not** touch `make up` itself or the compose file;
+`make up` for normal non-demo use is unchanged. (If you overrode `MCP_PORT` / `ENGINE_PORT` off the
+classic `:8000` / `:8080`, there's no clash to clear and the helper no-ops.)
+
 **The engine-direct vs saga distinction matters.** LIVE·engine calls the engine's `/v1` command
 surface directly — a real, governed boundary (ADR-PC-029 lists the edge, MCP, and saga as
 co-callers of it), and it's faithful to the **MCP-operator** framing this demo uses. But it

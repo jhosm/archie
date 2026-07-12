@@ -160,6 +160,50 @@ wait_up() { # url timeout_seconds name [logfile]
 
 port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
+# Free a demo host port that `make up` (the normal, non-demo dev stack) is holding with Kong or the
+# Redpanda Console — the ONLY two `make up` containers whose PUBLISHED host ports (:8000 Kong proxy,
+# :8080 Console) collide with the demo's MCP server (:8000) and engine (:8080). serve.py is the demo's
+# gateway stand-in, so Kong isn't needed on the demo path; and the demo has no Console. So when one of
+# THOSE named containers is what's on the clashing port, stop it and let the demo bind — instead of the
+# operator having to `docker stop babelstone-kong babelstone-console` by hand after every `make reset`.
+#
+# Surgical by construction: it stops a container ONLY when (a) that exact name is `babelstone-kong` or
+# `babelstone-console`, (b) that container is running, AND (c) it actually publishes the clashing host
+# port. Any OTHER listener on the port (a sibling demo, an unrelated process) is left untouched — the
+# caller's normal port-busy check then still fails loud. Never touches the compose file or `make up`.
+#
+# Args: the host port + the container name we expect on it. Returns 0 if it freed the port (or it was
+# already free of that container), 1 if a DIFFERENT (non-Kong/Console) listener still holds it.
+free_makeup_port() { # host_port container_name
+  local port="$1" name="$2"
+  port_busy "$port" || return 0                      # nothing on the port — nothing to free
+  # Only ever stop the two named make-up containers, and only if THIS one publishes THIS host port.
+  case "$name" in babelstone-kong|babelstone-console) : ;; *) return 1 ;; esac
+  # `:PORT->` in the container's published-ports column positively identifies it as the port's publisher.
+  if docker ps --filter "name=^/${name}$" --format '{{.Ports}}' 2>/dev/null | grep -q ":${port}->"; then
+    info "port ${port} is held by ${name} (from 'make up') — stopping it (serve.py is the demo's gateway; Kong/Console aren't needed on the demo path)"
+    docker stop "$name" >/dev/null 2>&1 || true
+    # Give the kernel a moment to release the LISTEN socket before the caller re-checks.
+    local i=0; while [ "$i" -lt 10 ] && port_busy "$port"; do sleep 1; i=$((i + 1)); done
+    port_busy "$port" && return 1                     # something ELSE is still on it — let the caller fail loud
+    ok "freed port ${port} (stopped ${name})"
+    return 0
+  fi
+  return 1                                            # a different listener holds the port — not ours to stop
+}
+
+# Free BOTH demo-clash ports from `make up` (Kong :8000 → MCP, Console :8080 → engine), best-effort.
+# Called from a demo preflight BEFORE the port-busy checks so a `make demo` straight after `make reset`
+# doesn't trip on Kong/Console. It never fails the run itself — a still-busy port surfaces at the
+# caller's own port_busy guard with its existing (now-accurate) error. Ports are overridable, so this
+# only acts on the demo's actual MCP/engine host ports when they are the classic :8000/:8080 pair.
+free_makeup_demo_clashes() { # mcp_port engine_port
+  local mcp_port="$1" engine_port="$2"
+  [ "$mcp_port" = "8000" ] && free_makeup_port 8000 babelstone-kong || true
+  [ "$engine_port" = "8080" ] && free_makeup_port 8080 babelstone-console || true
+  return 0
+}
+
 # Resolve the built DLL for a project (deterministic path → clean kill semantics).
 dll_for() { ls "$1"/bin/Debug/net*/"$2".dll 2>/dev/null | head -1; }
 
