@@ -639,6 +639,11 @@ body.console-open .hint-bar { display:none; }
     processId: null, streamUrl: null, sagaES: null,
     sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false, sagaReached: 0,
     sagaStalled: false, sagaStallTimer: null,   // watchdog: a non-terminal saga that stops advancing (bd zla1.17)
+    // Whether THIS saga run funds against the customer's engine current account (a GUID source_account_ref,
+    // NOT the fail-closed 'insufficient' legacy-DDA ref). Only then does the reserve→capture money leg land
+    // real holds on OUR account — so only then does bd u79p.9 drive the conta-a-ordem meter IN LOCKSTEP with
+    // the milestone pane (a hold at RESERVING, a capture at the debit) instead of the u79p.8 per-advance poll.
+    sagaEngineCa: false,
     // LIVE·engine real traces (bd babelstone-f0ic.9): the engine's X-Trace-Id + the spans fetched
     // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
     traceId: null, realTrace: null, traceState: "illustrative",
@@ -851,12 +856,23 @@ body.console-open .hint-bar { display:none; }
     // surface the settlement legs as the saga crosses the matching phase (each once). The matching
     // illustrative spans land on the Telemetry tab here too — the orchestrator isn't OTel-wired
     // (ADR-IC-007 §P1), so these mirror the saga's real legs without claiming to be a Tempo trace.
-    if (d.state === "PARALLEL_VALIDATION" && !state.sagaSeenLeg) {
+    // The reversible legs (reserve + limits) are dispatched during the validating phase. Trigger on the
+    // FIRST validating state actually observed — not the exact PARALLEL_VALIDATION literal — so a coalesced
+    // or reconnecting SSE that first lands on a later validating substate still narrates the reserve leg AND
+    // (bd u79p.9) places the account hold, guaranteeing the earmark precedes the capture at APPROVED.
+    if (SAGA_VALIDATING.indexOf(d.state) >= 0 && !state.sagaSeenLeg) {
       state.sagaSeenLeg = true;
       addEvent({ seq: "→", name: "ReserveAccountBalance", meta: "dispatched to Core ACL · POST /v1/reservations · reversible hold", amtClass: "verify", verify: true });
       mcpLog('', 'ReserveAccountBalance → Core ACL');
       pushSpan("saga.reserve_balance", 14, [["babelstone.process_id", pid], ["babelstone.leg", "reversible"]], true);
       pushSpan("saga.validate_limits", 9, [["babelstone.process_id", pid], ["babelstone.leg", "reversible"]]);
+      // bd u79p.9: the account's side of that reversible leg — a hold lands on the conta à ordem. Light it
+      // AT this milestone (in lockstep with the pane), reconciled by the terminal GET below. Only for a
+      // real engine-CA run — the legacy-DDA / fail-closed 'insufficient' paths place no hold on OUR account.
+      if (state.sagaEngineCa) {
+        addEvent({ seq: "◇", name: "HoldPlaced", meta: "reversible earmark on the conta à ordem · available drops, booked holds", amt: euro(state.principalCents), amtClass: "verify", verify: true });
+        applyAccountMovement("hold_placed", state.principalCents);
+      }
     }
     if (d.state === "APPROVED" && !state.sagaSeenDebit) {
       state.sagaSeenDebit = true;
@@ -865,6 +881,13 @@ body.console-open .hint-bar { display:none; }
       mcpLog('', 'ConfirmDebit → Core ACL · ActivateDeposit → engine');
       pushSpan("saga.confirm_debit", 16, [["babelstone.process_id", pid], ["babelstone.leg", "irreversible"]]);
       pushSpan("saga.activate_deposit", 11, [["babelstone.process_id", pid]]);
+      // bd u79p.9: the account's side of the irreversible leg — the hold is CAPTURED into the debit. The
+      // held earmark clears and booked drops to match available (which already dropped at RESERVING). Gated
+      // on sagaSeenLeg so a capture never fires without its placement (else booked would fall below available).
+      if (state.sagaEngineCa && state.sagaSeenLeg) {
+        addEvent({ seq: "◆", name: "HoldCaptured", meta: "hold captured → irreversible debit on the conta à ordem · booked drops, earmark clears", amt: euro(state.principalCents), amtClass: "gold" });
+        applyAccountMovement("hold_captured", state.principalCents);
+      }
     }
     renderSagaProcess();
     if (d.terminal) {
@@ -893,11 +916,15 @@ body.console-open .hint-bar { display:none; }
     // re-arm the stall watchdog on each advance (armSagaWatchdog clears the timer once terminal)
     armSagaWatchdog();
     setButtons();
-    // Conta a ordem (bd u79p.8): re-POLL GET /v1/accounts/{id} on each saga advance so the panel's
-    // held segment grows as the reserve leg places a hold and clears as the debit leg captures it. This
-    // is a plain read-after-advance (u79p.8) — NOT the in-lockstep-with-this-pane choreography or the
-    // HoldPlaced/HoldCaptured ledger-feed rows, which are the separate bd u79p.9.
-    if (state.accountId) { refreshAccount(); }
+    // Conta a ordem: keep the meter current. For the engine-CA-funded saga the meter is now driven IN
+    // LOCKSTEP at the milestones above (bd u79p.9) — a mid-flight poll would only race that and flicker — so
+    // we defer to ONE authoritative (retrying) GET at the terminal to reconcile the optimism to the engine's
+    // real end state. Any other run (legacy-DDA / the fail-closed 'insufficient' path) keeps the u79p.8
+    // per-advance read so its held segment still tracks.
+    if (state.accountId) {
+      if (state.sagaEngineCa) { if (state.sagaTerminal) reconcileAccountAtTerminal(); }
+      else { refreshAccount(); }
+    }
   }
   function renderSagaProcess() {
     var s = state.sagaState || "STARTED";
@@ -1239,6 +1266,8 @@ body.console-open .hint-bar { display:none; }
         mcpLog('', 'commit #' + state.seq + ' · ' + state.depositId.slice(0, 8));
         addEvent({ seq: state.seq, name: "LoanDisbursed", meta: prod + " · " + (lp.taeg / 100).toFixed(2) + "% TAN · " + lp.n + " installments · engine-ca settlement leg", amt: euro(amt), amtClass: "gold" });
         pushSpan("loan.disbursed", 9, [["babelstone.partition_key", shortId()], ["babelstone.amount_cents", amt]]);
+        // bd u79p.9: the disbursement credits the customer's conta à ordem — a money-in landing, no hold leg.
+        if (state.accountId) addEvent({ seq: "◆", name: "AccountCredited", meta: "loan disbursement credited to the conta à ordem · no hold leg", amt: euro(amt), amtClass: "gold" });
         // Fold the engine's authoritative read model into the passbook (schedule + tallies).
         var g = await api("GET", "/v1/loans/" + state.depositId);
         applyLoanReadModel(g.json);
@@ -1285,6 +1314,8 @@ body.console-open .hint-bar { display:none; }
         var dPrin = state.prinRepaid - prevPaid, dInt = state.intPaid - prevInt;
         addEvent({ seq: state.seq, name: "InstallmentPaid", meta: "installment " + state.couponsPaid + "/" + state.numCoupons + " · principal " + euro(dPrin) + " · interest " + euro(dInt) + " · engine-ca leg", amt: euro(dPrin + dInt), amtClass: "verify", verify: true });
         pushSpan("loan.installment_allocated", 6, [["babelstone.partition_key", shortId()], ["babelstone.principal_cents", dPrin], ["babelstone.interest_cents", dInt]], true);
+        // bd u79p.9: the installment is collected FROM the conta à ordem — a direct debit, no hold leg.
+        if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "installment collected from the conta à ordem", amt: euro(dPrin + dInt), amtClass: "gold" });
         renderLoanPosition();
         await refreshAccount();   // bd u79p.8: re-poll the CA so the installment debit lands on the panel
         countUp("vGross", state.intPaid); countUp("vNet", state.prinRepaid); countUp("vTotal", state.outstanding);
@@ -1327,6 +1358,8 @@ body.console-open .hint-bar { display:none; }
         applyLoanReadModel(p);
         addEvent({ seq: state.seq, name: "LoanSettled", meta: "all " + state.numCoupons + " installments cleared · total interest " + euro(state.intPaid) + " · engine-ca settled", amt: euro(state.principalCents + state.intPaid), amtClass: "verify", verify: true });
         pushSpan("loan.settled", 8, [["babelstone.partition_key", shortId()], ["babelstone.total_interest_cents", state.intPaid]], true);
+        // bd u79p.9: the run-to-term legs collect every remaining installment FROM the conta à ordem.
+        if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "remaining installments collected from the conta à ordem", amt: euro(state.principalCents + state.intPaid), amtClass: "gold" });
         renderLoanPosition();
         await refreshAccount();   // bd u79p.8: re-poll the CA after the run-to-term collection legs
         countUp("vTotal", state.principalCents + state.intPaid);
@@ -1373,6 +1406,8 @@ body.console-open .hint-bar { display:none; }
         applyLoanReadModel(p, true);   // full repayment ⇒ engine SETTLED, UI "repaid early" badge
         addEvent({ seq: state.seq, name: "LoanRepaidEarly", meta: "payoff " + euro(payoff) + " + commission · engine-ca settled", amt: euro(payoff), amtClass: "gold" });
         pushSpan("loan.repaid_early", 7, [["babelstone.partition_key", shortId()], ["babelstone.payoff_cents", payoff]]);
+        // bd u79p.9: the early payoff is debited FROM the conta à ordem.
+        if (state.accountId) addEvent({ seq: "◆", name: "AccountDebited", meta: "early payoff debited from the conta à ordem", amt: euro(payoff), amtClass: "gold" });
         renderLoanPosition();
         await refreshAccount();   // bd u79p.8: re-poll the CA so the repayment debit lands on the panel
         countUp("vTotal", state.principalCents + state.intPaid);
@@ -1513,7 +1548,8 @@ body.console-open .hint-bar { display:none; }
   // segment GROWS on a hold and CLEARS on capture (this poll-after-action is bd u79p.8; the in-lockstep
   // saga-pane choreography + the money-move ledger rows are the separate bd u79p.9). No-op without an id.
   async function refreshAccount() {
-    if (!state.accountId) return;
+    if (!state.accountId) return false;
+    var read = false;
     try {
       var g = await api("GET", "/v1/accounts/" + state.accountId);
       var p = g.json;
@@ -1524,8 +1560,52 @@ body.console-open .hint-bar { display:none; }
           return { holdId: h.hold_id, amountCents: h.amount_cents, kind: h.kind, legalReference: h.legal_reference };
         })
       };
+      read = true;
     } catch (e) {
       // Leave the last-known snapshot in place on a transient read failure — no destructive clear.
+    }
+    renderAccount();
+    return read;   // bd u79p.9: signal read success so the terminal reconciler can retry a raced/failed GET
+  }
+
+  // bd u79p.9: the engine-CA saga suppresses mid-flight polls, so the terminal GET is the SOLE reconciler of
+  // the optimistic meter. A single failed read would strand a phantom hold on the panel (worst on a FAILURE
+  // terminal, where the optimism must be UNDONE) — so retry a few times with backoff before falling back to
+  // the last-known snapshot (still recoverable via Reset). This also absorbs a terminal GET that races the
+  // engine's async settlement leg: a retry re-reads and lands the real end state.
+  async function reconcileAccountAtTerminal() {
+    for (var i = 0; i < 4; i++) {
+      if (await refreshAccount()) return;
+      await sleep(400);
+    }
+  }
+
+  // bd u79p.9: fold a settlement movement into the LOCAL account snapshot so the meter moves AT the saga
+  // milestone — not a poll later. This is the in-lockstep half of the story: the reserve/capture legs are
+  // async round-trips (orchestrator → Core-ACL stub → engine), so a GET fired at the milestone races the
+  // hold's real placement. Instead we apply the KNOWN settlement amount optimistically here and reconcile
+  // with one authoritative GET at the saga terminal (onSagaState). Only the reversible-hold and capture
+  // moves are folded; engine-direct credits/debits keep the u79p.8 poll as their sole meter driver.
+  function applyAccountMovement(kind, amountCents) {
+    var snap = state.accountSnapshot;
+    if (!snap) return;                                 // no baseline read yet — nothing to fold into
+    snap.holds = snap.holds || [];
+    if (kind === "hold_placed") {
+      // Reversible earmark: available drops by the held slice, booked (accounting) is untouched.
+      snap.availableCents = (snap.availableCents != null ? snap.availableCents : 0) - amountCents;
+      snap.holds.push({
+        holdId: "settlement-" + (((state.processId || "") + "        ").slice(0, 8)),
+        amountCents: amountCents, kind: "Authorization", legalReference: null
+      });
+    } else if (kind === "hold_captured") {
+      // Capture CONSUMES the reversible earmark: booked catches up to available and the hold clears. Only fold
+      // the debit if the matching earmark is actually present — capturing a hold that was never placed (e.g. an
+      // SSE that first observed a post-placement state) would push booked below available, a nonsensical split.
+      var before = snap.holds.length;
+      snap.holds = snap.holds.filter(function (h) { return (h.holdId || "").indexOf("settlement-") !== 0; });
+      if (snap.holds.length < before) {
+        snap.accountingCents = (snap.accountingCents != null ? snap.accountingCents : 0) - amountCents;
+      }
     }
     renderAccount();
   }
@@ -1657,6 +1737,10 @@ body.console-open .hint-bar { display:none; }
         // so the Core-ACL stub still 422s the reserve → the saga fails CLOSED (the legacy-DDA refusal demo).
         var accountId = el("sagaInsuf").checked ? null : await ensureAccount();
         var srcRef = el("sagaInsuf").checked ? "ACCT-insufficient-001" : (accountId || "ACCT-REF-DEMO-001");
+        // bd u79p.9: this run funds the engine CA only when the source is a real GUID account — not the
+        // fail-closed 'insufficient' ref, and only if the account actually opened. That is the gate for the
+        // in-lockstep hold→capture meter + HoldPlaced/HoldCaptured ledger choreography (onSagaState).
+        state.sagaEngineCa = !el("sagaInsuf").checked && !!accountId;
         var sr = await api("POST", "/api/v1/deposits/constitute", {
           product_code: prod, amount: principalCents,
           source_account_ref: srcRef, interest_account_ref: "ACCT-REF-DEMO-002"
@@ -1778,6 +1862,8 @@ body.console-open .hint-bar { display:none; }
           addEvent({ seq: p.last_sequence - 1, name: "InterestPaid", meta: "final coupon · 28% withheld", amt: euro(p.net_interest_cents - state.netPaid), amtClass: "verify", verify: true });
         }
         addEvent({ seq: p.last_sequence, name: "DepositMatured", meta: state.variant === "ADVANCE" ? "principal only · interest paid at t=0" : "matured " + p.maturity_date, amt: euro(p.total_payout_cents), amtClass: "verify", verify: true });
+        // bd u79p.9: the maturity payout credits the customer's conta à ordem — a money-in landing, no hold.
+        if (state.accountId) addEvent({ seq: "◆", name: "AccountCredited", meta: "maturity payout credited to the conta à ordem · no hold leg", amt: euro(p.total_payout_cents), amtClass: "gold" });
         state.accrued = p.accrued_gross_interest_cents; state.withheld = p.withholding_to_date_cents; state.netPaid = p.net_interest_cents; state.seq = p.last_sequence;
         if (dGross > 0) {
           pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", dGross]]);
@@ -1864,6 +1950,7 @@ body.console-open .hint-bar { display:none; }
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
     state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
+    state.sagaEngineCa = false;   // bd u79p.9: a fresh product Reset drops the engine-CA-funded choreography flag
     state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
     state.productConfigVersion = null;
     provLive = { id: null, data: null, registry: "unknown", state: "idle", ts: 0 };   // f0ic.15.8
@@ -1876,8 +1963,10 @@ body.console-open .hint-bar { display:none; }
     drawerReset();
     // Conta a ordem (bd u79p.8): the account is PER-SESSION, not per-instance — it persists across a
     // product Reset / mode switch (opened + seeded once, state.accountId/accountSnapshot survive here).
-    // Re-render so the panel reflects the current mode (the DEMO placeholder vs the LIVE meter).
-    renderAccount();
+    // bd u79p.9: a Reset can interrupt a saga BEFORE its terminal reconcile, leaving optimistic hold/debit
+    // deltas on the preserved snapshot — so re-READ the engine's real balances here (not just re-render) so no
+    // phantom earmark lingers into the next run. Falls back to a plain render when there is no account (DEMO).
+    if (state.accountId) { refreshAccount(); } else { renderAccount(); }
     setButtons();
   }
 
