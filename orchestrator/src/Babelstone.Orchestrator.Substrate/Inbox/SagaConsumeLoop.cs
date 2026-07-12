@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Text;
 using Babelstone.Telemetry;
 using Confluent.Kafka;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Babelstone.Orchestrator.Inbox;
@@ -94,7 +95,8 @@ public sealed class SagaConsumeLoop : IDisposable
     public SagaConsumeLoop(
         SagaInboxConsumerOptions options,
         SagaAdvanceHandler handler,
-        IConsumer<byte[], byte[]>? consumer = null)
+        IConsumer<byte[], byte[]>? consumer = null,
+        ILogger<SagaConsumeLoop>? logger = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _handler = handler ?? throw new ArgumentNullException(nameof(handler));
@@ -110,8 +112,36 @@ public sealed class SagaConsumeLoop : IDisposable
                 GroupId = options.GroupId,
                 EnableAutoCommit = false,
                 AutoOffsetReset = options.StartFromEarliest ? AutoOffsetReset.Earliest : AutoOffsetReset.Latest,
+                // Off by default; set via Kafka:Debug to trace the group-coordination sequence when a
+                // consumer connects but never joins (bd babelstone-u79p.17). Surfaced by the log handler.
+                Debug = string.IsNullOrWhiteSpace(options.KafkaDebug) ? null : options.KafkaDebug,
             };
-            _consumer = new ConsumerBuilder<byte[], byte[]>(config).Build();
+            var consumerBuilder = new ConsumerBuilder<byte[], byte[]>(config);
+            // librdkafka reports broker/coordinator/transport failures on its OWN thread via these
+            // callbacks. WITHOUT them (and with the host service's ILogger null) a consumer that connects
+            // to the bootstrap broker but never joins its consumer group is COMPLETELY silent — the
+            // failure mode bd babelstone-u79p.17 was masked by. Route every librdkafka error (and, when
+            // Kafka:Debug is set, its log lines) through the standard ILogger so a dead consumer is
+            // diagnosable from the log alone rather than only from a thread sample of the live process.
+            if (logger is not null)
+            {
+                consumerBuilder.SetErrorHandler((_, e) => logger.Log(
+                    e.IsFatal ? LogLevel.Critical : LogLevel.Error,
+                    "Saga consumer [{GroupId}] librdkafka error {Code}: {Reason} (fatal={Fatal})",
+                    options.GroupId, e.Code, e.Reason, e.IsFatal));
+                consumerBuilder.SetLogHandler((_, m) => logger.Log(
+                    m.Level switch
+                    {
+                        SyslogLevel.Emergency or SyslogLevel.Alert or SyslogLevel.Critical => LogLevel.Critical,
+                        SyslogLevel.Error => LogLevel.Error,
+                        SyslogLevel.Warning => LogLevel.Warning,
+                        SyslogLevel.Notice or SyslogLevel.Info => LogLevel.Information,
+                        _ => LogLevel.Debug,
+                    },
+                    "Saga consumer [{GroupId}] rdkafka {Facility}: {Message}", options.GroupId, m.Facility, m.Message));
+            }
+
+            _consumer = consumerBuilder.Build();
             _ownsConsumer = true;
             // A module MAY declare an EMPTY consume-topic set (ADR-IC-018 §P4): a family module whose
             // saga estate is empty — e.g. one that exists only to declare its FamilyIntegrationTopics
@@ -121,6 +151,11 @@ public sealed class SagaConsumeLoop : IDisposable
             // module-count-invariant; Confluent's Subscribe is not called with an empty set.
             if (options.Topics.Count > 0)
             {
+                // One line at Subscribe so a stuck consumer is diagnosable from the log alone: which group
+                // subscribed to which topics against which bootstrap (bd babelstone-u79p.17).
+                logger?.LogInformation(
+                    "Saga consumer [{GroupId}] subscribing to [{Topics}] (bootstrap {Bootstrap}, offsetReset {Reset})",
+                    options.GroupId, string.Join(", ", options.Topics), options.BootstrapServers, config.AutoOffsetReset);
                 _consumer.Subscribe(options.Topics);
             }
         }
