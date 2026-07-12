@@ -121,6 +121,17 @@ spec:
               value: https://engine:8080
             - name: Settlement__BaseUrl
               value: http://core-acl-stub:8080
+            # The engine-OWNED current-account settlement target (ADR-PC-043). A ce_settlementtarget=engine-ca
+            # leg — which the term-deposit family stamps BY DEFAULT (SettlementTarget.EngineCa) — routes HOME to
+            # the engine's own CA settlement ingress (/v1/reservations|/debits|/credits) instead of the legacy
+            # ACL. It is the SAME host as Engine__BaseUrl, so it rides the SAME internal-mTLS engine hop below.
+            # WITHOUT this, SettlementCommandRouter.ResolveBaseUrl fail-closes every engine-ca leg (returns null,
+            # never silently settling on the legacy core), so the LIVE·saga constitution strands at
+            # AWAIT_BALANCE_RESERVED — the bug this fixes (bd babelstone-q2nd). The local demo already sets it
+            # (scripts/demo-all.sh defaults ENGINE_CA_SETTLEMENT_URL to the engine); this is the parity fix for
+            # the deployed estate, exactly as Program.cs documents the demo/staging bring-up should.
+            - name: Settlement__EngineCaBaseUrl
+              value: https://engine:8080
             # ── Caller-side internal mTLS on the engine hop (bd babelstone-zla1.12.10; ADR-IC-006 §P5
             # Boundary 2 / ADR-IC-016 plane (i)) ──────────────────────────────────────────────────
             # The dispatcher POSTs to https://engine:8080 presenting THIS client cert (signed by the
