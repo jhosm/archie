@@ -145,6 +145,59 @@ public sealed class SagaCommandDispatcherIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_refusal_stores_only_the_bounded_structural_projection_in_failure_reason_never_the_free_form_detail()
+    {
+        // migration 0004 contracts failure_reason as "a ProblemDetails title / transition label …
+        // NEVER the request body or any PII" (ADR-PC-004 §P2). The producer must bound
+        // the captured reason to the STRUCTURAL members (code / title / status) and DROP the free-form
+        // RFC7807 `detail` — so a family that puts free-form text or PII in `detail` can never land it in
+        // this operational audit column.
+        var processId = Guid.NewGuid();
+        await StartSagaAsync(processId, correlationId: null);
+        var (messageId, _) = await SeedCommandAsync(processId, ConstitutionProcess.ActivateDeposit, correlationId: null);
+
+        // A full RFC7807 refusal: a structural machine `code` + `title` + `status`, and a FREE-FORM `detail`
+        // that stands in for the class of content the column must never hold (here a name + an amount).
+        const string freeFormDetail = "authorize declined for Ana Silva — €10.000,00 over the daily cap";
+        var refusalBody =
+            $$"""{"code":"LIMIT_EXCEEDED","title":"Unprocessable Entity","status":422,"detail":"{{freeFormDetail}}"}""";
+        await using var engine = new RecordingHttpServer(_ => (HttpStatusCode.UnprocessableEntity, refusalBody));
+
+        using var host = BuildHost(engineBaseUrl: engine.BaseUrl, settlementBaseUrl: "http://settlement.invalid");
+        await host.StartAsync();
+        try
+        {
+            await WaitUntilAsync(
+                async () => await StatusAsync(messageId) == "FAILED",
+                TimeSpan.FromSeconds(30),
+                "the dispatcher did not mark the refused row FAILED");
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+
+        var reason = await FailureReasonAsync(messageId);
+        Assert.NotNull(reason);
+
+        // The free-form detail is DROPPED — neither the member nor its content survives into the column.
+        Assert.DoesNotContain("detail", reason);
+        Assert.DoesNotContain("Ana Silva", reason);
+        Assert.DoesNotContain("10.000", reason);
+
+        // The bounded projection stays valid problem+json the read side can re-parse, and keeps ONLY the
+        // structural members: the machine `code` (which the ADR-PC-043 retriable-SCA bridge reads off it),
+        // the `title`, and the `status`. No other member rides along.
+        using var projected = JsonDocument.Parse(reason!);
+        Assert.Equal(JsonValueKind.Object, projected.RootElement.ValueKind);
+        Assert.Equal("LIMIT_EXCEEDED", projected.RootElement.GetProperty("code").GetString());
+        Assert.Equal("Unprocessable Entity", projected.RootElement.GetProperty("title").GetString());
+        Assert.Equal(422, projected.RootElement.GetProperty("status").GetInt32());
+        Assert.False(projected.RootElement.TryGetProperty("detail", out _));
+        Assert.Equal(3, projected.RootElement.EnumerateObject().Count());
+    }
+
+    [Fact]
     public async Task A_5xx_leaves_the_row_PENDING_for_an_idempotency_safe_retry()
     {
         var processId = Guid.NewGuid();
@@ -330,6 +383,16 @@ public sealed class SagaCommandDispatcherIntegrationTests : IAsyncLifetime
         command.Parameters.AddWithValue("id", messageId);
         var raw = await command.ExecuteScalarAsync();
         return raw is null or DBNull ? null : (int)raw;
+    }
+
+    private async Task<string?> FailureReasonAsync(Guid messageId)
+    {
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT failure_reason FROM saga_outbox WHERE message_id = @id;", connection);
+        command.Parameters.AddWithValue("id", messageId);
+        var raw = await command.ExecuteScalarAsync();
+        return raw is null or DBNull ? null : (string)raw;
     }
 
     private async Task<NpgsqlConnection> OpenAsync()

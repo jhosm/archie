@@ -456,22 +456,115 @@ public sealed class SagaCommandDispatchDrainer
         return DeliveryOutcome.TransientOutcome;
     }
 
-    /// <summary>Capture a bounded, structural reason from the refusal body (a ProblemDetails title /
-    /// short message) for the audit trail and the compensation decision — never the request body, and
-    /// truncated so a large/hostile body cannot bloat the column. No PII is expected on a refusal
-    /// reason (a transition/validation label), and the bound is a defence-in-depth backstop.</summary>
+    /// <summary>
+    /// Capture a BOUNDED, STRUCTURAL reason from the refusal body for the audit trail and the
+    /// compensation decision — exactly what migration 0004's <c>failure_reason</c> contract promises:
+    /// "a ProblemDetails title / transition label … NEVER the request body or any PII" (ADR-PC-004 §P2).
+    /// The refusal is parsed as RFC7807 problem+json and PROJECTED to its structural members only — the
+    /// machine <c>code</c> extension (e.g. <c>SCA_REQUIRED</c> / <c>LIMIT_EXCEEDED</c>, ADR-PC-043
+    /// error model / ADR-PC-037 §D6 taxonomy), the <c>title</c>, and the <c>status</c>. The FREE-FORM
+    /// <c>detail</c> member (and every unknown member) is DROPPED, so a family that puts free-form text
+    /// or PII in <c>detail</c> can never silently land it in this operational column — the guarantee is
+    /// structural (the producer never writes <c>detail</c>), not a policed convention.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The projection stays a JSON OBJECT (not a bare label) precisely so the settlement bridge's
+    /// <see cref="IResultEventBridge.IsRetriableStayPending"/> can still read the <c>code</c> off it —
+    /// its <c>ReadErrorCode</c> does <c>JsonDocument.Parse(reason).TryGetProperty("code")</c>, so the
+    /// ADR-PC-043 retriable-<c>SCA_REQUIRED</c> carve-out depends on <c>code</c> surviving here. A body
+    /// that is not problem+json, one that carries none of the three structural members, or a read
+    /// failure degrades to the bounded <c>"HTTP {status}"</c> label — the raw body is NEVER stored.
+    /// </para>
+    /// <para>
+    /// This is the PRODUCER half of the two-layer defence: the demo BFF's <c>serve.py</c>
+    /// <c>_derive_failure_code</c> applies the SAME structural projection server-side as read-side
+    /// defence-in-depth (code → title → HTTP status, <c>detail</c> dropped); with the producer now
+    /// bounded, the two layers agree and the column matches its contract at write time.
+    /// </para>
+    /// </remarks>
     private static async Task<string> ReadReasonAsync(HttpResponseMessage response, CancellationToken ct)
     {
+        var status = (int)response.StatusCode;
+        string body;
         try
         {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            return body.Length <= 1024 ? body : body[..1024];
+            body = await response.Content.ReadAsStringAsync(ct);
         }
         catch
         {
-            return $"HTTP {(int)response.StatusCode}";
+            return $"HTTP {status}";
+        }
+
+        return BoundReason(body, status);
+    }
+
+    /// <summary>
+    /// Project a refusal body to migration 0004's bounded, structural <c>failure_reason</c> contract:
+    /// keep only the RFC7807 <c>code</c> / <c>title</c> / <c>status</c> members and DROP the free-form
+    /// <c>detail</c> (and every unknown member). Kept a JSON object so the retriable-4xx bridge can still
+    /// read the <c>code</c>. A non-object / non-JSON body, or one with none of the three members,
+    /// degrades to the bounded <c>"HTTP {status}"</c> label — the raw body is never stored. Each string
+    /// value is length-capped as a defence-in-depth backstop so a pathological title cannot bloat the
+    /// column, and the cap is applied to the VALUE (never the serialized JSON) so the output stays valid
+    /// problem+json the read side can re-parse.
+    /// </summary>
+    private static string BoundReason(string body, int status)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                return $"HTTP {status}";
+            }
+
+            var root = document.RootElement;
+            var projection = new Dictionary<string, object?>(StringComparer.Ordinal);
+
+            if (root.TryGetProperty("code", out var code)
+                && code.ValueKind == System.Text.Json.JsonValueKind.String
+                && Cap(code.GetString()) is { Length: > 0 } codeValue)
+            {
+                projection["code"] = codeValue;
+            }
+
+            if (root.TryGetProperty("title", out var title)
+                && title.ValueKind == System.Text.Json.JsonValueKind.String
+                && Cap(title.GetString()) is { Length: > 0 } titleValue)
+            {
+                projection["title"] = titleValue;
+            }
+
+            if (root.TryGetProperty("status", out var st)
+                && st.ValueKind == System.Text.Json.JsonValueKind.Number
+                && st.TryGetInt32(out var statusValue))
+            {
+                projection["status"] = statusValue;
+            }
+
+            return projection.Count == 0
+                ? $"HTTP {status}"
+                : System.Text.Json.JsonSerializer.Serialize(projection);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Not problem+json (a truncated/hostile body, or a bare string): never store the raw body,
+            // fall back to the bounded status label.
+            return $"HTTP {status}";
         }
     }
+
+    /// <summary>Cap a structural reason member (a machine <c>code</c> or a <c>title</c>) at
+    /// <see cref="ReasonMemberMaxLength"/> chars — a defence-in-depth backstop on the projected value,
+    /// never the serialized JSON, so the emitted reason stays valid problem+json.</summary>
+    private static string? Cap(string? value) =>
+        value is null || value.Length <= ReasonMemberMaxLength ? value : value[..ReasonMemberMaxLength];
+
+    /// <summary>The per-member length cap on the bounded <c>failure_reason</c> projection. A machine
+    /// <c>code</c> is a short token and a <c>title</c> is a stable problem-type summary (ADR-PC-004 §P2);
+    /// 256 chars is a generous backstop, tightened from the old raw-body 1024-char truncation.</summary>
+    private const int ReasonMemberMaxLength = 256;
 
     // ---- SQL --------------------------------------------------------------------------------------
 
