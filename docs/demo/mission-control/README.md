@@ -153,6 +153,76 @@ at `GET /v1/deposits/{process_id}`), and the refusal path reaches terminal
 database, distinct from the engine's `babelstone`, so there's no `inbox`-table collision with
 `demo-mcp.sh`.)
 
+## The engine-CA demo path — a real `conta à ordem` a deposit and a loan move against
+
+**In plain English.** So far the demo opens a deposit and settles its cash leg against a stubbed
+external core. This path shows the newer, fuller story: the customer holds a **real current account
+inside the engine itself** — their `conta à ordem` — and a term deposit *and* a personal loan
+**fund from** and **pay into** that one account. You open the account, seed it with some cash, then
+watch its balance move as each product settles: constituting a deposit takes money *out* of the CA,
+maturing it puts money *back*; originating a loan puts the principal *in*, paying an installment
+takes money *out*. Mission Control shows the account balance live, moving in lockstep with the
+settlement saga. It is the runnable proof of the account-identity design in
+[feature-design-money-movement-settlement.md §2A](../../product-management/product_concepts/feature-design-money-movement-settlement.md#2a-the-account-identity-model--the-customers-persistent-conta-à-ordem-on-the-settlement-leg)
+(the engine-CA settlement decision is [ADR-PC-043](../../product-management/product_concepts/adrs/ADR-PC-043-intra-engine-settlement-counterparty.md);
+the current-account family is [ADR-PC-037](../../product-management/product_concepts/adrs/ADR-PC-037-current-account-family.md)).
+
+**The loop, move by move.** Each product move settles against the *same* engine-owned current
+account (its persistent `Movement.AccountRef`), routed `engine-ca` (`ce_settlementtarget = engine-ca`)
+so it lands on the engine's own CA writer, not the legacy Core-ACL stub:
+
+| Product move | What happens to the `conta à ordem` | On the wire |
+| --- | --- | --- |
+| **Constitute a term deposit** (fund it from the CA) | **Debit** — a reversible **hold**, then an irreversible **capture** | funds-gated `Reserve → Confirm`; `HoldPlaced → HoldCaptured` |
+| **Deposit matures** | **Credit** — the payout lands back on the CA | confirmation-gated `ConfirmCredit`; `AccountCredited` |
+| **Originate a personal loan** (disburse) | **Credit** — the principal is credited to the borrower's CA | confirmation-gated `ConfirmCredit`; `AccountCredited` |
+| **Pay a loan installment** (collect) | **Debit** — a **hold**, then a **capture** | funds-gated `Reserve → Confirm`; `HoldPlaced → HoldCaptured` |
+
+Every leg is a `Debit`/`Credit` *relative to the customer's account*: a loan disbursement is a
+**Credit** because the borrower's account *gains* value. What makes this real (vs. the legacy-DDA
+path) is three pieces the epic `babelstone-u79p` wired: the families now **emit the engine-ca
+target** on their CA-bound legs (before, every leg defaulted to legacy-DDA); the leg carries the
+**real customer `account_ref`** instead of a per-saga `ACCT-{processId}` placeholder; and the
+**engine serves the settlement routes itself** (`/v1/reservations`, `/v1/debits`, `/v1/credits`),
+mapping each to its own current-account authorize / capture / credit.
+
+### The `conta à ordem` visualization — two balances and active holds
+
+Mission Control gets a **persistent conta-a-ordem panel** sourced from `GET /v1/accounts/{id}`. It
+shows a **two-balance meter** and the **active holds**:
+
+- **Available** vs **Booked** — the ADR-PC-033 split: `available balance = booked (accounting)
+  balance − Σ active holds`. When a Debit leg places a **hold**, the *available* meter drops
+  immediately while *booked* stays put; when the hold **captures**, *booked* drops and the hold
+  clears. A Credit lands straight on *booked*. You see the reversible-then-irreversible beat as a
+  gap that opens between the two bars and then closes.
+- **Active holds** — a list of the outstanding reservations (the `HoldPlaced` that have not yet
+  `HoldCaptured`/`HoldExpired`), each shrinking the available balance until it resolves.
+- A **movement strip** (debit/credit history) sourced from the movement-history read surface
+  (`GET /v1/accounts/{id}/movements`, ADR-PC-032) — a real posted-movement list, not one
+  reconstructed from actions.
+
+The panel updates **in lockstep with the LIVE·saga pane**: as the settlement saga walks
+`HoldPlaced → HoldCaptured` (or a credit lands), the account meters and the ledger feed move
+together, so the money story and the saga story are one screen.
+
+### Mode behaviour for the engine-CA loop
+
+The engine-CA path behaves differently across the three modes, the same way the rest of the demo does:
+
+| | DEMO | LIVE·engine | LIVE·saga |
+| --- | --- | --- | --- |
+| The `conta à ordem` panel | illustrative — computed in-browser, deterministic (available/booked/holds move by the demo's own arithmetic, labelled illustrative) | **real** — the account, holds, and movements come straight from `GET /v1/accounts/{id}` on the engine | **real** — the same engine account, moving as the **saga** drives each settlement leg |
+| The settlement leg | none (no backend) | the engine decides-and-appends directly — no saga, so no reversible-hold-then-capture beat; a Credit/Debit lands in one step against the CA | the **full** intended path: the saga fires `Reserve → Confirm` (Debit) or `ConfirmCredit` (Credit), so `HoldPlaced → HoldCaptured` and the credit landing are the *saga's* real effects against the engine CA |
+| What it proves | the balance arithmetic on a stage with no network | the engine's current-account writer is genuinely real | the **whole loop** — a TD/loan cash leg settling `engine-ca` against a customer's `conta à ordem` end to end, holds and captures and all |
+
+The **reversible-hold-then-capture** beat (a Debit's `HoldPlaced` before its `HoldCaptured`) is
+only fully visible in **LIVE·saga**, where the saga owns the two-phase `Reserve → Confirm` — in
+LIVE·engine the engine lands the leg in one step, and in DEMO the beat is illustrated. Legacy-DDA
+settlement is unchanged in every mode: a deposit that does *not* target `engine-ca` still settles
+against the Core-ACL stub exactly as the [LIVE·saga section](#livesaga-mode--drives-the-constitution-saga)
+above describes — the engine-CA loop is a purely additive path, not a replacement.
+
 ## The demo beats (what to click)
 
 1. **Constitute deposit** — a `DepositConstituted` event appears in the ledger; the position
