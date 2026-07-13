@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Babelstone.Engine;
 
 /// <summary>
@@ -30,7 +32,12 @@ namespace Babelstone.Engine;
 /// <c>MovementCarrier</c> writes for the Avro enum symbols, and the SAME strings the substrate's
 /// <c>SettlementSagaModule.OriginatedValue</c> / <c>SettlementProcess</c> direction branch match on. The
 /// amount, the opaque <see cref="Movement.AccountRef"/>, and the <see cref="Movement.CommandId"/> stay in the
-/// payload; only the routing discriminators ride the headers.
+/// payload on the legacy-DDA / no-target path; only the routing discriminators ride the headers there. The
+/// <b>engine-CA</b> overload is the bounded exception (ADR-PC-043 §D5 amendment 2026-07-11): it ALSO promotes
+/// the per-movement destination <see cref="Movement.AccountRef"/> + integer-cents amount as the ordered
+/// <see cref="AccountRefsKey"/> / <see cref="AmountsKey"/> lists — the settlement-command-body fields the
+/// payload-blind substrate forwards untouched (opaque refs + cents, still no PII; the
+/// <see cref="Movement.CommandId"/> stays in the payload).
 /// </para>
 /// <para>
 /// <b>The SCA freshness claims ride the SAME hop (ADR-PC-032).</b> For an Originated
@@ -170,9 +177,16 @@ public static class MovementHeaders
     /// byte-identical to the no-target overload, keeping legacy routing UNCHANGED);
     /// <see cref="SettlementTarget.EngineCa"/> adds <c>settlementtarget = engine-ca</c>.</param>
     /// <returns><c>null</c> for an Observed-only / movement-free event (as the no-target overload); otherwise
-    /// the origin + directions map PLUS a <c>settlementtarget</c> entry when <paramref name="target"/> is
-    /// <see cref="SettlementTarget.EngineCa"/>. The values stay closed-enum tokens — no amount, no account ref,
-    /// no PII (ADR-PC-004).</returns>
+    /// the origin + directions map. For an <see cref="SettlementTarget.EngineCa"/> target it ALSO carries the
+    /// <c>settlementtarget</c> counterparty header PLUS the per-Originated-movement <c>movementaccountrefs</c> /
+    /// <c>movementamounts</c> ORDERED lists (ADR-PC-043 §D5 amendment 2026-07-11, bd <c>babelstone-u79p.13</c>):
+    /// the promoted persistent <see cref="Movement.AccountRef"/> destination + the integer-cents
+    /// <c>Money</c> the CA writer lands, in carrier order, one entry per Originated movement (parallel to
+    /// <c>movementdirections</c>). These are the SETTLEMENT-COMMAND-BODY fields the substrate forwards untouched
+    /// (never routing inputs — routing keys on <c>settlementtarget</c> ALONE, the payload-blind boundary
+    /// ADR-IC-018 §D5). A <see cref="SettlementTarget.LegacyDda"/> target promotes none of these — the legacy
+    /// core resolves the account from the process-scoped business reference, so a legacy leg stays byte-identical
+    /// to the no-target shape. The values are opaque refs + cents — no PII (ADR-PC-004).</returns>
     public static IReadOnlyDictionary<string, string>? ForOriginatedMovements(
         IReadOnlyList<Movement> movements, SettlementTarget target)
     {
@@ -190,12 +204,45 @@ public static class MovementHeaders
             return headers;
         }
 
+        // ADR-PC-043 §D5 (2026-07-11, bd u79p.13): an engine-CA leg promotes the per-movement DESTINATION
+        // (the persistent Movement.AccountRef) and AMOUNT (integer cents) as ORDERED lists parallel to
+        // movementdirections — carrier order, one entry per Originated movement — so the payload-blind
+        // substrate can forward them into the CA-apply command body (SettlementCommandPayloadFactory) without
+        // reading the Avro payload. Fitness: SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED (CA-17) — the engine-CA leg's
+        // AccountRef equals THIS promoted value, never the ACCT-{processId} placeholder. Only Originated
+        // movements have a cash leg, in the SAME order ForOriginatedMovements collected the directions.
+        var accountRefs = new List<string>();
+        var amounts = new List<string>();
+        foreach (var movement in movements)
+        {
+            if (movement.Origin == MovementOrigin.Originated)
+            {
+                accountRefs.Add(movement.AccountRef);
+                amounts.Add(movement.Amount.Cents.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+
         var withTarget = new Dictionary<string, string>(headers, StringComparer.Ordinal)
         {
             [SettlementTargetKey] = EngineCaValue,
+            [AccountRefsKey] = string.Join(DirectionsSeparator, accountRefs),
+            [AmountsKey] = string.Join(DirectionsSeparator, amounts),
         };
         return withTarget;
     }
+
+    /// <summary>The ce_-stripped extension-attribute key carrying the ORDERED, comma-separated list of every
+    /// Originated movement's persistent destination <see cref="Movement.AccountRef"/> — parallel to
+    /// <see cref="DirectionsKey"/>, one entry per movement in carrier order (ADR-PC-043 §D5). Promoted ONLY on
+    /// an engine-CA leg; the substrate forwards the fanned-out per-leg entry into the CA-apply command body as
+    /// the credit/debit destination, never as a routing input (ADR-IC-018 §D5).</summary>
+    public const string AccountRefsKey = "movementaccountrefs";
+
+    /// <summary>The ce_-stripped extension-attribute key carrying the ORDERED, comma-separated list of every
+    /// Originated movement's integer-cents <c>Money</c> amount — parallel to <see cref="DirectionsKey"/>,
+    /// one entry per movement in carrier order (ADR-PC-043 §D5, the in-band guard against WRONG-AMOUNT that
+    /// every identity-keyed dedup misses). Promoted ONLY on an engine-CA leg.</summary>
+    public const string AmountsKey = "movementamounts";
 }
 
 /// <summary>

@@ -69,8 +69,16 @@ public sealed class SagaCommandOutboxSink(
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        // Ignored (ADR-PC-043 §D5): the constitution funding leg resolves its engine-CA destination account_ref
+        // + amount from its OWN persisted saga business reference (the constitute request's source_account_ref),
+        // not from the promoted Movement headers the substrate settlement sink reads. Accepted to satisfy the
+        // shared ISagaCommandSink contract; deliberately unused here.
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
     {
+        _ = settlementAccountRef;
+        _ = settlementAmountCents;
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);

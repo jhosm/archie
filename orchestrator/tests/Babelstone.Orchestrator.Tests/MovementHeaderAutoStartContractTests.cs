@@ -49,6 +49,19 @@ public sealed class MovementHeaderAutoStartContractTests
         consumeTopics: ["personal_loan"]);
 
     [Fact]
+    public void The_engine_ca_destination_and_amount_header_keys_are_the_pinned_wire_literals()
+    {
+        // ADR-PC-043 §D5: the engine promotes the per-movement destination + amount as movementaccountrefs /
+        // movementamounts on an engine-CA leg; the payload-blind substrate reads those SAME keys. The
+        // orchestrator is extraction-ready (ADR-PC-019 §P2) — it CANNOT reference the engine constant, so it
+        // pins its OWN literal here against the wire string. The engine pins the SAME wire string on the producer
+        // side (Babelstone.Engine.Tests.MovementHeadersTests) — the two halves agree on the wire literal, so a
+        // rename on ONE side and not the other fails one of the two pins (the settlementtarget contract pattern).
+        Assert.Equal("movementaccountrefs", SettlementMovementFanout.AccountRefsHeader);
+        Assert.Equal("movementamounts", SettlementMovementFanout.AmountsHeader);
+    }
+
+    [Fact]
     public void The_auto_start_predicate_fires_on_the_producer_emitted_origin_value()
     {
         // The settlement saga is born when movementorigin == Originated (the producer's

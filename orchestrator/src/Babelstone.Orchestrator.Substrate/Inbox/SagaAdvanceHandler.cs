@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Orchestrator.Saga.Settlement;
 using Babelstone.Telemetry;
 using Npgsql;
 
@@ -536,12 +537,21 @@ public sealed class SagaAdvanceHandler
         // header rides the row and the receiver fail-closes a money-mover with an absent proof).
         var (scaAcr, scaAuthTime) = ReadScaClaims(message.ExtensionHeaders);
 
+        // ADR-PC-043 §D5: the engine-CA leg's PROMOTED destination account_ref + amount ride the Movement-bearing
+        // event's headers (the fan-out reduced each to this leg's single entry). Read them off the header
+        // projection ONLY (never the payload, ADR-IC-018 §D5) and thread them to the settlement sink, which
+        // forwards them into the CA-apply credit body (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17). Null for a
+        // legacy-DDA leg and every non-settlement saga (whose family sinks resolve the account from their own
+        // business reference and ignore these).
+        var settlementAccountRef = SettlementMovementFanout.SingleAccountRef(message.ExtensionHeaders);
+        var settlementAmountCents = SettlementMovementFanout.SingleAmountCents(message.ExtensionHeaders);
+
         foreach (var commandType in outcome.Commands)
         {
             await sink.EmitAsync(
                 connection, transaction, saga.ProcessId, commandType,
                 message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent,
-                scaAcr, scaAuthTime);
+                scaAcr, scaAuthTime, settlementAccountRef, settlementAmountCents);
         }
 
         // (7) Optional POST-ADVANCE hook (ADR-IC-018 §P6). A machine MAY run additional in-transaction

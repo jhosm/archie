@@ -170,6 +170,15 @@ public sealed record ConfirmCreditCommand : SettlementCommandPayload
     [JsonPropertyName("amount_cents")]
     public required long AmountCents { get; init; }
 
+    /// <summary>The settlement COUNTERPARTY this credit routes to (ADR-PC-043 slot 1). The dispatcher's
+    /// <c>ProjectSettlementTargetHeader</c> reads THIS body field and flips the router's base URL:
+    /// <c>engine-ca</c> → the engine-owned CA credit ingress; <c>null</c> (the default) → the LEGACY-DDA
+    /// counterparty, so a legacy credit keeps its routing UNCHANGED. Set from the source family's promoted
+    /// <c>ce_settlementtarget</c> header, forwarded untouched (never re-derived). A closed-enum routing token,
+    /// never PII. Mirrors the <c>settlement_target</c> field the constitution funding commands carry.</summary>
+    [JsonPropertyName("settlement_target")]
+    public string? SettlementTarget { get; init; }
+
     /// <inheritdoc />
     public override string CommandType => SettlementProcess.ConfirmCredit;
 }

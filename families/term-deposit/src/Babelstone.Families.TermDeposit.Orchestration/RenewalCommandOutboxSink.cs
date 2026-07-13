@@ -51,8 +51,15 @@ public sealed class RenewalCommandOutboxSink(SagaOutboxWriter? outbox = null) : 
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        // Ignored (ADR-PC-043 §D5): the renewal saga resolves its engine-CA destination from its own persisted
+        // business reference, not the promoted Movement headers the substrate settlement sink reads. Accepted to
+        // satisfy the shared ISagaCommandSink contract; deliberately unused here.
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
     {
+        _ = settlementAccountRef;
+        _ = settlementAmountCents;
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
         // The LOGICAL payload body: the engine's renewal wire body, byte-stable (no minted GUID, no wall

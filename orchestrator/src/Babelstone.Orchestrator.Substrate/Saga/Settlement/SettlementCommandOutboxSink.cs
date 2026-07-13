@@ -39,14 +39,34 @@ public sealed class SettlementCommandOutboxSink(SagaOutboxWriter? outbox = null)
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
+
+        // ADR-PC-043 §D5 (bd u79p.13/.21): the engine-CA CREDIT leg carries the customer's PROMOTED destination
+        // account_ref + amount, forwarded UNTOUCHED into the CA-apply command body — the fix that makes an
+        // engine-CA leg's AccountRef equal the promoted Movement.AccountRef, never the ACCT-{processId}
+        // placeholder (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17), and lands the source Movement.Amount (the
+        // in-band WRONG-AMOUNT guard). Threaded ONLY for the CONFIRM-CREDIT leg: the confirmation-gated credit
+        // fires on the START advance (SettlementStarted → ConfirmingCredit), where the Movement-bearing event's
+        // promoted headers are directly in scope. The debit legs' irreversible ConfirmDebit fires on a LATER
+        // advance off a synthesized result event that does not yet forward these values (that propagation is the
+        // bd u79p.21 debit-path follow-up), so a debit keeps the existing placeholder path — never a
+        // reserve/confirm mismatch. The IntentId is the leg's process id (hex), so the intent-derived credit
+        // reference stays BYTE-IDENTICAL to the placeholder path's Derive(CreditPrefix, processId): the
+        // ADR-PC-043 slot-4 exactly-once key is unchanged, ONLY the destination account_ref + amount move.
+        SettlementIntent? intent =
+            commandType == SettlementProcess.ConfirmCredit && !string.IsNullOrWhiteSpace(settlementAccountRef)
+                ? new SettlementIntent(processId.ToString("N"), settlementAmountCents ?? 0L, settlementAccountRef)
+                : null;
 
         // The LOGICAL payload body: the settlement command, byte-stable (no minted GUID, no wall clock). The
         // factory must cover every command the settlement state machine emits — a miss is a fail-closed
         // wiring error, not a silent empty body.
-        var payload = SettlementCommandPayloadFactory.Build(commandType, processId, causationMessageId, correlationId)
+        var payload = SettlementCommandPayloadFactory.Build(
+                commandType, processId, causationMessageId, correlationId, intent)
             ?? throw new InvalidOperationException(
                 $"No settlement command-payload recipe for '{commandType}' on saga {processId}; the factory " +
                 "must cover every command the SettlementProcess state machine emits (ADR-PC-032).");

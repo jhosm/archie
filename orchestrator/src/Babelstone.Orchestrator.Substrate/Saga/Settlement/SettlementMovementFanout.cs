@@ -179,6 +179,13 @@ public static class SettlementMovementFanout
 
         headers[DirectionsHeader] = direction;
 
+        // ADR-PC-043 §D5: reduce the engine-CA per-movement destination + amount ORDERED lists to THIS leg's
+        // single index-th entry, parallel to the direction reduction — so the leg's ConfirmCredit/ConfirmDebit
+        // body carries the right account_ref + amount (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17). Absent on a
+        // legacy-DDA leg (no promotion) → removed, so the substrate's ACCT-{processId} placeholder path stands.
+        ReduceOrderedListToLeg(headers, AccountRefsHeader, index);
+        ReduceOrderedListToLeg(headers, AmountsHeader, index);
+
         return source with
         {
             MessageId = MessageIdForMovement(source.MessageId, index),
@@ -190,11 +197,74 @@ public static class SettlementMovementFanout
         };
     }
 
+    // Reduce an ORDERED, comma-separated per-movement header list to THIS leg's single index-th entry — the
+    // account_ref / amount analog of the movementdirections reduction above. The list is positionally aligned
+    // with movementdirections (one entry per Originated movement, carrier order), so split WITHOUT dropping
+    // empties (RemoveEmptyEntries would shift indices) and pick the index-th. When the header is absent, blank,
+    // or the index is out of range / the entry is blank, REMOVE the key — a leg with no promoted value falls
+    // back to the substrate's placeholder path rather than carrying a wrong or shifted value (fail to the
+    // documented legacy-DDA behaviour, never a guess).
+    private static void ReduceOrderedListToLeg(IDictionary<string, string> headers, string key, int index)
+    {
+        if (!headers.TryGetValue(key, out var list) || string.IsNullOrWhiteSpace(list))
+        {
+            headers.Remove(key);
+            return;
+        }
+
+        var parts = list.Split(DirectionsSeparator, StringSplitOptions.TrimEntries);
+        if (index >= 0 && index < parts.Length && !string.IsNullOrWhiteSpace(parts[index]))
+        {
+            headers[key] = parts[index];
+        }
+        else
+        {
+            headers.Remove(key);
+        }
+    }
+
+    /// <summary>This (post-fan-out) leg's single destination account_ref — the lone entry of its
+    /// <see cref="AccountRefsHeader"/> list (ADR-PC-043 §D5), or <c>null</c> when absent (a legacy-DDA leg, or a
+    /// not-yet-reduced multi-entry list). The substrate threads it into the CA-apply command body as the
+    /// credit/debit destination (never a routing input — routing keys on <c>settlementtarget</c> alone).</summary>
+    public static string? SingleAccountRef(IReadOnlyDictionary<string, string>? extensionHeaders)
+        => extensionHeaders is not null
+            && extensionHeaders.TryGetValue(AccountRefsHeader, out var value)
+            && !string.IsNullOrWhiteSpace(value)
+            && !value.Contains(DirectionsSeparator, StringComparison.Ordinal)
+            ? value
+            : null;
+
+    /// <summary>This (post-fan-out) leg's single amount in integer cents — the lone entry of its
+    /// <see cref="AmountsHeader"/> list (ADR-PC-043 §D5, the WRONG-AMOUNT guard), or <c>null</c> when absent /
+    /// non-numeric (a legacy-DDA leg, or a not-yet-reduced multi-entry list). Parsed invariant-culture.</summary>
+    public static long? SingleAmountCents(IReadOnlyDictionary<string, string>? extensionHeaders)
+        => extensionHeaders is not null
+            && extensionHeaders.TryGetValue(AmountsHeader, out var value)
+            && long.TryParse(
+                value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var cents)
+            ? cents
+            : null;
+
     /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the ordered
     /// <c>movementdirections</c> list (mirrors <c>Babelstone.Engine.MovementHeaders.DirectionsKey</c>). Pinned
     /// as a literal — the orchestrator stays extraction-ready (ADR-PC-019 §P2), so it cannot reference the
     /// engine-side constant; the producer↔consumer contract test asserts the two agree.</summary>
     public const string DirectionsHeader = "movementdirections";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the ORDERED per-movement
+    /// destination account_ref list (mirrors <c>Babelstone.Engine.MovementHeaders.AccountRefsKey</c>, ADR-PC-043
+    /// §D5). Pinned as a literal — the orchestrator stays extraction-ready (ADR-PC-019 §P2); the producer↔consumer
+    /// contract test asserts the two agree. <see cref="ProjectMovementEvent"/> reduces it to THIS leg's single
+    /// entry, which <see cref="SingleAccountRef"/> reads.</summary>
+    public const string AccountRefsHeader = "movementaccountrefs";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the ORDERED per-movement
+    /// integer-cents amount list (mirrors <c>Babelstone.Engine.MovementHeaders.AmountsKey</c>, ADR-PC-043 §D5).
+    /// Pinned as a literal (extraction-ready). Reduced per leg by <see cref="ProjectMovementEvent"/>, read by
+    /// <see cref="SingleAmountCents"/>.</summary>
+    public const string AmountsHeader = "movementamounts";
 
     /// <summary>The list separator (mirrors <c>Babelstone.Engine.MovementHeaders.DirectionsSeparator</c>).</summary>
     private const string DirectionsSeparator = ",";
