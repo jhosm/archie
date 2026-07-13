@@ -40,8 +40,8 @@ namespace Babelstone.Orchestrator.Inbox;
 public sealed class SagaOutboxWriter
 {
     private const string InsertSql = """
-        INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent, sca_acr, sca_auth_time)
-        VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent, @sca_acr, @sca_auth_time);
+        INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent, sca_acr, sca_auth_time, settlement_account_ref, settlement_amount_cents)
+        VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent, @sca_acr, @sca_auth_time, @settlement_account_ref, @settlement_amount_cents);
         """;
 
     /// <summary>
@@ -60,6 +60,16 @@ public sealed class SagaOutboxWriter
     /// Unix epoch) for a money-mover command — re-emitted as the outbound <c>X-SCA-Auth-Time</c> header.
     /// The engine re-checks freshness against its own window at dispatch time, so a stale value is
     /// fail-closed 422'd there. Operational, NOT PII; null when no SCA was attested.</param>
+    /// <param name="settlementAccountRef">The engine-CA leg's PROMOTED destination <c>account_ref</c> — the
+    /// customer's persistent conta-à-ordem stream id (a GUID string) the fan-out reduced to this leg
+    /// (bd babelstone-u79p.22; ADR-PC-043 §D5). Persisted so the dispatcher can re-emit it onto the
+    /// SYNTHESIZED result event's headers, forward-propagating it across the reserve→confirm hop (the debit
+    /// path's ConfirmDebit fires on a later, header-less advance). Opaque, operational, NOT PII; null on the
+    /// legacy-DDA path and for every non-settlement command (then the leg keeps its placeholder).</param>
+    /// <param name="settlementAmountCents">The engine-CA leg's PROMOTED amount in integer cents (the source
+    /// <c>Movement.Amount</c>, the in-band WRONG-AMOUNT guard; ADR-PC-043 §D5). Persisted alongside
+    /// <paramref name="settlementAccountRef"/> so the ConfirmDebit advance re-threads the SAME amount and the
+    /// reserve and confirm legs agree. A value reference, NOT PII; null on the legacy-DDA path.</param>
     public async Task<Guid> AppendAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -71,7 +81,9 @@ public sealed class SagaOutboxWriter
         string? traceParent = null,
         CancellationToken ct = default,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -92,6 +104,8 @@ public sealed class SagaOutboxWriter
         command.Parameters.AddWithValue("traceparent", (object?)traceParent ?? DBNull.Value);
         command.Parameters.AddWithValue("sca_acr", (object?)scaAcr ?? DBNull.Value);
         command.Parameters.AddWithValue("sca_auth_time", (object?)scaAuthTime ?? DBNull.Value);
+        command.Parameters.AddWithValue("settlement_account_ref", (object?)settlementAccountRef ?? DBNull.Value);
+        command.Parameters.AddWithValue("settlement_amount_cents", (object?)settlementAmountCents ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
         return messageId;
     }

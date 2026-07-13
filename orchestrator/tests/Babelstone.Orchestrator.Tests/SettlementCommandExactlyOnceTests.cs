@@ -109,6 +109,83 @@ public sealed class SettlementCommandExactlyOnceTests
     }
 
     [Fact]
+    public void SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED_the_confirm_debit_carries_the_promoted_destination_and_engine_ca_target()
+    {
+        // ADR-PC-043 §D5 / CA-17 for the DEBIT legs (bd babelstone-u79p.22): when the substrate threads a
+        // promoted destination account_ref onto the intent, the engine-CA ConfirmDebit body carries THAT
+        // account_ref (never the ACCT-{processId} placeholder), the exact source amount (the WRONG-AMOUNT
+        // guard), and settlement_target = engine-ca (so the dispatcher routes the debit to the engine-owned CA
+        // capture ingress, not the legacy core). The confirm fires on a LATER advance off the synthesized
+        // BalanceReserved event; the promoted values reach it via the dispatcher's forward-propagation across
+        // the reserve→confirm hop — this test pins the factory half (given the intent, the body is correct).
+        const string destination = "acct-conta-a-ordem-0001";
+        var intent = new SettlementIntent(IntentId(), AmountCents, destination);
+        var processId = Guid.NewGuid();
+
+        var debit = (ConfirmDebitCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ConfirmDebit, processId, Guid.NewGuid(), null, intent)!;
+
+        Assert.Equal(destination, debit.AccountRef);
+        Assert.NotEqual(
+            SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId), debit.AccountRef);
+        Assert.Equal(AmountCents, debit.AmountCents);
+        Assert.Equal(SettlementCommandRouter.EngineCaValue, debit.SettlementTarget);
+    }
+
+    [Fact]
+    public void SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED_the_reserve_leg_carries_the_promoted_destination_amount_and_engine_ca_target()
+    {
+        // The DEBIT path's reversible RESERVE leg fires on the START advance, where the promoted headers are
+        // directly in scope. It must carry the promoted account_ref, the amount (the engine-CA authorize
+        // ingress REQUIRES a positive amount to place the reversible hold, else a 400), and settlement_target =
+        // engine-ca — so the hold the reserve places is on the SAME account + amount the confirm later
+        // captures. Reserve and confirm agree by construction (bd babelstone-u79p.22).
+        const string destination = "acct-conta-a-ordem-0001";
+        var intent = new SettlementIntent(IntentId(), AmountCents, destination);
+        var processId = Guid.NewGuid();
+
+        var reserve = (ReserveAccountBalanceCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ReserveAccountBalance, processId, Guid.NewGuid(), null, intent)!;
+
+        Assert.Equal(destination, reserve.AccountRef);
+        Assert.NotEqual(
+            SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId), reserve.AccountRef);
+        Assert.Equal(AmountCents, reserve.AmountCents);
+        Assert.Equal(SettlementCommandRouter.EngineCaValue, reserve.SettlementTarget);
+    }
+
+    [Fact]
+    public void SETTLEMENT_LEG_ACCOUNT_REF_STABLE_two_payouts_on_one_account_share_the_accountref_but_differ_in_intent_ref()
+    {
+        // ADR-PC-043 §Payload-shape / CA-18 (bd babelstone-u79p.22): the account-identity axis (AccountRef —
+        // ONE per account, stable across many payouts) and the exactly-once economic-intent axis (the
+        // IntentId-derived CoreHoldRef — ONE per payout occurrence) are INDEPENDENT. Two distinct payouts
+        // collecting from the SAME conta à ordem — a loan's installment-1 and installment-2 — carry the SAME
+        // promoted AccountRef while their intent-derived references DIFFER, so the promoted destination can
+        // never stand in for the dedup key and vice-versa (the orthogonality the SettlementIntent record
+        // documents, now pinned by one test that constructs both on ONE account).
+        const string oneAccount = "acct-conta-a-ordem-0001";
+        var installment1 = new SettlementIntent(
+            SettlementReferences.DeriveIntentId(SourceId, "installment-1"), AmountCents, oneAccount);
+        var installment2 = new SettlementIntent(
+            SettlementReferences.DeriveIntentId(SourceId, "installment-2"), AmountCents, oneAccount);
+
+        var debit1 = (ConfirmDebitCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ConfirmDebit, Guid.NewGuid(), Guid.NewGuid(), null, installment1)!;
+        var debit2 = (ConfirmDebitCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ConfirmDebit, Guid.NewGuid(), Guid.NewGuid(), null, installment2)!;
+
+        // SAME account — the stable account-identity axis (one AccountRef, many payouts) ...
+        Assert.Equal(oneAccount, debit1.AccountRef);
+        Assert.Equal(debit1.AccountRef, debit2.AccountRef);
+        // ... DIFFERENT intent-derived exactly-once key — the per-occurrence economic-intent axis. installment-2
+        // can never dedup against installment-1 (no double-collect), though both land on the one account.
+        Assert.NotEqual(debit1.CoreHoldRef, debit2.CoreHoldRef);
+        Assert.Contains(installment1.IntentId, debit1.CoreHoldRef);
+        Assert.Contains(installment2.IntentId, debit2.CoreHoldRef);
+    }
+
+    [Fact]
     public void SETTLEMENT_CA_APPLY_KEY_INTENT_DERIVED_the_confirm_debit_reference_derives_from_the_intent_id()
     {
         var intent = Intent();
@@ -277,5 +354,14 @@ public sealed class SettlementCommandExactlyOnceTests
             SettlementProcess.ConfirmDebit, processId, Guid.NewGuid(), null)!;
         Assert.Equal(SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId), debit.CoreHoldRef);
         Assert.Equal(0L, debit.AmountCents);
+        Assert.Null(debit.SettlementTarget);
+
+        // The reserve leg likewise stays the ACCT-{processId} placeholder with no amount and no engine-ca
+        // target — its body is byte-identical to the pre-u79p.22 shape on the legacy path.
+        var reserve = (ReserveAccountBalanceCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ReserveAccountBalance, processId, Guid.NewGuid(), null)!;
+        Assert.Equal(SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId), reserve.AccountRef);
+        Assert.Null(reserve.AmountCents);
+        Assert.Null(reserve.SettlementTarget);
     }
 }
