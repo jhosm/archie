@@ -319,16 +319,25 @@ public sealed class SagaCommandDispatchDrainer
 
         var resultMessageId = SagaSettlementResultEmit.MessageId(row.MessageId, resultEventType);
 
-        // PROPAGATE the attested step-up-SCA claims forward (bd babelstone-t7o3.19; ADR-PC-032 §A7/§A8). A
-        // multi-step settlement leg emits its IRREVERSIBLE cash command (ConfirmDebit / ConfirmCredit) on a
-        // LATER advance, driven by THIS synthesized result event (BalanceReserved → ConfirmDebit) — which
-        // carries no CloudEvents headers of its own. Re-emitting the delivering command's row SCA on the
-        // result event's extension headers lets the next advance re-thread the SAME attestation onto the cash
-        // leg's outbox row, so the freshness gate the RECEIVER enforces sees the original proof and re-checks
-        // it against SCA_MAX_AGE at the next dispatch instant (never inherited-and-forgotten). The substrate
-        // only carries the claims (attest, don't deny — ADR-IC-006 §P2 / ADR-IC-018 §D2). Null SCA ⇒ no
-        // headers, so a non-money-mover result event is unchanged. Operational, never PII (ADR-PC-004 §P2).
-        var scaHeaders = BuildScaHeaders(row.ScaAcr, row.ScaAuthTime);
+        // PROPAGATE the forwardable per-emission claims onto THIS synthesized result event, so a LATER
+        // same-saga advance — which emits its IRREVERSIBLE cash command (ConfirmDebit / ConfirmCredit) driven
+        // by this event (BalanceReserved → ConfirmDebit) and sees no CloudEvents headers of its own — can
+        // re-thread them onto the cash leg's outbox row. TWO families cross this header-less hop:
+        //   • the attested step-up-SCA claims (bd babelstone-t7o3.19; ADR-PC-032 §A7/§A8), so the RECEIVER's
+        //     freshness gate sees the original proof and re-checks it against SCA_MAX_AGE at the next dispatch
+        //     instant (never inherited-and-forgotten);
+        //   • the engine-CA PROMOTED destination account_ref + amount (bd babelstone-u79p.22; ADR-PC-043 §D5),
+        //     re-emitted as the movement headers the next advance reads, so the ConfirmDebit re-threads the
+        //     SAME SettlementIntent and lands on the customer's real conta à ordem for the right amount
+        //     (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17) — never the ACCT-{processId} placeholder, and never
+        //     a reserve/confirm mismatch. The destination is a settlement-command-BODY field (ADR-IC-018 §D5),
+        //     forwarded untouched; routing stays header-only on ce_settlementtarget.
+        // The substrate only CARRIES these (attest, don't deny — ADR-IC-006 §P2 / ADR-IC-018 §D2). All null ⇒
+        // no headers, so a non-money-mover / legacy result event is unchanged. Operational, never PII
+        // (ADR-PC-004 §P2 — opaque refs + integer cents).
+        var forwardHeaders = MergeForwardHeaders(
+            BuildScaHeaders(row.ScaAcr, row.ScaAuthTime),
+            BuildSettlementHeaders(row.SettlementAccountRef, row.SettlementAmountCents));
 
         var evt = new SagaInboxEvent(
             MessageId: resultMessageId,
@@ -337,7 +346,7 @@ public sealed class SagaCommandDispatchDrainer
             SourceTopic: SagaSettlementResultEmit.SourceTopic,
             CorrelationId: row.CorrelationId,
             TraceParent: row.TraceParent,
-            ExtensionHeaders: scaHeaders);
+            ExtensionHeaders: forwardHeaders);
 
         // Self-advance on the SAME connection+transaction as the status flip. AdvanceAsync may return a
         // non-Advanced outcome (a graceful no-op) or throw SagaConcurrencyException (the caller retries).
@@ -640,7 +649,7 @@ public sealed class SagaCommandDispatchDrainer
         // locks FOR UPDATE on its own).
         const string sql = """
             SELECT o.message_id, o.command_type, o.payload, o.traceparent, o.process_id, o.correlation_id,
-                   s.saga_type, o.sca_acr, o.sca_auth_time
+                   s.saga_type, o.sca_acr, o.sca_auth_time, o.settlement_account_ref, o.settlement_amount_cents
             FROM saga_outbox o
             JOIN saga_state s ON s.process_id = o.process_id
             WHERE o.seq = @seq AND o.status = 'PENDING'
@@ -666,7 +675,9 @@ public sealed class SagaCommandDispatchDrainer
             CorrelationId: reader.IsDBNull(5) ? null : reader.GetGuid(5),
             SagaType: reader.GetString(6),
             ScaAcr: reader.IsDBNull(7) ? null : reader.GetString(7),
-            ScaAuthTime: reader.IsDBNull(8) ? null : reader.GetInt64(8));
+            ScaAuthTime: reader.IsDBNull(8) ? null : reader.GetInt64(8),
+            SettlementAccountRef: reader.IsDBNull(9) ? null : reader.GetString(9),
+            SettlementAmountCents: reader.IsDBNull(10) ? null : reader.GetInt64(10));
     }
 
     private static async Task MarkPublishedAsync(
@@ -749,6 +760,67 @@ public sealed class SagaCommandDispatchDrainer
         }
 
         return headers;
+    }
+
+    /// <summary>
+    /// Build the extension-attribute map that PROPAGATES the engine-CA promoted destination account_ref +
+    /// amount onto a synthesized result event (bd babelstone-u79p.22; ADR-PC-043 §D5), so a later same-saga
+    /// advance re-threads them onto the irreversible cash leg's outbox row. Keys are the SINGLE-entry movement
+    /// projection the advance handler reads (<c>movementaccountrefs</c> / <c>movementamounts</c>) — the leg was
+    /// already fanned out to one entry, so each carries exactly one value (never a comma-joined list). Null
+    /// when the row carries no promoted destination (a legacy-DDA leg, or a non-settlement saga) — the result
+    /// event then carries no movement headers and the next leg keeps the ACCT-{processId} placeholder. Opaque
+    /// account ref + integer cents, never PII (ADR-PC-004 §P2).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? BuildSettlementHeaders(
+        string? settlementAccountRef, long? settlementAmountCents)
+    {
+        if (string.IsNullOrEmpty(settlementAccountRef) && settlementAmountCents is null)
+        {
+            return null;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(settlementAccountRef))
+        {
+            headers[MovementAccountRefsHeaderKey] = settlementAccountRef;
+        }
+
+        if (settlementAmountCents is { } cents)
+        {
+            headers[MovementAmountsHeaderKey] =
+                cents.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return headers;
+    }
+
+    /// <summary>
+    /// Merge the SCA-claim and settlement-destination forward-propagation header maps into the ONE extension
+    /// attribute map a synthesized result event carries. The two use DISJOINT keys (<c>scaacr</c> /
+    /// <c>scaauthtime</c> vs <c>movementaccountrefs</c> / <c>movementamounts</c>), so a union never collides.
+    /// Both null ⇒ null (the event carries no forward headers, unchanged); either non-null ⇒ their union.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? MergeForwardHeaders(
+        IReadOnlyDictionary<string, string>? sca, IReadOnlyDictionary<string, string>? settlement)
+    {
+        if (sca is null)
+        {
+            return settlement;
+        }
+
+        if (settlement is null)
+        {
+            return sca;
+        }
+
+        var merged = new Dictionary<string, string>(sca, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in settlement)
+        {
+            merged[key] = value;
+        }
+
+        return merged;
     }
 
     /// <summary>
@@ -837,6 +909,24 @@ public sealed class SagaCommandDispatchDrainer
     /// (Unix seconds) on a propagated result event (mirrors <c>SagaAdvanceHandler.ScaAuthTimeHeaderKey</c>).</summary>
     private const string ScaAuthTimeHeaderKey = "scaauthtime";
 
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the engine-CA promoted
+    /// destination account_ref forward-propagated onto a synthesized result event (bd babelstone-u79p.22).
+    /// Mirrors <c>SettlementMovementFanout.AccountRefsHeader</c> /
+    /// <c>Babelstone.Engine.MovementHeaders.AccountRefsKey</c> — pinned as a literal here (like
+    /// <see cref="SettlementTargetHeaderKey"/>), so the drainer stays extraction-ready (ADR-PC-019 §P2) and
+    /// does not reference the settlement-side constant. The value is this (already-fanned-out) leg's SINGLE
+    /// entry, which <c>SettlementMovementFanout.SingleAccountRef</c> reads back; a literal typo here would
+    /// break the reserve→confirm hop, which <c>SettlementDebitForwardPropagationIntegrationTests</c> proves
+    /// end-to-end (it drains the walk and asserts the confirm body carries the promoted destination).</summary>
+    private const string MovementAccountRefsHeaderKey = "movementaccountrefs";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the engine-CA promoted amount
+    /// (integer cents) forward-propagated onto a synthesized result event (bd babelstone-u79p.22). Mirrors
+    /// <c>SettlementMovementFanout.AmountsHeader</c> / <c>Babelstone.Engine.MovementHeaders.AmountsKey</c>,
+    /// pinned as a literal (extraction-ready). Read back by <c>SettlementMovementFanout.SingleAmountCents</c>;
+    /// the round-trip is covered by <c>SettlementDebitForwardPropagationIntegrationTests</c>.</summary>
+    private const string MovementAmountsHeaderKey = "movementamounts";
+
     /// <summary>The gateway-attested SCA-completion class header the dispatcher re-emits for a
     /// money-mover command (bd babelstone-ls44; ADR-IC-010 §P8 A10). MUST match the engine's
     /// <c>ScaPrecondition.AcrHeader</c> — the orchestrator stays extraction-ready (ADR-PC-019 §P2), so it
@@ -866,7 +956,8 @@ public sealed class SagaCommandDispatchDrainer
     private sealed record OutboxRow(
         Guid MessageId, string CommandType, byte[] Payload, string? TraceParent,
         Guid ProcessId, Guid? CorrelationId, string SagaType,
-        string? ScaAcr = null, long? ScaAuthTime = null);
+        string? ScaAcr = null, long? ScaAuthTime = null,
+        string? SettlementAccountRef = null, long? SettlementAmountCents = null);
 
     private enum DeliveryKind { Applied, Refused, Transient, Indeterminate }
 

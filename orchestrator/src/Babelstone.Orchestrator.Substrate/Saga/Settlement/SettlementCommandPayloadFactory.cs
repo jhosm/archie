@@ -36,7 +36,8 @@ public static class SettlementCommandPayloadFactory
     /// Build the full typed payload for <paramref name="commandType"/>, or null if there is no recipe for it
     /// (the caller surfaces that as a fail-closed wiring error). PURE and byte-stable: no clock, no GUID
     /// minting (ADR-PC-010 §P5) — every reference is a deterministic function of the process id AND, for the
-    /// engine-CA confirm legs, the economic-intent id in <paramref name="intent"/>.
+    /// engine-CA settlement legs (the reserve, the confirm-debit, and the confirm-credit), the economic-intent
+    /// id + promoted destination in <paramref name="intent"/>.
     /// </summary>
     /// <param name="commandType">The command NAME the state machine decided (a
     /// <see cref="SettlementProcess"/> command-name constant).</param>
@@ -45,11 +46,13 @@ public static class SettlementCommandPayloadFactory
     /// pre-existing id carried through, never minted here.</param>
     /// <param name="correlationId">The originating request's correlation reference, carried unchanged.</param>
     /// <param name="intent">The ADR-PC-043 slot-4 economic intent — the exactly-once <c>IntentId</c> the
-    /// engine-CA confirm legs' <c>command_id</c> derives from (NOT the HTTP Idempotency-Key) and the source
-    /// <c>Movement.Amount</c> (integer cents) the CA writer lands. <c>null</c> for the legacy-DDA path (and
-    /// for the platform-layer default before a family threads the promoted intent) — the confirm legs then
-    /// fall back to the process-id-derived reference (unchanged) and carry no amount (zero cents). See the
-    /// source→destination threading note in <see cref="SettlementIntent"/>.</param>
+    /// engine-CA settlement legs' <c>command_id</c> derives from (NOT the HTTP Idempotency-Key), the promoted
+    /// destination <c>account_ref</c>, and the source <c>Movement.Amount</c> (integer cents) the CA writer
+    /// lands. Present, it also flips each leg's <c>settlement_target</c> to <c>engine-ca</c> so the dispatcher
+    /// routes to the engine-owned CA ingress. <c>null</c> for the legacy-DDA path (and for the platform-layer
+    /// default before a family threads the promoted intent) — the legs then fall back to the process-id-derived
+    /// reference + the <c>ACCT-{processId}</c> placeholder (unchanged), carry no amount, and route legacy. See
+    /// the source→destination threading note in <see cref="SettlementIntent"/>.</param>
     public static SettlementCommandPayload? Build(
         string commandType,
         Guid processId,
@@ -88,6 +91,13 @@ public static class SettlementCommandPayloadFactory
         // (deterministic, process-id-derived; ADR-PC-010, no mint/clock).
         var reservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId);
 
+        // ADR-PC-043 slot 1: a threaded engine-CA intent (a promoted destination account_ref is present) routes
+        // the leg to the engine-owned CA ingress — the dispatcher's ProjectSettlementTargetHeader reads this
+        // body field. Without an intent (the legacy-DDA path / no promotion) it stays null, so the router keeps
+        // legacy routing UNCHANGED. The SAME target rides BOTH debit legs (reserve + confirm) so the hold the
+        // reserve places and the hold the confirm captures are on the SAME counterparty (bd babelstone-u79p.22).
+        var settlementTarget = intent is not null ? SettlementCommandRouter.EngineCaValue : null;
+
         return commandType switch
         {
             SettlementProcess.ReserveAccountBalance => new ReserveAccountBalanceCommand
@@ -100,6 +110,10 @@ public static class SettlementCommandPayloadFactory
                 // The shared hold-linking key the engine-CA ingress derives the authorize hold from — the
                 // reserve and confirm legs carry the SAME value, so capture targets exactly the placed hold.
                 IntentReference = reservationRef,
+                // The promoted hold amount (bd babelstone-u79p.22) — null on the legacy path, so the reserve
+                // body is byte-identical to before there; the engine-CA authorize ingress requires it positive.
+                AmountCents = intent?.AmountCents,
+                SettlementTarget = settlementTarget,
             },
             SettlementProcess.ConfirmDebit => new ConfirmDebitCommand
             {
@@ -110,6 +124,10 @@ public static class SettlementCommandPayloadFactory
                 AccountRef = accountRef,
                 IntentReference = reservationRef,
                 AmountCents = amountCents,
+                // Forward-propagated across the reserve→confirm hop (bd babelstone-u79p.22): the dispatcher
+                // re-emits the reserve row's promoted destination onto the synthesized BalanceReserved event, so
+                // this LATER-advance confirm re-threads the SAME intent and routes to the SAME engine-CA ingress.
+                SettlementTarget = settlementTarget,
             },
             SettlementProcess.ConfirmCredit => new ConfirmCreditCommand
             {
@@ -120,11 +138,7 @@ public static class SettlementCommandPayloadFactory
                 CreditRef = confirmCreditRef,
                 IntentReference = confirmCreditRef,
                 AmountCents = amountCents,
-                // ADR-PC-043 slot 1: a threaded engine-CA intent (a promoted destination account_ref is present)
-                // routes the credit to the engine-owned CA ingress — the dispatcher's ProjectSettlementTargetHeader
-                // reads this body field. Without an intent (the legacy-DDA path / no promotion) it stays null, so
-                // the router keeps legacy routing UNCHANGED.
-                SettlementTarget = intent is not null ? SettlementCommandRouter.EngineCaValue : null,
+                SettlementTarget = settlementTarget,
             },
             SettlementProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
             {

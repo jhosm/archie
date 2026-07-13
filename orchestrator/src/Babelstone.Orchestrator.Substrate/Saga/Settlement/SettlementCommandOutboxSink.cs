@@ -45,22 +45,24 @@ public sealed class SettlementCommandOutboxSink(SagaOutboxWriter? outbox = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
-        // ADR-PC-043 §D5 (bd u79p.13/.21): the engine-CA CREDIT leg carries the customer's PROMOTED destination
-        // account_ref + amount, forwarded UNTOUCHED into the CA-apply command body — the fix that makes an
-        // engine-CA leg's AccountRef equal the promoted Movement.AccountRef, never the ACCT-{processId}
-        // placeholder (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17), and lands the source Movement.Amount (the
-        // in-band WRONG-AMOUNT guard). Threaded ONLY for the CONFIRM-CREDIT leg: the confirmation-gated credit
-        // fires on the START advance (SettlementStarted → ConfirmingCredit), where the Movement-bearing event's
-        // promoted headers are directly in scope. The debit legs' irreversible ConfirmDebit fires on a LATER
-        // advance off a synthesized result event that does not yet forward these values (that propagation is the
-        // bd u79p.21 debit-path follow-up), so a debit keeps the existing placeholder path — never a
-        // reserve/confirm mismatch. The IntentId is the leg's process id (hex), so the intent-derived credit
-        // reference stays BYTE-IDENTICAL to the placeholder path's Derive(CreditPrefix, processId): the
-        // ADR-PC-043 slot-4 exactly-once key is unchanged, ONLY the destination account_ref + amount move.
+        // ADR-PC-043 §D5 (bd u79p.13/.21/.22): an engine-CA settlement leg carries the customer's PROMOTED
+        // destination account_ref + amount, forwarded UNTOUCHED into the CA-apply command body — the fix that
+        // makes an engine-CA leg's AccountRef equal the promoted Movement.AccountRef, never the
+        // ACCT-{processId} placeholder (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17), and lands the source
+        // Movement.Amount (the in-band WRONG-AMOUNT guard). Built for EVERY leg that carries a promoted
+        // account_ref — the confirmation-gated CREDIT (which fires on the START advance), AND the funds-gated
+        // DEBIT legs (reserve + confirm-debit). The credit and the reserve have the promoted headers directly
+        // in scope on the START advance; the irreversible ConfirmDebit fires on a LATER advance off a
+        // synthesized BalanceReserved result event, so the dispatcher FORWARD-PROPAGATES the promoted values
+        // onto that event (persisted below as saga_outbox columns and re-emitted as the movement headers the
+        // next advance reads, bd u79p.22) — the confirm re-threads the SAME intent, so reserve and confirm
+        // never mismatch. The IntentId is the leg's process id (hex), so the intent-derived reference stays
+        // BYTE-IDENTICAL to the placeholder path's Derive(prefix, processId): the ADR-PC-043 slot-4 exactly-once
+        // key is unchanged, ONLY the destination account_ref + amount + counterparty target move.
         SettlementIntent? intent =
-            commandType == SettlementProcess.ConfirmCredit && !string.IsNullOrWhiteSpace(settlementAccountRef)
-                ? new SettlementIntent(processId.ToString("N"), settlementAmountCents ?? 0L, settlementAccountRef)
-                : null;
+            string.IsNullOrWhiteSpace(settlementAccountRef)
+                ? null
+                : new SettlementIntent(processId.ToString("N"), settlementAmountCents ?? 0L, settlementAccountRef);
 
         // The LOGICAL payload body: the settlement command, byte-stable (no minted GUID, no wall clock). The
         // factory must cover every command the settlement state machine emits — a miss is a fail-closed
@@ -72,13 +74,17 @@ public sealed class SettlementCommandOutboxSink(SagaOutboxWriter? outbox = null)
                 "must cover every command the SettlementProcess state machine emits (ADR-PC-032).");
 
         // The substrate's saga_outbox store owns the row write + the operational message_id mint (the row
-        // commits atomically on this saga transaction, ADR-IC-003 §P1). The gateway-attested SCA claims (bd
-        // babelstone-ls44; ADR-IC-010 §P8) ride the row as operational columns the dispatcher re-emits onto
-        // the cash leg's delivery — the freshness gate ADR-PC-032 Amendment A7/A8 places on the Originated
-        // cash leg reads them. Threaded through verbatim here; the freshness re-check is the receiver's (bd
-        // babelstone-t7o3.19), not the substrate's (attest, don't deny — A8).
+        // commits atomically on this saga transaction, ADR-IC-003 §P1). Two families of operational columns
+        // ride the row for the dispatcher to re-emit downstream, never the byte-stable body:
+        //   • the gateway-attested SCA claims (bd babelstone-ls44; ADR-IC-010 §P8) — re-emitted as the cash
+        //     leg's outbound X-SCA-* HTTP headers the ADR-PC-032 §A7/§A8 freshness gate reads (attest, don't
+        //     deny — the receiver is the deny point, bd babelstone-t7o3.19);
+        //   • the promoted engine-CA destination account_ref + amount (bd babelstone-u79p.22; ADR-PC-043 §D5)
+        //     — re-emitted onto the SYNTHESIZED result event's movement headers so the reserve→confirm hop
+        //     forward-propagates the destination (the debit path's ConfirmDebit fires on a header-less later
+        //     advance). Null for every legacy / non-engine-CA leg.
         await _outbox.AppendAsync(
             connection, transaction, processId, commandType, causationMessageId, correlationId,
-            payload.ToBytes(), traceParent, ct, scaAcr, scaAuthTime);
+            payload.ToBytes(), traceParent, ct, scaAcr, scaAuthTime, settlementAccountRef, settlementAmountCents);
     }
 }

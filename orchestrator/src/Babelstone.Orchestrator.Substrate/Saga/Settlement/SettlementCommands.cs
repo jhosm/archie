@@ -93,6 +93,28 @@ public sealed record ReserveAccountBalanceCommand : SettlementCommandPayload
     [JsonPropertyName("intent_reference")]
     public string? IntentReference { get; init; }
 
+    /// <summary>The amount to HOLD in integer cents — exactly the promoted source <c>Movement.Amount</c> the
+    /// engine-CA authorize WRITER sizes the reversible hold to (ADR-PC-043 slot 1, bd babelstone-u79p.22). The
+    /// engine-CA authorize ingress REQUIRES a positive amount to place a hold, so an <c>engine-ca</c> reserve
+    /// that omits it is a 400 — the saga never gets past the reversible leg. Carries the SAME value as the
+    /// capture leg's <see cref="ConfirmDebitCommand.AmountCents"/> on an engine-ca leg (the type differs — this
+    /// is nullable, that is required — but the amount agrees), so reserve and confirm settle the same cents.
+    /// Money-as-integer-cents on the wire (ADR-PC-010), never a float; a value reference, never PII. Null on a
+    /// legacy leg (the legacy ACL sizes the hold from the reservation): the field serializes as an explicit
+    /// null there; the logical command and its replay-stability are unchanged.</summary>
+    [JsonPropertyName("amount_cents")]
+    public long? AmountCents { get; init; }
+
+    /// <summary>The settlement COUNTERPARTY this reserve routes to (ADR-PC-043 slot 1, bd babelstone-u79p.22).
+    /// The dispatcher's <c>ProjectSettlementTargetHeader</c> reads THIS body field and flips the router's base
+    /// URL: <c>engine-ca</c> → the engine-owned CA authorize ingress; <c>null</c> (the default) → the
+    /// LEGACY-DDA counterparty, so a legacy reserve keeps its routing UNCHANGED. Set from the source family's
+    /// promoted <c>ce_settlementtarget</c> header, forwarded untouched (never re-derived). A closed-enum
+    /// routing token, never PII. Mirrors <see cref="ConfirmDebitCommand.SettlementTarget"/> — both debit legs
+    /// must route to the SAME counterparty, so the hold the reserve places is the hold the confirm captures.</summary>
+    [JsonPropertyName("settlement_target")]
+    public string? SettlementTarget { get; init; }
+
     /// <inheritdoc />
     public override string CommandType => SettlementProcess.ReserveAccountBalance;
 }
@@ -131,6 +153,17 @@ public sealed record ConfirmDebitCommand : SettlementCommandPayload
     /// <c>Money</c>.</summary>
     [JsonPropertyName("amount_cents")]
     public required long AmountCents { get; init; }
+
+    /// <summary>The settlement COUNTERPARTY this debit routes to (ADR-PC-043 slot 1, bd babelstone-u79p.22).
+    /// The dispatcher's <c>ProjectSettlementTargetHeader</c> reads THIS body field and flips the router's base
+    /// URL: <c>engine-ca</c> → the engine-owned CA capture ingress; <c>null</c> (the default) → the LEGACY-DDA
+    /// counterparty, so a legacy debit keeps its routing UNCHANGED. Set from the source family's promoted
+    /// <c>ce_settlementtarget</c> header — forward-propagated across the reserve→confirm hop on the synthesized
+    /// result event (the debit-path fix bd babelstone-u79p.22), never re-derived. A closed-enum routing token,
+    /// never PII. Mirrors <see cref="ConfirmCreditCommand.SettlementTarget"/> and
+    /// <see cref="ReserveAccountBalanceCommand.SettlementTarget"/>.</summary>
+    [JsonPropertyName("settlement_target")]
+    public string? SettlementTarget { get; init; }
 
     /// <inheritdoc />
     public override string CommandType => SettlementProcess.ConfirmDebit;
