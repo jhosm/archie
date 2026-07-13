@@ -273,17 +273,6 @@ h2 {
   margin-top: 1rem; letter-spacing: 0.05em;
 }
 
-/* ===================================================================
-   SLIDE 5 — demo interstitial
-   =================================================================== */
-.slide.demo { align-items: center; justify-content: center; text-align: center; }
-.slide.demo .slide-inner { text-align: center; }
-.demo-eyebrow { font-family: var(--mono); letter-spacing: 0.4em; text-transform: uppercase; color: var(--gold); font-size: 0.85rem; }
-.demo-big { font-family: var(--serif); font-size: clamp(4rem, 13vw, 11rem); font-weight: 500; line-height: 0.9; margin: 1.5rem 0; letter-spacing: -0.02em; }
-.demo-cap { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); letter-spacing: 0.1em; }
-.demo-pulse { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--verify); margin-right: 0.6rem; box-shadow: 0 0 0 0 rgba(111,214,160,0.6); animation: pulse 1.8s infinite; vertical-align: middle; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(111,214,160,0.5);} 70% { box-shadow: 0 0 0 16px rgba(111,214,160,0);} 100% { box-shadow: 0 0 0 0 rgba(111,214,160,0);} }
-
 /* moat / closing big statement */
 .big-statement h2 { max-width: 18ch; }
 .combo { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 2.2rem; }
@@ -332,9 +321,9 @@ h2 {
 .arch-legend { font-family:var(--mono); font-size:0.72rem; color:var(--muted); letter-spacing:0.05em; display:flex; gap:1rem; }
 .arch-legend span { display:inline-flex; align-items:center; gap:0.4rem; }
 .arch-grid { display:grid; grid-template-columns:0.82fr 1.5fr 0.92fr; gap:0.85rem; align-items:stretch; }
-.arch-col { display:flex; flex-direction:column; gap:0.5rem; }
+.arch-col { display:flex; flex-direction:column; gap:0.4rem; }
 .arch-col.rails { gap:0.85rem; }
-.abox { border:1px solid var(--hair); border-radius:8px; padding:0.5rem 0.75rem;
+.abox { border:1px solid var(--hair); border-radius:8px; padding:0.4rem 0.75rem;
   background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); }
 .abox.core { border-left:2px solid var(--gold); }
 .abox .an { font-family:var(--serif); font-size:1.02rem; font-weight:500; line-height:1.1; display:flex; align-items:center; gap:0.5rem; }
@@ -505,15 +494,6 @@ h2 {
     </div>
   </section>
 
-  <!-- 5 — DEMO -->
-  <section class="slide demo" data-notes="STOP talking. Switch to the live Mission Control UI. Run the loop: constitute a €10,000 / 12-month deposit, watch the events animate into the ledger, mature it and watch the payout resolve with the 28% withholding. Then the kicker: click Constitute twice and show the duplicate gets caught — same commit, no second deposit. Let the product carry this slide.">
-    <div class="slide-inner">
-      <div class="demo-eyebrow r" style="--i:0">Live</div>
-      <div class="demo-big r" style="--i:1">Watch this.</div>
-      <div class="demo-cap r" style="--i:2"><span class="demo-pulse"></span>Babelstone Mission Control — constitute · accrue · mature</div>
-    </div>
-  </section>
-
   <!-- 6 — PROOF / CORRECTNESS -->
   <section class="slide" data-notes="The proof. Three guarantees. (1) No double-booking — idempotent commands; retrying a request replays the original result with zero duplicate appends (ADR-PC-029, live in the engine). Click the button twice to show it. (2) Right to the cent — Portuguese 28% withholding computed flow-by-flow; the naïve shortcut of scaling the rate is off by ~€4 on a €499k deposit — exactly the kind of error that becomes a regulator's headline. (3) Replayable truth — pure deciders, deterministic rebuild. The payout strip is the real worked example: €10,000 at 3% for a year → €304.17 gross, minus €85.17 tax, = €10,219.00.">
     <div class="slide-inner">
@@ -632,7 +612,7 @@ h2 {
   </section>
 
   <!-- 9 — STATUS (real figures, derived from the repo) -->
-  <section class="slide" data-notes="Honest, verifiable status — every number below is counted from the repo, not invented. Working today: the term_deposit hot path runs end-to-end (constitute → accrue → mature) with real financial math, real Avro events on Redpanda, real OpenTelemetry traces — no stubs on the hot path. Two product families exist in code (term_deposit, the reference; personal_loan, the second). 21 .NET test projects back the kernel and families. The commitment catalogue tracks 44 verifiable claims, 27 already Live (gate exists, passes, runs in CI). 51 accepted ADRs (19 ADR-IC + 32 ADR-PC) govern the design. The notification boundary service now has real C# (worker + deposit read client); the ACL (core-banking translation) is still a skeleton — Dockerfile + README only — so it is honestly 'Next', not done. Frame Next as roadmap, not gap.">
+  <section class="slide" data-notes="Honest, verifiable status — every number below is counted from the repo, not invented. Working today: the term_deposit hot path runs end-to-end (constitute → accrue → mature) with real financial math, real Avro events on Redpanda, real OpenTelemetry traces — no stubs on the hot path. Three product families exist in code (term_deposit, the reference; personal_loan, the second; current_account, the conta-à-ordem that is also the engine-owned settlement hub the other families' cash legs land on, ADR-PC-043). 35 .NET test projects back the kernel and families. The commitment catalogue tracks 88 verifiable claims, 65 already Live (gate exists, passes, runs in CI). 62 accepted ADRs (21 ADR-IC + 41 ADR-PC) govern the design. The notification boundary service has shipped a real scheduler + signed-webhook delivery + durable delivery outbox and deploys to staging; its bus consumer and engine-side NotificationDue emission are the remaining wiring. The ACL (legacy core-banking translation) is still a skeleton — Dockerfile + README only — and is now an opt-out path, since term-deposit legs settle against the engine-owned current_account by default. Frame Next as roadmap, not gap.">
     <div class="slide-inner">
       <div class="kicker r" style="--i:0">Where we are</div>
       <h2 class="r" style="--i:1">The hot path has <span class="em-verify">no stubs.</span></h2>
@@ -641,19 +621,19 @@ h2 {
           <h4>Working today</h4>
           <ul>
             <li>term_deposit: constitute → accrue → mature, end-to-end</li>
-            <li><b>2</b> product families in code — term_deposit + personal_loan</li>
-            <li>Real financial math · <b>21</b> .NET test projects</li>
-            <li><b>27</b> of <b>44</b> commitment-catalogue claims <span class="em-verify">Live</span> (gated in CI)</li>
-            <li><b>51</b> accepted ADRs govern the design (19 IC + 32 PC)</li>
+            <li><b>3</b> product families in code — term_deposit + personal_loan + current_account</li>
+            <li>Real financial math · <b>35</b> .NET test projects</li>
+            <li><b>65</b> of <b>88</b> commitment-catalogue claims <span class="em-verify">Live</span> (gated in CI)</li>
+            <li><b>62</b> accepted ADRs govern the design (21 IC + 41 PC)</li>
             <li>AI-operable via MCP tools · signed regulatory packs</li>
           </ul>
         </div>
         <div class="col next r" style="--i:3">
           <h4>Next</h4>
           <ul>
-            <li>Notification signals — real C# landed, wiring in progress</li>
-            <li>Core-Banking settlement (ACL) — still a skeleton</li>
-            <li>Remaining <b>17</b> catalogue claims → Live</li>
+            <li>Notification — delivery shipped &amp; on staging; bus consumer + engine-side emission to wire</li>
+            <li>Core-Banking translation (ACL) — still a skeleton</li>
+            <li>Remaining <b>23</b> catalogue claims → Live</li>
             <li>More product families on the same kernel</li>
           </ul>
         </div>
@@ -675,7 +655,7 @@ h2 {
   </section>
 
   <!-- 11 — APPENDIX: architecture -->
-  <section class="slide arch" data-notes="Appendix — the whole architecture on one board. Center stack is a request's journey, top to bottom: edge gateway → AI/API ingress → domain families → financial-math kernel → durable event log → bus → saga → downstream boundary. The side rails are cross-cutting: Observability (OpenTelemetry, no PII), Security/PII (OpenBao crypto-shredding), and Contracts/Governance (Avro/CUE schemas, signed packs, ADR drift gates). The dots are honest: ●live (incl. the orchestrator — saga consume loop is host-wired, started at the edge), ◐partial (used where a piece runs but isn't complete, e.g. Security/PII), ○planned (ACL + notification are still skeletons — only Dockerfile/README). Use this to answer 'what's actually built' without overclaiming.">
+  <section class="slide arch" data-notes="Appendix — the whole architecture on one board. Center stack is a request's journey, top to bottom: edge gateway → AI/API ingress → the three loaded product families (term_deposit · personal_loan · current_account — the conta-à-ordem that is also the engine-owned settlement hub the other families' cash legs land on, ADR-PC-043) → financial-math kernel → durable event log → bus → saga → downstream boundary. The side rails are cross-cutting: Observability (OpenTelemetry, no PII), Security/PII (OpenBao crypto-shredding), and Contracts/Governance (Avro/CUE schemas, signed packs, ADR drift gates). The dots are honest: ●live (incl. the orchestrator — saga consume loop is host-wired, started at the edge), ◐partial (Security/PII — the shred seam + GDPR-erasure flow are wired but real PII isn't encrypted through OpenBao yet; and Notification, whose maturity-reminder scheduler + signed-webhook delivery + durable outbox have shipped and deploy to staging, with the bus consumer + engine-side emission still to wire), ○planned (the ACL core-banking translation is still a skeleton — Dockerfile/README only). Not drawn as its own box but built and running: the clock-owning Lifecycle Driver that fires due maturity/installment commands off a durable dispatch ledger (ADR-PC-036). Use this to answer 'what's actually built' without overclaiming.">
     <div class="slide-inner">
       <div class="arch-head r" style="--i:0">
         <div class="kicker" style="margin-bottom:0">Appendix · architecture</div>
@@ -701,12 +681,13 @@ h2 {
           <div class="abox core r" style="--i:2"><div class="an"><span class="adot live"></span>Kong API Gateway</div><div class="ad">declarative edge gateway · DB-less</div></div>
           <div class="abox core r" style="--i:3"><div class="an"><span class="adot live"></span>MCP Server</div><div class="ad">AI-operable tool surface</div></div>
           <div class="abox core r" style="--i:4"><div class="an"><span class="adot live"></span>Engine API</div><div class="ad">event-sourced kernel · command + read API</div></div>
-          <div class="abox core r" style="--i:5"><div class="an"><span class="adot live"></span>Product Families · term_deposit</div><div class="ad">pure deciders · folds · lifecycle</div></div>
+          <div class="abox core r" style="--i:5"><div class="an"><span class="adot live"></span>Product Families · term_deposit · personal_loan · current_account</div><div class="ad">pure deciders · folds · lifecycle · current_account = engine-owned settlement hub</div></div>
           <div class="abox core r" style="--i:6"><div class="an"><span class="adot live"></span>Financial-Math Kernel</div><div class="ad">ACT/360 interest · 28% withholding</div></div>
           <div class="abox core r" style="--i:7"><div class="an"><span class="adot live"></span>Event Store · PostgreSQL</div><div class="ad">immutable log · projections · outbox</div></div>
           <div class="abox core r" style="--i:8"><div class="an"><span class="adot live"></span>Event Bus · Redpanda</div><div class="ad">Kafka-compatible · Avro on the wire</div></div>
           <div class="abox core r" style="--i:9"><div class="an"><span class="adot live"></span>Orchestrator</div><div class="ad">saga state machine · edge-started + consume loop</div></div>
-          <div class="abox core r" style="--i:10"><div class="an"><span class="adot planned"></span>Boundary · ACL + Notification</div><div class="ad">core-banking translation · completion signals</div></div>
+          <div class="abox core r" style="--i:10"><div class="an"><span class="adot partial"></span>Boundary · Notification</div><div class="ad">reminder scheduler · signed-webhook delivery · durable outbox</div></div>
+          <div class="abox core r" style="--i:11"><div class="an"><span class="adot planned"></span>Boundary · ACL</div><div class="ad">legacy core-banking translation · skeleton</div></div>
         </div>
         <!-- right rail -->
         <div class="arch-col rails r" style="--i:2">
@@ -753,7 +734,8 @@ h2 {
             <span class="bchip">Event Store</span>
             <span class="bchip">Event Bus</span>
             <span class="bchip wire">Orchestrator</span>
-            <span class="bchip">Boundary</span>
+            <span class="bchip">Boundary · Notif</span>
+            <span class="bchip">Boundary · ACL</span>
             <span class="bchip">Observability</span>
             <span class="bchip">Security · PII</span>
             <span class="bchip touch">Contracts · Gov</span>
@@ -781,7 +763,8 @@ h2 {
             <span class="bchip">Event Store</span>
             <span class="bchip">Event Bus</span>
             <span class="bchip">Orchestrator</span>
-            <span class="bchip">Boundary</span>
+            <span class="bchip">Boundary · Notif</span>
+            <span class="bchip">Boundary · ACL</span>
             <span class="bchip">Observability</span>
             <span class="bchip">Security · PII</span>
             <span class="bchip">Contracts · Gov</span>
@@ -829,8 +812,9 @@ h2 {
     progress.style.width = ((i) / (total - 1) * 100) + '%';
     notesBody.textContent = cur.dataset.notes || '—';
 
-    if (i === 5 && !payoutDone) { payoutDone = true; runPayout(); }
-    if (i !== 5) { payoutDone = false; resetPayout(); }
+    // PROOF slide (payout count-up) is DOM index 4 — keep in sync if slides are added/removed above it
+    if (i === 4 && !payoutDone) { payoutDone = true; runPayout(); }
+    if (i !== 4) { payoutDone = false; resetPayout(); }
   }
 
   function go(n) { i = Math.max(0, Math.min(total - 1, n)); render(); }
