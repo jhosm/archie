@@ -97,10 +97,13 @@ public sealed class SettlementTargetPromotionTests
             depositId, new DateTimeOffset(2026, 2, 15, 0, 0, 0, TimeSpan.Zero), PayoutAccount, "test"));
 
         AssertEngineCaTargeted(sink, SettlementDirection.Credit);
-        // The coupon leg carries NO policy header (unlike maturity), so its header map is EXACTLY the three
-        // routing discriminators — origin + directions + settlementtarget — and nothing else leaks (no amount,
-        // no account ref, no PII, ADR-PC-004).
-        Assert.Equal(3, SettlementHeadersOf(sink).Count);
+        // The coupon leg carries NO policy header (unlike maturity), so its header map is EXACTLY the FIVE
+        // engine-CA entries — origin + directions + settlementtarget + the ADR-PC-043 §D5 promoted destination
+        // (movementaccountrefs) and amount (movementamounts) — and nothing else leaks (opaque ref + cents, no PII).
+        var headers = SettlementHeadersOf(sink);
+        Assert.Equal(5, headers.Count);
+        Assert.True(headers.ContainsKey(MovementHeaders.AccountRefsKey));
+        Assert.True(headers.ContainsKey(MovementHeaders.AmountsKey));
     }
 
     // ---- early termination (PayEarlyTermination credit) -----------------------------------------

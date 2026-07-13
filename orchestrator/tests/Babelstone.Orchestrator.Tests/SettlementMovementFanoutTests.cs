@@ -53,6 +53,44 @@ public sealed class SettlementMovementFanoutTests
     }
 
     [Fact]
+    public void Each_leg_reduces_the_engine_ca_accountref_and_amount_lists_to_its_own_entry()
+    {
+        // ADR-PC-043 §D5: a multi-movement engine-CA event carries movementaccountrefs / movementamounts as
+        // ORDERED lists parallel to movementdirections; the fan-out reduces each leg to its OWN index-th entry,
+        // so leg 0's debit and leg 1's credit each carry the right destination + amount into their command body
+        // (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17).
+        var source = new SagaInboxEvent(
+            MessageId: EventId, ProcessId: Subject, EventType: "DepositRenewed", SourceTopic: "term_deposit",
+            CorrelationId: null, TraceParent: null,
+            ExtensionHeaders: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [OriginHeader] = "Originated",
+                [DirectionsHeader] = "Debit,Credit",
+                [SettlementMovementFanout.AccountRefsHeader] = "acct-source,acct-payout",
+                [SettlementMovementFanout.AmountsHeader] = "5000,319",
+            });
+
+        var projections = SettlementSagaModule.FanOutByMovementDirection(source);
+
+        Assert.Equal("acct-source", SettlementMovementFanout.SingleAccountRef(projections[0].ExtensionHeaders));
+        Assert.Equal(5000L, SettlementMovementFanout.SingleAmountCents(projections[0].ExtensionHeaders));
+        Assert.Equal("acct-payout", SettlementMovementFanout.SingleAccountRef(projections[1].ExtensionHeaders));
+        Assert.Equal(319L, SettlementMovementFanout.SingleAmountCents(projections[1].ExtensionHeaders));
+    }
+
+    [Fact]
+    public void A_leg_with_no_promoted_accountref_reads_back_null_so_the_placeholder_path_stands()
+    {
+        // A legacy-DDA leg promotes no account_ref/amount — the fan-out leaves the keys absent, so the
+        // single-value accessors return null and the substrate keeps its ACCT-{processId} placeholder (unchanged
+        // legacy behaviour). MovementEvent carries only the origin/direction/SCA headers, never the engine-CA pair.
+        var legs = SettlementSagaModule.FanOutByMovementDirection(MovementEvent("Credit"));
+
+        Assert.Null(SettlementMovementFanout.SingleAccountRef(legs[0].ExtensionHeaders));
+        Assert.Null(SettlementMovementFanout.SingleAmountCents(legs[0].ExtensionHeaders));
+    }
+
+    [Fact]
     public void Every_leg_gets_a_derived_per_occurrence_process_id_with_the_subject_preserved()
     {
         var source = MovementEvent("Debit,Credit");

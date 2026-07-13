@@ -72,6 +72,43 @@ public sealed class SettlementCommandExactlyOnceTests
     }
 
     [Fact]
+    public void SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED_the_confirm_credit_carries_the_promoted_destination_and_engine_ca_target()
+    {
+        // ADR-PC-043 §D5 / CA-17: when the substrate threads a promoted destination account_ref onto the intent,
+        // the engine-CA ConfirmCredit body carries THAT account_ref (never the ACCT-{processId} placeholder), the
+        // exact source amount (the WRONG-AMOUNT guard), and settlement_target = engine-ca (so the dispatcher
+        // routes the credit to the engine-owned CA ingress, not the legacy core). This is the fix for the
+        // never-wired maturity-credit path (bd babelstone-u79p.21).
+        const string destination = "acct-conta-a-ordem-0001";
+        var intent = new SettlementIntent(IntentId(), AmountCents, destination);
+        var processId = Guid.NewGuid();
+
+        var credit = (ConfirmCreditCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ConfirmCredit, processId, Guid.NewGuid(), null, intent)!;
+
+        Assert.Equal(destination, credit.AccountRef);
+        Assert.NotEqual(
+            SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId), credit.AccountRef);
+        Assert.Equal(AmountCents, credit.AmountCents);
+        Assert.Equal(SettlementCommandRouter.EngineCaValue, credit.SettlementTarget);
+    }
+
+    [Fact]
+    public void SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED_no_intent_keeps_the_placeholder_and_no_engine_ca_target()
+    {
+        // Without a threaded intent (the legacy-DDA path) the ConfirmCredit falls back to the ACCT-{processId}
+        // placeholder and promotes NO engine-ca target — legacy routing is UNCHANGED.
+        var processId = Guid.NewGuid();
+
+        var credit = (ConfirmCreditCommand)SettlementCommandPayloadFactory.Build(
+            SettlementProcess.ConfirmCredit, processId, Guid.NewGuid(), null, intent: null)!;
+
+        Assert.Equal(
+            SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId), credit.AccountRef);
+        Assert.Null(credit.SettlementTarget);
+    }
+
+    [Fact]
     public void SETTLEMENT_CA_APPLY_KEY_INTENT_DERIVED_the_confirm_debit_reference_derives_from_the_intent_id()
     {
         var intent = Intent();

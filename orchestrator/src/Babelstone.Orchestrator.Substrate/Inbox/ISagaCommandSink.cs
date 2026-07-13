@@ -40,6 +40,16 @@ public interface ISagaCommandSink
     /// Unix epoch) for a money-mover command. The dispatcher re-emits it as the outbound
     /// <c>X-SCA-Auth-Time</c> header; the engine re-checks freshness at dispatch time, so a stale
     /// value is fail-closed 422'd there. Operational, not PII; null when no SCA was attested.</param>
+    /// <param name="settlementAccountRef">The engine-CA leg's PROMOTED destination <c>account_ref</c> — the
+    /// customer's persistent conta-à-ordem reference the source family promoted onto the Movement-bearing event's
+    /// CloudEvents headers (ADR-PC-043 §D5 amendment 2026-07-11; read off the leg's reduced
+    /// <c>movementaccountrefs</c> by the advance handler). The settlement sink forwards it untouched into the
+    /// CA-apply command body as the credit/debit DESTINATION — never a routing input (routing keys on
+    /// <c>settlementtarget</c> alone, ADR-IC-018 §D5). Opaque ref, not PII; null on the legacy-DDA path and for
+    /// every non-settlement sink (which resolve the account from their own business reference).</param>
+    /// <param name="settlementAmountCents">The engine-CA leg's PROMOTED integer-cents amount — the source
+    /// <c>Movement.Amount</c> the CA writer lands, the in-band WRONG-AMOUNT guard (ADR-PC-043 §D5; read off the
+    /// leg's reduced <c>movementamounts</c>). Null on the legacy-DDA path and for every non-settlement sink.</param>
     Task EmitAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -50,7 +60,9 @@ public interface ISagaCommandSink
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null);
+        long? scaAuthTime = null,
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null);
 }
 
 /// <summary>
@@ -127,7 +139,9 @@ public sealed class CompositeSagaCommandSink : ISagaCommandSink
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
         => throw new NotSupportedException(
             "CompositeSagaCommandSink routes by saga_type — call For(sagaType).EmitAsync(...). The advance "
             + "handler selects the typed sub-sink; a bare emit carries no saga type to route on.");
@@ -157,10 +171,13 @@ public sealed class RecordingCommandSink : ISagaCommandSink
         CancellationToken ct = default,
         string? traceParent = null,
         string? scaAcr = null,
-        long? scaAuthTime = null)
+        long? scaAuthTime = null,
+        string? settlementAccountRef = null,
+        long? settlementAmountCents = null)
     {
         _emitted.Add(new EmittedCommand(
-            processId, commandType, causationMessageId, correlationId, traceParent, scaAcr, scaAuthTime));
+            processId, commandType, causationMessageId, correlationId, traceParent, scaAcr, scaAuthTime,
+            settlementAccountRef, settlementAmountCents));
         return Task.CompletedTask;
     }
 }
@@ -177,6 +194,10 @@ public sealed class RecordingCommandSink : ISagaCommandSink
 /// (bd babelstone-ls44), or null when no SCA was attested. Operational, not PII.</param>
 /// <param name="ScaAuthTime">The gateway-attested OIDC <c>auth_time</c> claim (Unix seconds) a
 /// money-mover emission propagates, or null when no SCA was attested. Operational, not PII.</param>
+/// <param name="SettlementAccountRef">The engine-CA leg's promoted destination <c>account_ref</c> a settlement
+/// emission carries (ADR-PC-043 §D5), or null on the legacy-DDA path / a non-settlement emission. Opaque, not PII.</param>
+/// <param name="SettlementAmountCents">The engine-CA leg's promoted integer-cents amount a settlement emission
+/// carries (the WRONG-AMOUNT guard), or null on the legacy-DDA path / a non-settlement emission.</param>
 public sealed record EmittedCommand(
     Guid ProcessId,
     string CommandType,
@@ -184,4 +205,6 @@ public sealed record EmittedCommand(
     Guid? CorrelationId,
     string? TraceParent = null,
     string? ScaAcr = null,
-    long? ScaAuthTime = null);
+    long? ScaAuthTime = null,
+    string? SettlementAccountRef = null,
+    long? SettlementAmountCents = null);

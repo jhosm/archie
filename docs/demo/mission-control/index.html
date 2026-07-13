@@ -1791,6 +1791,11 @@ body.console-open .hint-bar { display:none; }
 
     if (state.mode === "live") {
       try {
+        // bd u79p.21: fund the deposit FROM the customer's conta à ordem so its maturity payout can land
+        // back on that same account. Open + seed the CA once per session (a GUID funding_account routes
+        // engine-ca settlement, ADR-PC-043); fall back to the opaque legacy-DDA ref when the CA is unavailable.
+        var caRef = await ensureAccount();
+        if (caRef) reqBody.funding_account = caRef;
         var r = await api("POST", "/v1/deposits", reqBody, { "Idempotency-Key": state.idemKey });
         state.depositId = r.json.deposit_id; state.seq = r.json.commit_sequence; state.lifecycle = r.json.status;
         mcpLog('', 'commit #' + state.seq + ' · ' + state.depositId.slice(0, 8));
@@ -1806,9 +1811,10 @@ body.console-open .hint-bar { display:none; }
           pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", p.withholding_to_date_cents]], true);
         }
         renderPosition(p);
-        // bd u79p.8: keep the conta-a-ordem panel current if a CA was opened earlier this session (the
-        // LIVE·engine direct command surface does not itself drive the engine-ca settlement saga — the
-        // deposit money leg reaches the CA only via LIVE·saga — so this is a no-op read unless one exists).
+        // bd u79p.8/.21: repaint the conta-a-ordem panel after constitution. The engine-DIRECT command
+        // surface does not settle the funding DEBIT (that reserve→capture leg is the ConstitutionProcess
+        // saga's job, u79p.3), so this constitution does not move the CA meter — but the account is now
+        // open + bound to the deposit, so the maturity CREDIT lands here (doMature, u79p.21).
         refreshAccount();
         toast("Constituted · commit #" + state.seq, "verify");
         topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
@@ -1940,7 +1946,11 @@ body.console-open .hint-bar { display:none; }
 
     if (state.mode === "live") {
       try {
-        var r = await api("POST", "/v1/deposits/" + state.depositId + "/maturity", {});
+        // bd u79p.21: name the conta à ordem as the payout account so the engine-CA maturity settlement
+        // (ADR-PC-043) credits THAT account. The endpoint defaults an omitted payout_account to the legacy-DDA
+        // stub (DepositsEndpoints.cs), so without this the credit would never reach the seeded CA the panel reads.
+        var r = await api("POST", "/v1/deposits/" + state.depositId + "/maturity",
+          state.accountId ? { payout_account: state.accountId } : {});
         var p = r.json; state.lifecycle = p.lifecycle;
         var dGross = p.accrued_gross_interest_cents - state.accrued;
         var dTax = p.withholding_to_date_cents - state.withheld;

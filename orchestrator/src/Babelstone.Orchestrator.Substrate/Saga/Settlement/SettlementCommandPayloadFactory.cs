@@ -120,6 +120,11 @@ public static class SettlementCommandPayloadFactory
                 CreditRef = confirmCreditRef,
                 IntentReference = confirmCreditRef,
                 AmountCents = amountCents,
+                // ADR-PC-043 slot 1: a threaded engine-CA intent (a promoted destination account_ref is present)
+                // routes the credit to the engine-owned CA ingress — the dispatcher's ProjectSettlementTargetHeader
+                // reads this body field. Without an intent (the legacy-DDA path / no promotion) it stays null, so
+                // the router keeps legacy routing UNCHANGED.
+                SettlementTarget = intent is not null ? SettlementCommandRouter.EngineCaValue : null,
             },
             SettlementProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
             {

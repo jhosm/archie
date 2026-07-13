@@ -58,6 +58,11 @@ public sealed class SettlementSagaModule : ISagaModule
             ConnectionString = context.RuntimeConnectionString,
             EngineBaseUrl = context.EngineBaseUrl,
             SettlementBaseUrl = context.SettlementBaseUrl,
+            // ADR-PC-043: thread the engine-CA counterparty base URL so this generic settlement saga's
+            // engine-ca legs (a term-deposit maturity/coupon credit, a loan disbursement credit) route to the
+            // engine-owned CA ingress instead of fail-closing. Omitting it left EngineCaSettlementBaseUrl null,
+            // so every engine-ca settlement command hit the "no route registered" fail-closed path (bd u79p.21).
+            EngineCaSettlementBaseUrl = context.EngineCaSettlementBaseUrl,
         });
     }
 

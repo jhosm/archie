@@ -146,7 +146,9 @@ public sealed class MovementHeadersTests
     {
         // The counterparty-aware overload (ADR-PC-043 slot 1): a leg settling against the engine-owned CA
         // promotes ce_settlementtarget = engine-ca so the substrate's router diverts it WITHOUT reading the
-        // payload. The value is the closed-enum wire token — no amount, no account ref, no PII.
+        // payload. The ADR-PC-043 §D5 amendment (2026-07-11) ALSO promotes the per-movement destination
+        // account_ref + amount as the settlement-command-body fields the substrate forwards untouched — still no
+        // PII (opaque ref + integer cents).
         var headers = MovementHeaders.ForOriginatedMovements(
             [Originated(SettlementDirection.Credit)], SettlementTarget.EngineCa);
 
@@ -155,8 +157,35 @@ public sealed class MovementHeadersTests
         Assert.Equal("Credit", headers[MovementHeaders.DirectionsKey]);
         Assert.Equal(MovementHeaders.EngineCaValue, headers[MovementHeaders.SettlementTargetKey]);
         Assert.Equal("engine-ca", headers[MovementHeaders.SettlementTargetKey]);
-        // origin + directions + settlementtarget — exactly three routing discriminators, still no amount/PII.
-        Assert.Equal(3, headers.Count);
+        // ADR-PC-043 §D5: the promoted destination + amount (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED, CA-17).
+        Assert.Equal("acct-ref-opaque", headers[MovementHeaders.AccountRefsKey]);
+        Assert.Equal("10000", headers[MovementHeaders.AmountsKey]);
+        // origin + directions + settlementtarget + accountrefs + amounts — five entries on an engine-CA leg.
+        Assert.Equal(5, headers.Count);
+    }
+
+    [Fact]
+    public void An_engine_ca_multi_movement_event_promotes_parallel_ordered_accountref_and_amount_lists()
+    {
+        // A renewal records a rollover-debit AND an interest-credit on one append (ADR-PC-032 option b). The
+        // engine-CA overload promotes movementaccountrefs / movementamounts as ORDERED lists parallel to
+        // movementdirections — carrier order, one entry per Originated movement — so the substrate's fan-out can
+        // reduce each to its own leg's destination + amount (SETTLEMENT_LEG_ACCOUNT_REF_PROMOTED for every leg).
+        var rollover = Originated(SettlementDirection.Debit) with
+        {
+            AccountRef = "acct-source", Amount = new Money(5_000),
+        };
+        var interest = Originated(SettlementDirection.Credit) with
+        {
+            AccountRef = "acct-payout", Amount = new Money(319),
+        };
+
+        var headers = MovementHeaders.ForOriginatedMovements([rollover, interest], SettlementTarget.EngineCa);
+
+        Assert.NotNull(headers);
+        Assert.Equal("Debit,Credit", headers![MovementHeaders.DirectionsKey]);
+        Assert.Equal("acct-source,acct-payout", headers[MovementHeaders.AccountRefsKey]);
+        Assert.Equal("5000,319", headers[MovementHeaders.AmountsKey]);
     }
 
     [Fact]
@@ -193,6 +222,11 @@ public sealed class MovementHeadersTests
         Assert.Equal("engine-ca", MovementHeaders.EngineCaValue);
         Assert.Equal("legacy-dda", MovementHeaders.LegacyDdaValue);
         Assert.Equal("settlementtarget", MovementHeaders.SettlementTargetKey);
+        // ADR-PC-043 §D5: the engine-CA destination + amount header keys — the substrate pins the SAME wire
+        // literals in Babelstone.Orchestrator.Tests.MovementHeaderAutoStartContractTests (the producer↔consumer
+        // contract; the substrate cannot reference this constant, ADR-PC-019 §P2).
+        Assert.Equal("movementaccountrefs", MovementHeaders.AccountRefsKey);
+        Assert.Equal("movementamounts", MovementHeaders.AmountsKey);
     }
 
     /// <summary>
