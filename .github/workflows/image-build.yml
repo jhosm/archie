@@ -7,9 +7,11 @@ name: Image build + publish
 # image layers (base OS + framework + app) of every deployable, exactly the split sbom.yml's
 # header calls out ("the container image SBOM + scan ... lands with the image build/push task").
 #
-# Six deployables, one matrix (ADR-IC-013): engine (ADR-PC-010), acl (ADR-IC-012), orchestrator
-# (ADR-IC-003), notification (ADR-IC-011), mcp-server (ADR-IC-010), pack-validate (ADR-PC-006).
-# Images publish to GHCR at ghcr.io/jhosm/babelstone-<service>.
+# One matrix (ADR-IC-013): engine (ADR-PC-010), orchestrator (ADR-IC-003), notification
+# (ADR-IC-011), lifecycle-driver (ADR-PC-036), mcp-server (ADR-IC-010), pack-validate (ADR-PC-006),
+# plus the mission-control UI, the backstage portal and the ratesheets-api host. acl (ADR-IC-012)
+# is deliberately NOT here — it stays a Dockerfile+README stub with no source (reserve-don't-pre-build),
+# joining the matrix when its .NET source lands. Images publish to GHCR at ghcr.io/jhosm/babelstone-<service>.
 #
 # Build-only on pull_request (verify every Dockerfile still builds — NO push, NO registry
 # credentials needed on a fork PR); build AND push on push to main. Each pushed image is then
@@ -47,7 +49,10 @@ on:
       - 'contracts/openapi/internal/**' # internal OpenAPI specs the descriptor $text-references (baked in)
       - 'infra/backstage/**'       # the governed app-config the backstage image bakes as production
       - 'docs/demo/mission-control/**'  # the Mission Control UI image (zla1.5.4)
-      - 'families/**'              # the engine image's publish pulls in the family projects
+      - 'families/**'              # the engine image's publish pulls in the family projects (+ the family .Lifecycle modules the driver scans)
+      - 'lifecycle-driver/**'      # the lifecycle-driver image (ADR-PC-036, zla1.5.11)
+      - 'cadence/**'               # the shared poll-loop machinery the lifecycle-driver + notification images build (ADR-IC-019)
+      - 'composition/**'           # the FamilyModuleScanner the composition-root hosts build (mirrors ci.yml's lifecycle change-filter)
       - 'Directory.Packages.props' # central package versions the .NET image restores against
       - 'infra/k8s/apps/engine/**' # the pack-baked engine-staging derived image (zla1.5.1)
       - 'infra/k8s/apps/notification/**' # the pack-baked notification-staging derived image (zla1.5.10)
@@ -107,6 +112,15 @@ jobs:
             context: .
           - service: notification
             dockerfile: notification/Dockerfile
+            context: .
+          # lifecycle-driver (bd babelstone-zla1.5.11; ADR-PC-036 §Decision 2): the clock-owning
+          # money-mover worker. A .NET worker like notification, so it builds with the REPO ROOT as
+          # context and names its HOST project in its Dockerfile (Babelstone.Lifecycle.Host — the
+          # publish transitively builds Babelstone.Lifecycle + Babelstone.Cadence + the family
+          # .Lifecycle modules). Loads NO regulatory pack, so — unlike engine/notification — it needs
+          # no pack-baked -staging derivative; the base image runs directly on the box.
+          - service: lifecycle-driver
+            dockerfile: lifecycle-driver/Dockerfile
             context: .
           - service: mcp-server
             dockerfile: mcp-server/Dockerfile
@@ -519,5 +533,5 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           echo "Build matrix completed; representative pushed digest: ${DIGEST:-<none>}"
-          echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,acl,orchestrator,notification,mcp-server,pack-validate,mission-control,backstage}"
+          echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,orchestrator,notification,lifecycle-driver,mcp-server,pack-validate,mission-control,backstage,ratesheets-api}"
           echo "Each pushed image is cosign-signed by digest (keyless OIDC) in its build leg (bd Q.5)."

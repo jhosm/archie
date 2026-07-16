@@ -47,8 +47,10 @@
 #     inbound allow from mission-control to 8091, AND an entry in policy 2's
 #     from-list — it dials the secured MCP edge through the Kong proxy (8000).
 #   • ADR-PC-036 lifecycle-driver: dials the engine through Kong's
-#     engine-lifecycle-movers route, so it likewise needs adding to policy 2's
-#     from-list (kong:8000) when it lands on this box.
+#     engine-lifecycle-movers route — NOW landed (bd babelstone-zla1.5.11): added to
+#     policy 2's from-list (kong:8000) and policy 7's (postgres:5432, its three DB
+#     connections). It ships at replicas: 0 until its m2m token path lands
+#     (bd babelstone-zla1.5.12), so the allows select no live pod yet.
 ---
 # 1 · The wall: default-deny ingress for EVERY pod in the namespace.
 apiVersion: networking.k8s.io/v1
@@ -85,6 +87,14 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: cloudflared
+        # The ADR-PC-036 lifecycle-driver POSTs the clock-driven money-movers through the
+        # engine-lifecycle-movers route on this proxy (bd babelstone-zla1.5.11). Shipped at
+        # replicas: 0 until its m2m token path lands (bd babelstone-zla1.5.12), so this selects
+        # no live pod yet — but the allow is in place so the first scaled-up POST is not a
+        # mystery default-deny timeout (the header's "future workloads" note, now honoured).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lifecycle-driver
       ports:
         - protocol: TCP
           port: 8000
@@ -229,6 +239,12 @@ spec:
                   # The rate-sheet-deploy Job (its wait-for-table init + the RateSheets.Api one-shot
                   # both dial postgres:5432 — bd babelstone-zla1.21).
                   - rate-sheet-deploy
+                  # The ADR-PC-036 lifecycle-driver opens THREE connections to this instance
+                  # (bd babelstone-zla1.5.11): the engine read models + its own self-migrated
+                  # dispatch ledger (babelstone DB) and the orchestrator saga_state settlement-health
+                  # read (babelstone_orchestrator DB), plus its wait-for-event-store-migration init.
+                  # Shipped at replicas: 0 (bd babelstone-zla1.5.12), so no live pod yet.
+                  - lifecycle-driver
       ports:
         - protocol: TCP
           port: 5432
