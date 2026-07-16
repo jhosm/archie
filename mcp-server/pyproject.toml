@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 # the SDK negotiation). The official Python SDK + an async HTTP client to reach the engine
 # command/query boundary (Babelstone.Engine.Api).
 dependencies = [
-    "mcp==1.27.2",
+    "mcp==1.28.1",
     "httpx>=0.28,<1",
     # Epic J (babelstone-e50n): decode the gateway-validated bearer JWT at the MCP app layer to
     # re-check `aud` authoritatively (ADR-IC-010 §P3). Kong's jwt plugin already verified the
@@ -39,7 +39,7 @@ dev = [
 # install stays lean (it needs no LLM SDK). The Anthropic SDK with the MCP helpers binds the deposit
 # tools to Claude and runs the agentic loop. Bounded to <1 in the spirit of the project's
 # deliberate-upgrade discipline (this is the LLM SDK, distinct from the MCP SDK + protocol version
-# that ADR-IC-010 §P1 pins hard as `mcp==1.27.2`). The agent loop's unit tests use fakes and do NOT
+# that ADR-IC-010 §P1 pins hard as `mcp==1.28.1`). The agent loop's unit tests use fakes and do NOT
 # require this extra installed.
 agent = [
     "anthropic[mcp]>=0.92,<1",
