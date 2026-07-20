@@ -2,7 +2,7 @@ module github.com/jhosm/babelstone/pack-validate
 
 go 1.26.3
 
-require cuelang.org/go v0.17.0
+require cuelang.org/go v0.17.1
 
 require (
 	cuelabs.dev/go/oci/ociregistry v0.0.0-20260601085548-328ff8e2c943 // indirect
