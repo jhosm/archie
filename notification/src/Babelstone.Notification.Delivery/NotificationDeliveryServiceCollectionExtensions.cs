@@ -108,9 +108,31 @@ public static class NotificationDeliveryServiceCollectionExtensions
         // reminder to the outbox.
         services.AddSingleton<INotificationDeliverySink, ScheduledReminderDeliverySink>();
 
-        // The EVENT_DRIVEN ingress seam (bd babelstone-60n8.7): dormant Null source until the engine-side
-        // EVENT_DRIVEN emission + its bus consumer land — TryAdd, so composing the real consumer later
-        // replaces it with no other change (see INotificationDueSource remarks).
+        // The EVENT_DRIVEN ingress seam (bd babelstone-60n8.7 / babelstone-60n8.11): the REAL
+        // Redpanda/Avro consumer of the engine's operations.NotificationDue stream, wired whenever a
+        // backbone is configured (Kafka:BootstrapServers — the same key the exhausted relay reads). It
+        // polls the shared `operations` topic, filters to NotificationDue by the ce_type header, decodes
+        // the governed Avro value, and hands each batch to the delivery pass — which drains it into the
+        // SAME outbox the SCHEDULED leg fills (one transport, parameterised by trigger_kind). Registered
+        // BEFORE the Null fallback so the TryAdd below is a no-op; with no broker configured the estate
+        // keeps its pre-consumer shape (SCHEDULED leg only).
+        var busBootstrapServers = configuration["Kafka:BootstrapServers"];
+        if (!string.IsNullOrWhiteSpace(busBootstrapServers))
+        {
+            // A distinct consumer group id isolates this reader's offsets from every other `operations`
+            // consumer (e.g. the ACL erasure cascade); overridable, else a stable estate default.
+            var groupId = configuration["Bus:NotificationDueGroupId"] ?? "notification-delivery-notification-due";
+            var startFromEarliest = configuration.GetValue("Bus:NotificationDueStartFromEarliest", true);
+            services.AddSingleton<INotificationDueSource>(provider =>
+                new KafkaNotificationDueSource(
+                    busBootstrapServers,
+                    groupId,
+                    startFromEarliest,
+                    logger: provider.GetService<Microsoft.Extensions.Logging.ILogger<KafkaNotificationDueSource>>()));
+        }
+
+        // The dormant Null fallback: a host with no backbone keeps scheduling exactly as before. TryAdd,
+        // so it never displaces the real consumer registered above (see INotificationDueSource remarks).
         services.TryAddSingleton<INotificationDueSource, NullNotificationDueSource>();
 
         // Render-time PII resolution (ADR-PC-025 §PII): the renderer asks the ENGINE by reference, per
