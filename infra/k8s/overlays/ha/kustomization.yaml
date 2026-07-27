@@ -69,7 +69,7 @@ images:
     digest: sha256:436eaf9778cad75507ff70ea26ace30dcbe15606e619ac3823495663d7f7c115
   - name: woblerr/pgbackrest
     newTag: 2.58.0
-    digest: sha256:18cdff011e974308510d056b4039d9b4d21ec33d9124879882c6f05e99be2ab9
+    digest: sha256:b77c5e0026f190bcba6861f5c02f2bd03d38c319162cc84b52fb2063fb79b636
 
 # Replicas: Redpanda 1 -> 3 (a real Raft quorum). Postgres stays at 1 here —
 # the warm standby is a SEPARATE StatefulSet (postgres-standby), not a second
