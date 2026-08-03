@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: jdx/mise-action@v4   # pins crane + python from mise.toml
+      - uses: jdx/mise-action@v4.2.3   # pins crane + python from mise.toml
         with:
           version: "2026.6.6"      # same TEMP pin as ci.yml/cd.yml (broken mise latest release)
 

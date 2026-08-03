@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4   # pins kustomize + kubeconform + deck from mise.toml
+      - uses: jdx/mise-action@v4.2.3   # pins kustomize + kubeconform + deck from mise.toml
         with:
           version: "2026.6.6"      # same TEMP pin as ci.yml's infra job (broken mise latest release)
       - name: Render + kubeconform the promotion overlay (P.6)
@@ -232,7 +232,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           version: "2026.6.6"
       - name: Install kubectl + cosign
@@ -523,7 +523,7 @@ jobs:
       LOGTO_BASE_URL: ${{ vars.LOGTO_BASE_URL || 'https://auth.babelstone.dev' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4   # pins kustomize (to render the deployed OIDC_CLIENT_ID)
+      - uses: jdx/mise-action@v4.2.3   # pins kustomize (to render the deployed OIDC_CLIENT_ID)
         with:
           version: "2026.6.6"
       # 6a — never race the logto-db-init/seed Jobs: wait until the issuer answers discovery.

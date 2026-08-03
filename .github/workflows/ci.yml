@@ -158,7 +158,7 @@ jobs:
       # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
       # .NET 10 LTS) so CI builds against the same SDK as every dev machine — no
       # second version pin in this YAML to drift from it.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -282,7 +282,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml (ADR-PC-006)
+      - uses: jdx/mise-action@v4.2.3 # pins Go + cue from mise.toml (ADR-PC-006)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -354,7 +354,7 @@ jobs:
       - uses: actions/checkout@v7
       # Pin CUE (and the rest) from mise.toml — same single source of truth as
       # every dev machine (CUE 0.16.1, ADR-PC-006), no second pin to drift from.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -461,7 +461,7 @@ jobs:
       # .NET 10 LTS; the orchestrator runtime is ADR-IC-003 §S2 ".NET, same as the
       # engine") so CI builds against the same SDK as every dev machine — no second
       # version pin in this YAML to drift from it.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -521,7 +521,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
+      - uses: jdx/mise-action@v4.2.3 # pins Python from mise.toml (3.14, ADR-IC-010)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -564,7 +564,7 @@ jobs:
       # .NET 10 LTS; the notification runtime is ADR-IC-011 ".NET, stack-coherent
       # with the engine") so CI builds against the same SDK as every dev machine —
       # no second version pin in this YAML to drift from it.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -625,7 +625,7 @@ jobs:
       # .NET 10 LTS; the lifecycle-driver runtime is ADR-IC-011 ".NET, stack-coherent
       # with the engine") so CI builds against the same SDK as every dev machine —
       # no second version pin in this YAML to drift from it.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -679,7 +679,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml
+      - uses: jdx/mise-action@v4.2.3 # pins Go + cue from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -724,7 +724,7 @@ jobs:
           - 5000:5000
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins cue + oras + cosign + go from mise.toml
+      - uses: jdx/mise-action@v4.2.3 # pins cue + oras + cosign + go from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -835,7 +835,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins cue from mise.toml
+      - uses: jdx/mise-action@v4.2.3 # pins cue from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -882,7 +882,7 @@ jobs:
       - uses: actions/checkout@v7
       # Pin kustomize + kubeconform + deck from mise.toml — the same single source of
       # truth as every dev machine (no second pin in this YAML to drift from).
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
@@ -1136,7 +1136,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4 # pins Python + CUE from mise.toml (ADR-PC-006/022)
+      - uses: jdx/mise-action@v4.2.3 # pins Python + CUE from mise.toml (ADR-PC-006/022)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.

@@ -118,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Toolchain from mise.toml (the .NET 10 SDK pin), as in ci.yml.
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v4.2.3
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
           # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.

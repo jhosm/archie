@@ -284,7 +284,7 @@ jobs:
       # (ADR-IC-014 §S2). `if: always()` so results upload even if a scan errored.
       - name: Upload image vulnerability findings to the Security tab
         if: ${{ always() && steps.scan.outputs.sarif != '' }}
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v4.37.4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: image-grype-${{ matrix.service }}
