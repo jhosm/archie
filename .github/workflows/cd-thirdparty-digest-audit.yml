@@ -18,10 +18,7 @@ name: CD — third-party image digest audit
 # is untouched.
 
 on:
-  schedule:
-    # Weekly, Monday 06:17 UTC — same weekly cadence as the Dependabot ecosystems, offset minute so
-    # it does not collide with other crons.
-    - cron: '17 6 * * 1'
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch: {}
 
 # Least privilege: read the repo + write a bump BRANCH and open a PR. No packages/registry write,

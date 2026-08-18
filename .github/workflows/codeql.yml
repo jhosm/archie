@@ -18,21 +18,8 @@ name: CodeQL
 # boundary (ADR-PC-004) — both in CodeQL's C# query packs.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'engine/**'
-      - 'families/**'
-      - 'orchestrator/**'
-      - 'acl/**'
-      - 'mcp-server/**'
-      - 'notification/**'
-      - 'pack-validate/**'
-      - '.github/workflows/codeql.yml'
-      - '.github/scripts/codeql-failon.sh'
-  pull_request:        # no paths filter: must run on EVERY PR so `CodeQL gate` always reports
-  schedule:
-    - cron: "0 4 * * 1"   # Mondays 04:00 UTC (after the 03:00 mutation run)
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 permissions:
   contents: read

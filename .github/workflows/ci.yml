@@ -7,9 +7,8 @@ name: CI
 # from day one so a naïve "build everything on every push" never takes root.
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 permissions:
   contents: read

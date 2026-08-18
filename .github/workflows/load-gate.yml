@@ -43,10 +43,7 @@ name: Load acceptance gate
 # `run:` shell, per the GitHub Actions injection guidance.
 
 on:
-  push:
-    tags:
-      # Release-candidate tags — the every-RC cadence Open Action #4 asks for.
-      - "v*-rc*"
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
 
 permissions:

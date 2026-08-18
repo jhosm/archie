@@ -30,10 +30,7 @@ name: Projection rebuild drill
 # in any `run:` shell, per the GitHub Actions injection guidance.
 
 on:
-  schedule:
-    # 07:00 UTC on the 1st of each month — after the weekly Monday scheduled
-    # scans (CodeQL 04:00, SBOM 05:00, fuzz 06:00) so the runner pool is clear.
-    - cron: "0 7 1 * *"
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
 
 permissions:

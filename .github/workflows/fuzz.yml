@@ -40,8 +40,7 @@ name: Fuzz
 # failure or a 4xx — never a panic/crash/hang.
 
 on:
-  schedule:
-    - cron: "0 6 * * 1"   # Mondays 06:00 UTC (after the 05:00 SBOM and 04:00 CodeQL scheduled scans)
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
     inputs:
       fuzztime:

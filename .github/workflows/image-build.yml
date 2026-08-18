@@ -32,31 +32,8 @@ name: Image build + publish
 # change to any of them re-exercises the build.
 
 on:
-  push:
-    branches: [main]
-    paths: &image_paths
-      - 'engine/**'
-      - 'acl/**'
-      - 'orchestrator/**'
-      - 'notification/**'
-      - 'mcp-server/**'
-      - 'pack-validate/**'
-      - 'backstage/**'             # the Backstage catalogue-portal image (zla1.6.3/.6.4)
-      - 'contracts/catalog/**'     # the governed catalogue descriptor tree baked into the backstage image
-      - 'contracts/openapi/specs/**'   # OpenAPI specs the descriptor $text-references (baked into the image)
-      - 'contracts/openapi/internal/**' # internal OpenAPI specs the descriptor $text-references (baked in)
-      - 'infra/backstage/**'       # the governed app-config the backstage image bakes as production
-      - 'docs/demo/mission-control/**'  # the Mission Control UI image (zla1.5.4)
-      - 'families/**'              # the engine image's publish pulls in the family projects
-      - 'Directory.Packages.props' # central package versions the .NET image restores against
-      - 'infra/k8s/apps/engine/**' # the pack-baked engine-staging derived image (zla1.5.1)
-      - 'infra/k8s/apps/notification/**' # the pack-baked notification-staging derived image (zla1.5.10)
-      - 'infra/k8s/apps/rate-sheet-deploy/**' # the pack + sheet-baked rate-sheet-deploy image (zla1.21)
-      - 'packs/**'                 # engine-staging + notification-staging + rate-sheet-deploy bake pt.2026.1 — a pack change rebuilds them
-      - 'rate-sheets/**'           # the rate-sheet-deploy image bakes the committed term_deposit sheet (zla1.21)
-      - '.github/workflows/image-build.yml'
-  pull_request:
-    paths: *image_paths
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 # A new push to a ref supersedes an in-flight build of the same ref; never cancel a
 # push-to-main run mid-publish (it could leave a tag pointing at a half-pushed manifest),

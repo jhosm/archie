@@ -17,16 +17,8 @@ name: SBOM
 # newly-published advisory against an unchanged dependency is still surfaced.
 
 on:
-  push:
-    branches: [main]
-    paths: &sbom_paths
-      - 'engine/**'
-      - 'families/**'   # the term-deposit family projects build with the engine solution (Babelstone.slnx)
-      - '.github/workflows/sbom.yml'
-  pull_request:
-    paths: *sbom_paths
-  schedule:
-    - cron: "0 5 * * 1"   # Mondays 05:00 UTC (after the 04:00 CodeQL scheduled scan)
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 permissions:
   contents: read

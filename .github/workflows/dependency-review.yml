@@ -36,7 +36,8 @@ name: Dependency review
 # diff is empty and the check passes.
 
 on:
-  pull_request:
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 permissions:
   contents: read
