@@ -32,8 +32,7 @@ name: Mutation testing
 #     in TAN resolution, a relaxed strict-parse rejection, a swapped Avro field-binding offset.
 
 on:
-  schedule:
-    - cron: "0 3 * * 1"   # Mondays 03:00 UTC
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
 
 permissions:

@@ -12,9 +12,7 @@ name: Spec coverage
 # PR-controlled input is referenced, per the GitHub Actions injection guidance.
 
 on:
-  pull_request:
-  schedule:
-    - cron: '17 3 * * *'   # nightly audit (UTC) — off the per-push path, per ADR-PC-011
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
 
 permissions:

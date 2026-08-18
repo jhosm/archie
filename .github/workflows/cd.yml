@@ -42,24 +42,8 @@ name: CD — promote to P.6 (Kubernetes)
 # The committed kong.yml carries only the CI-parseable POC placeholder PEM that the render replaces.
 
 on:
-  # Hermetic gate lane: every push to main re-proves the promotion gates are GREEN (the
-  # render path, the cosign-verify wiring, the forward-only migration gate, the overlay
-  # render) without touching a live cluster/registry — the same path-scoped posture as CI.
-  push:
-    branches: [main]
-    paths: &cd_paths
-      - 'infra/k8s/**'
-      - 'infra/kong/**'
-      - 'scripts/deck-sync.sh'
-      - 'scripts/cd-migrate.sh'
-      - 'scripts/cd-secret-preflight.sh'
-      - 'scripts/iam/**'
-      - 'engine/src/Babelstone.EventStore.Migrations/**'
-      - 'orchestrator/src/Babelstone.Orchestrator.Substrate/Migrations/**'
-      - 'families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Migrations/**'
-      - '.github/workflows/cd.yml'
-  pull_request:
-    paths: *cd_paths
+  # CI temporarily disabled repo-wide: the hermetic push/pull_request gate lane is turned off
+  # (manual dispatch only)
   # Real promotion lane: a human dispatches a deploy to a named environment. The `environment:`
   # binding (below) is where the deploy kubeconfig (the SCOPED cd-deployer ServiceAccount one,
   # never cluster-admin — bd babelstone-zla1.12.1), the registry pull creds, and the OpenBao

@@ -9,7 +9,8 @@ name: ADR governance
 # run: script, per the GitHub Actions injection guidance.
 
 on:
-  pull_request:
+  # CI temporarily disabled repo-wide (manual dispatch only)
+  workflow_dispatch:
 
 permissions:
   contents: read

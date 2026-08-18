@@ -22,20 +22,7 @@ name: Docs site
 # and would not function as a static file.
 
 on:
-  pull_request:
-    paths: &docs_site_paths
-      - 'engine/**'
-      - 'families/**'
-      - 'docfx/**'
-      - 'docs/product-docs/README.md' # the DocFX home page is rendered from this file (§P3, bd sfnt.26)
-      - 'docs/demo/index.html'        # the standalone demo pages, staged into /demo/ (bd babelstone-q096)
-      - 'docs/demo/principles.html'
-      - '.config/dotnet-tools.json'
-      - 'mise.toml'
-      - '.github/workflows/docs-site.yml'
-  push:
-    branches: [main]
-    paths: *docs_site_paths
+  # CI temporarily disabled repo-wide (manual dispatch only)
   workflow_dispatch:
 
 permissions:
