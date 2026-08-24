@@ -8,7 +8,7 @@
 # at runtime; this image carries only the validator. The engine mounts/bundles
 # the digest-pinned schemas (ADR-PC-007 §P1) and passes --schema-dir/--pack.
 
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 COPY . .
 ENV CGO_ENABLED=0
