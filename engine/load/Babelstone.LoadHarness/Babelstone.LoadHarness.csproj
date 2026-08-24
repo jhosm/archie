@@ -19,6 +19,7 @@
     <!-- The PRODUCER seam (ADR-PC-011 §P1 Driver): the harness puts the engine's own Avro
          envelopes on Redpanda through the SAME Confluent.Kafka producer production uses. Pinned
          centrally (Directory.Packages.props). -->
+    <PackageReference Include="Apache.Avro" />
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Confluent.SchemaRegistry" />
   </ItemGroup>
