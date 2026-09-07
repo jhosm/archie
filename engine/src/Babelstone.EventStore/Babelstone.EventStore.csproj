@@ -10,6 +10,7 @@
          self-describing JSON payload (ADR-PC-028) and does not know it is encrypted.
          A future Go re-implementation of this assembly is what ADR-PC-001 §S3's
          "lowest exit cost" cashes out as. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Npgsql" />
   </ItemGroup>
 
